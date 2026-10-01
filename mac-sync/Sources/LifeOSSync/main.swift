@@ -96,7 +96,7 @@ final class Agent: NSObject, NSApplicationDelegate {
         retry?.cancel(); retry = nil
         if let date = engine.journal.state.retryAfter, !engine.journal.state.paused {
             retry = Task { do { try await Task.sleep(for: .seconds(max(0, date.timeIntervalSinceNow))); await sync() } catch { } }
-        } else if !engine.journal.state.paused && (engine.journal.state.localGeneration > engine.journal.state.uploadedLocalGeneration || engine.journal.state.cloudGeneration > engine.journal.state.drainedCloudGeneration || engine.journal.state.feedHint > engine.feedCursor || engine.replicaCommandsPending) {
+        } else if !engine.journal.state.paused && (engine.journal.state.localGeneration > engine.journal.state.uploadedLocalGeneration || engine.journal.state.cloudGeneration > engine.journal.state.drainedCloudGeneration || engine.journal.state.feedHint > engine.feedCursor || engine.replicaCommandsPending || engine.journal.state.confirmationNeeded) {
             Task { await sync() }
         }
     }

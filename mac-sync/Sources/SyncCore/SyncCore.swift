@@ -248,7 +248,7 @@ public struct JournalState: Codable, Sendable {
                   let currentPayload = remote["payload"] as? JSON, try encoded(currentPayload) == intent.payload else { throw SyncError.interrupted }
             guard let ordinal = remote["ordinal"] as? Int, ordinal > 0,
                   let desiredRevision = remote["current_desired_revision"] as? Int, desiredRevision >= 0 else { throw SyncError.invalid }
-            if desiredRevision > ordinal || (smart && payload["field"] as? String != "in_trash_list" && remote["target_trashed_desired"] as? Bool == true) {
+            if (smart ? desiredRevision != ordinal : desiredRevision > ordinal) || (smart && payload["field"] as? String != "in_trash_list" && remote["target_trashed_desired"] as? Bool == true) {
                 intent.result = try encoded(["state": "skipped", "reason": "newer_cloud_edit"])
                 intent.phase = "receipt"
                 try journal.update { $0.intents[intent.id] = intent }
@@ -286,7 +286,7 @@ public struct JournalState: Codable, Sendable {
             guard remote["state"] as? String == "executing", remote["claim"] as? String == intent.claim,
                   let current = remote["payload"] as? JSON, try encoded(current) == intent.payload,
                   let ordinal = remote["ordinal"] as? Int, let desired = remote["current_desired_revision"] as? Int else { throw SyncError.interrupted }
-            if desired > ordinal || (payload["field"] as? String != "in_trash_list" && remote["target_trashed_desired"] as? Bool == true) {
+            if desired != ordinal || (payload["field"] as? String != "in_trash_list" && remote["target_trashed_desired"] as? Bool == true) {
                 intent.result = try encoded(["state": "skipped", "reason": "newer_cloud_edit"]); intent.phase = "receipt"
                 try journal.update { $0.intents[intent.id] = intent }; try await acknowledge(intent); return
             }
@@ -300,7 +300,7 @@ public struct JournalState: Codable, Sendable {
                 guard latest["state"] as? String == "executing", latest["claim"] as? String == intent.claim,
                       let current = latest["payload"] as? JSON, try encoded(current) == intent.payload,
                       let head = latest["current_desired_revision"] as? Int else { throw SyncError.interrupted }
-                if head > ordinal || (payload["field"] as? String != "in_trash_list" && latest["target_trashed_desired"] as? Bool == true) {
+                if head != ordinal || (payload["field"] as? String != "in_trash_list" && latest["target_trashed_desired"] as? Bool == true) {
                     intent.result = try encoded(["state": "skipped", "reason": "newer_cloud_edit"]); intent.phase = "receipt"
                     try journal.update { $0.intents[intent.id] = intent }; try await acknowledge(intent); return
                 }
@@ -340,7 +340,7 @@ public struct JournalState: Codable, Sendable {
                 try journal.update { $0.uploadedLocalGeneration = generation; $0.confirmedEventID = eventID }; return
             }
             manifest["seen_cloud_revision"] = revision
-            if !confirmations.isEmpty { manifest["receipt_confirmations"] = try confirmations.keys.sorted().map { try decoded(confirmations[$0]!) } }
+            if !confirmations.isEmpty { manifest["receipt_confirmations"] = try confirmations.keys.sorted().prefix(200).map { try decoded(confirmations[$0]!) } }
             manifest["observed_at"] = ISO8601DateFormatter().string(from: Date())
             let data = try encoded(["sequence": journal.state.sequence + 1, "items": items, "manifest": manifest])
             guard data.count <= 1024 * 1024 else { throw SyncError.invalid }
@@ -402,7 +402,7 @@ public struct JournalState: Codable, Sendable {
             }
             if journal.state.pendingUpload != nil { try await upload() }
             if journal.state.localGeneration > journal.state.uploadedLocalGeneration || journal.state.confirmationNeeded { try await upload() }
-            try journal.update { $0.failures = 0; $0.retryAfter = nil; $0.drainedCloudGeneration = cloudGeneration; $0.confirmationNeeded = false }
+            try journal.update { $0.failures = 0; $0.retryAfter = nil; $0.drainedCloudGeneration = cloudGeneration; $0.confirmationNeeded = !$0.receiptConfirmations.isEmpty }
             message = blocked ? "An operation needs journal recovery" : journal.state.uncertainOperationIDs.isEmpty ? "Synced" : "\(journal.state.uncertainOperationIDs.count) uncertain operation(s) need review"
         } catch {
             message = (error as? LocalizedError)?.errorDescription ?? "Sync paused for retry; journal retained"
