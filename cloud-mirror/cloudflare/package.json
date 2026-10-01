@@ -8,7 +8,8 @@
     "dry-run": "wrangler deploy --dry-run",
     "test:mcp": "node mcp-test.mjs",
     "test:native": "node native-test.mjs",
-    "test:events": "node event-test.mjs"
+    "test:events": "node event-test.mjs",
+    "test:smart": "node smart-test.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
