@@ -132,7 +132,7 @@ final class PublicThings: ThingsAutomation {
     func apply(_ payload: JSON) async throws -> JSON {
         if payload["field"] as? String == "in_trash_list" {
             let request = try TrashRequest(payload: payload, appPath: appPath)
-            let data = try await AutomationProcess.run([resource("native-trash", "scpt")] + request.arguments)
+            let data = try await AutomationProcess.run([resource("native-trash", "applescript")] + request.arguments)
             return try decoded(data)
         }
         let data = try await AutomationProcess.run(["-l", "JavaScript", resource("native-write", "js")],
