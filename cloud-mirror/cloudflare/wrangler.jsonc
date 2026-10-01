@@ -15,7 +15,8 @@
   "vars": {
     "LIFEOS_OWNER_ID": "avi-lifeos-owner",
     "LIFEOS_ADAPTER_ID": "avi-mac-things-readonly",
-    "LIFEOS_GITHUB_OWNER_ID": "71009876"
+    "LIFEOS_GITHUB_OWNER_ID": "71009876",
+    "LIFEOS_WRITES_ENABLED": "true"
   },
   "d1_databases": [
     {
