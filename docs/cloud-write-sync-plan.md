@@ -1,6 +1,8 @@
 # Queued cloud writes and native Mac sync
 
-Status: proposed design, October 1, 2026. Live cloud access remains read-only. The user wants phone access to queued edits while the Mac is asleep, eventual application to Things, and a lightweight background agent without repeated Python Documents/Desktop prompts.
+Status: first implementation built and synthetically tested, October 1, 2026. Live cloud access remains read-only pending secure activation. The user authorized the native agent and automatic conflict priority. The implemented policy is Things wins on a changed field, with skipped cloud edits retained, rather than asking for manual conflict resolution.
+
+The implementation and secure setup are in [mac-sync](../mac-sync/README.md). It supports queued title changes and task completion, source-preserving migration, journal recovery and scoped OAuth write access. The following design records the broader direction and API limits; later field types remain future work.
 
 ## User experience
 
@@ -27,12 +29,12 @@ Store each edited field's base value, desired value and record ID. Before execut
 |---|---|
 | Equals the saved base value | Apply this field, preserving all other fields |
 | Already equals the desired value | Record the desired state as satisfied, without repeating the mutation |
-| Differs from both | Keep both versions and mark conflict for owner resolution |
+| Differs from both | Keep the Things value and retain a skipped cloud edit automatically |
 | Target is missing, trashed or its field is unsupported | Block the operation with a clear reason |
 
-A local notes edit should not prevent a cloud title edit. Two different title edits must not silently overwrite one another. Apply multiple queued operations on the same record in explicit order, using the preceding operation's resulting base, rather than treating every edit as independent. Undo after cloud acceptance needs a cancellation or compensating operation, depending on execution state.
+A local notes edit does not prevent a cloud title edit. Two different title edits automatically prefer the Things value, and the skipped cloud edit stays in the journal. New unclaimed cloud title edits supersede earlier queued title edits. A claimed operation cannot be replaced or stolen. Undo and cancellation remain future work; a later explicit edit is a new immutable operation.
 
-Things' public automation does not provide an atomic compare-and-set against its cloud revision. An iPhone edit can arrive between the Mac's check and write, or after a read that has not yet caught up with ThingsCloud. Value comparisons also cannot detect an edit followed by a revert. Consequently, guaranteed conflict-free two-way sync is not achievable through these APIs. A best-effort field merge with visible conflicts is the honest promise. Preserve before/after values for recovery and flag unexpected subsequent divergence. Do not invent a reliable ThingsCloud freshness barrier.
+Things' public automation does not provide an atomic compare-and-set against its cloud revision. An iPhone edit can arrive between the Mac's check and write, or after a read that has not yet caught up with ThingsCloud. Value comparisons also cannot detect an edit followed by a revert. Consequently, guaranteed conflict-free two-way sync is not achievable through these APIs. The implemented promise is a fresh field check, automatic Things priority and a retained outcome. The immutable operation retains the base and desired value for recovery; full before/after history is future work. Do not invent a reliable ThingsCloud freshness barrier.
 
 The initial release should enable explicit task completion and title changes, with same-field conflicts blocked. Add creation, dates, tags and moves in separate verified slices. Notes replacement, recurrence, checklist replacement, bulk edits and permanent deletion require separate policies and capability work. A native agent cannot make unsupported Things fields become supported.
 

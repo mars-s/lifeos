@@ -6,7 +6,8 @@
     "test": "node test.mjs",
     "typecheck": "tsc --noEmit",
     "dry-run": "wrangler deploy --dry-run",
-    "test:mcp": "node mcp-test.mjs"
+    "test:mcp": "node mcp-test.mjs",
+    "test:native": "node native-test.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

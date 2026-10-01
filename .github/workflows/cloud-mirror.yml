@@ -1,0 +1,27 @@
+name: Verify cloud mirror and native protocol
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: cloud-mirror/cloudflare/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: npm ci
+        working-directory: cloud-mirror/cloudflare
+      - run: npm run typecheck && npm run test:native && npm run test:mcp && npm test
+        working-directory: cloud-mirror/cloudflare
+      - run: python3 -W error::ResourceWarning -m unittest discover -s tests
+        working-directory: cloud-mirror
+      - run: node --test Tests/native-write.test.mjs && python3 -m unittest discover -s Tests
+        working-directory: mac-sync

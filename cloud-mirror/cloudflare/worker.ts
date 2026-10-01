@@ -1,10 +1,12 @@
-import {MirrorStore} from '../site/lib/mirror-store';
+import {MirrorStore,fingerprint} from '../site/lib/mirror-store';
+import {NativeQueue} from './native-queue';
 import {mirrorAPI} from '../site/lib/mirror-api';
 import {BulkD1} from './d1-bulk';
 import {timingSafeEqual} from 'node:crypto';
 // Wrangler generates the nonsecret bindings; secret bindings are optional until
 // the user-mediated provisioning step completes.
-declare global {interface Env {LIFEOS_SYNC_KEY_SHA256?:string;LIFEOS_READ_KEY_SHA256?:string}}
+declare global {interface Env {LIFEOS_SYNC_KEY_SHA256?:string;LIFEOS_READ_KEY_SHA256?:string;LIFEOS_AGENT_KEY_SHA256?:string;LIFEOS_WRITES_ENABLED?:string}}
+export const writesEnabled=(env:Env)=>env.LIFEOS_WRITES_ENABLED==='true'&&!!env.LIFEOS_AGENT_KEY_SHA256;
 
 const lists=['TMInboxListSource','TMTodayListSource','TMCalendarListSource','TMNextListSource','TMSomedayListSource','TMLogbookListSource','TMTrashListSource'];
 const reply=(body:unknown,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
@@ -27,12 +29,39 @@ function coverage(m:Record<string,unknown>) {
 export default {
   async fetch(request:Request,env:Env):Promise<Response> {
     const url=new URL(request.url);
-    if(url.pathname==='/health'&&request.method==='GET')return reply({status:'ok',mode:'read-only mirror',configured:!!env.LIFEOS_OWNER_ID&&!!env.LIFEOS_SYNC_KEY_SHA256});
+    if(url.pathname==='/health'&&request.method==='GET')return reply({status:'ok',mode:writesEnabled(env)?'queued mirror edits':'read-only mirror',configured:!!env.LIFEOS_OWNER_ID&&!!env.LIFEOS_SYNC_KEY_SHA256});
     if(!env.DB||!env.LIFEOS_OWNER_ID||!env.LIFEOS_ADAPTER_ID)return reply({error:'Private mirror setup incomplete.'},503);
     if(env.LIFEOS_SYNC_KEY_SHA256&&env.LIFEOS_SYNC_KEY_SHA256===env.LIFEOS_READ_KEY_SHA256)return reply({error:'Distinct role credentials required.'},503);
     // D1 has transaction-level guards, never rely on per-isolate serialization.
     const db=new BulkD1(env.DB),store=new MirrorStore(db,env.LIFEOS_OWNER_ID);
     try {
+      if(url.pathname.startsWith('/api/native/')) {
+        if(!writesEnabled(env))return reply({error:'Native write activation pending.'},503);
+        if(!await matches(request.headers.get('x-lifeos-agent-key')??'',env.LIFEOS_AGENT_KEY_SHA256))return reply({error:'Native agent authentication required.'},401);
+        if(request.headers.has('origin'))return reply({error:'Native routes do not accept browser requests.'},403);
+        const queue=new NativeQueue(db,env.LIFEOS_OWNER_ID),action=url.pathname.split('/').pop();
+        if(action==='pending'&&request.method==='GET')return reply({sequence:(await store.meta())?.sequence??0,operations:await queue.pending()});
+        if(request.method!=='POST'||!['snapshot','claim','ack','operation'].includes(action??''))return reply({error:'Native route not found.'},404);
+        if(!request.headers.get('content-type')?.includes('application/json'))return reply({error:'JSON required.'},415);
+        const input=JSON.parse(new TextDecoder().decode(await body(request,1024*1024)));
+        if(action==='operation')return reply(await queue.get(input.id));
+        if(action==='claim')return reply(await queue.claim(input.id,input.claim));
+        if(action==='ack')return reply(await queue.ack(input.id,input.claim,input.result));
+        if(!Array.isArray(input.items)||input.items.length>10000||Object.keys(input).sort().join(',')!=='items,manifest,sequence')return reply({error:'Complete inventory required.'},409);
+        coverage(input.manifest);
+        if(input.items.filter((i:{kind:string})=>['todo','project'].includes(i.kind)).length!==input.manifest.coverage_evidence.classified_records)return reply({error:'Classification count mismatch.'},409);
+        const pages=[];for(let n=0;n<input.items.length;n+=100)pages.push(input.items.slice(n,n+100));if(!pages.length)pages.push([]);
+        const manifest={...input.manifest,count:input.items.length,page_hashes:await Promise.all(pages.map(fingerprint))};
+        await store.begin({sequence:input.sequence,manifest});
+        for(let page=0;page<pages.length;page++)await store.page({sequence:input.sequence,page,items:pages[page]});
+        const result=await store.commit(input.sequence);
+        // Preserve retry receipts while bounding retained snapshot transport data.
+        await env.DB.batch([
+          env.DB.prepare('DELETE FROM mirror_pages WHERE owner=? AND sequence IN(SELECT sequence FROM mirror_uploads WHERE owner=? AND committed=1 ORDER BY sequence DESC LIMIT -1 OFFSET 2)').bind(env.LIFEOS_OWNER_ID,env.LIFEOS_OWNER_ID),
+          env.DB.prepare('DELETE FROM mirror_uploads WHERE owner=? AND committed=1 AND sequence IN(SELECT sequence FROM mirror_uploads WHERE owner=? AND committed=1 ORDER BY sequence DESC LIMIT -1 OFFSET 2)').bind(env.LIFEOS_OWNER_ID,env.LIFEOS_OWNER_ID)
+        ]);
+        return reply(result);
+      }
       if(url.pathname.startsWith('/api/sync/')) {
         if(!await matches(request.headers.get('x-lifeos-sync-key')??'',env.LIFEOS_SYNC_KEY_SHA256))return reply({error:'Sync authentication required.'},401);
         const action=url.pathname.split('/').pop();
