@@ -397,7 +397,7 @@ public struct JournalState: Codable, Sendable {
             }
             guard !journal.state.paused else { message = "Paused"; return }
             fetchedRevision = remote["revision"] as? Int ?? 0
-            if !blocked { try replica?.clearCommands() }
+            try replica?.clearCommands()
             if journal.state.smartSync && replica == nil { try await catchUpFeed() }
             }
             if journal.state.pendingUpload != nil { try await upload() }
