@@ -3,13 +3,13 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 const script=await readFile(new URL('../Resources/native-write.js',import.meta.url),'utf8');
-function apply({field='title',base='Original',desired='Cloud',current='Original',trash=false,failAfter=false,policy='things_wins',missing=false,recovering=false,intent='explicit_set',prepare=false,prepared}={}){
+function apply({field='title',base='Original',desired='Cloud',current='Original',trash=false,failAfter=false,policy='things_wins',missing=false,recovering=false,intent='explicit_set',prepare=false,prepared,baseFields,diverged=false}={}){
  let value=current,writes=0;
  const obj={id:()=> 'fixture'};
  for(const key of ['name','status'])Object.defineProperty(obj,key,{get:()=>()=>value,set:v=>{value=v;writes++;if(failAfter)throw Error('lost outcome');}});
  const lookup=()=>{if(missing)throw Error('absent target');return obj;};
  const app={running:()=>true,toDos:{byId:lookup},projects:{byId:lookup},lists:{byId:()=>({toDos:()=>trash?[obj]:[]})},delete:()=>{trash=true;writes++;if(failAfter)throw Error('lost outcome');}};
- const req=JSON.stringify({allow_write:true,app_path:'SYNTHETIC.app',payload:{version:policy==='smart_merge_v1'?3:2,intent_kind:intent,prepare_only:prepare,prepared_decision:prepared,recovering,target:'fixture',kind:'todo',field,value:desired,base:{state:'value',value:base},conflict_policy:policy}});
+ const req=JSON.stringify({allow_write:true,app_path:'SYNTHETIC.app',payload:{version:policy==='smart_merge_v1'?3:2,intent_kind:intent,prepare_only:prepare,prepared_decision:prepared,base_fields:baseFields,recorded_divergence:diverged,recovering,target:'fixture',kind:'todo',field,value:desired,base:{state:'value',value:base},conflict_policy:policy}});
  const context=vm.createContext({Application:()=>app,ObjC:{import(){},unwrap:x=>x},$:{NSFileHandle:{fileHandleWithStandardInput:{readDataToEndOfFile:req}},NSString:{alloc:{initWithDataEncoding:x=>x}},NSUTF8StringEncoding:4}});
  vm.runInContext(script,context);const result=JSON.parse(context.run());return {result,writes,value};
 }
@@ -71,4 +71,12 @@ test('smart ambiguous recovery never repeats a setter even when current equals t
  const result=apply({policy:'smart_merge_v1',recovering:true});
  assert.equal(result.writes,0);assert.equal(result.result.state,'uncertain');assert.equal(result.result.reason,'interrupted_write');
  const same=apply({policy:'smart_merge_v1',recovering:true,current:'Cloud'});assert.equal(same.writes,0);assert.equal(same.result.state,'satisfied');
+});
+test('smart Trash compares supported semantic fields and preserves the observed alternatives',()=>{
+ const baseFields={title:{state:'value',value:'Original'},status:{state:'value',value:'Original'}};
+ const request={policy:'smart_merge_v1',field:'in_trash_list',base:false,desired:true,prepare:true,baseFields};
+ assert.equal(apply(request).result.merge_decision.classification,'cloud_only');
+ const conflict=apply({...request,current:'Local'});assert.equal(conflict.result.merge_decision.classification,'delete_edit_cloud_fallback');
+ assert.equal(conflict.result.merge_decision.observed_fields.title.value,'Local');assert.equal(conflict.writes,0);
+ assert.equal(apply({...request,diverged:true}).result.merge_decision.classification,'delete_edit_cloud_fallback');
 });

@@ -137,6 +137,8 @@ final class PublicThings: ThingsAutomation {
                   let prepared = payload["prepared_decision"] as? JSON, let expected = prepared["local"] as? JSON else { throw SyncError.invalid }
             if decision["classification"] as? String == "same_value" || decision["classification"] as? String == "no_change" { return inspection }
             guard try encoded(local) == encoded(expected), local["state"] as? String == "value" else { return ["state": "uncertain", "reason": "verification_failed", "merge_decision": decision, "observed_before": local] }
+            guard let observedFields = decision["observed_fields"] as? JSON, let preparedFields = prepared["observed_fields"] as? JSON,
+                  try encoded(observedFields) == encoded(preparedFields) else { return ["state": "uncertain", "reason": "verification_failed", "merge_decision": decision, "observed_before": local] }
             var legacy = payload; legacy["conflict_policy"] = "cloud_wins"; legacy["version"] = 2
             let request = try TrashRequest(payload: legacy, appPath: appPath)
             var result = try decoded(await AutomationProcess.run([resource("native-trash", "applescript")] + request.arguments))

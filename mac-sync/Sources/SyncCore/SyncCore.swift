@@ -171,6 +171,7 @@ public struct JournalState: Codable, Sendable {
     }
     public func pause(_ value: Bool) throws { try journal.update { $0.paused = value }; message = value ? "Paused" : "Ready" }
     public var feedCursor: Int { (try? replica?.cursor) ?? 0 }
+    public var replicaCommandsPending: Bool { (try? replica?.commandsPending) ?? false }
     public func invalidateFeed(revision: Int, reconcile: Bool = false) throws -> Bool {
         guard revision >= 0 else { throw SyncError.invalid }
         let changed = revision > journal.state.feedHint || reconcile
