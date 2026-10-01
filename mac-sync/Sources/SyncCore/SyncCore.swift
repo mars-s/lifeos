@@ -16,7 +16,7 @@ public enum SyncError: Error, LocalizedError {
         case .migration: "Import the existing mirror journal before starting."
         case .configuration: "Secure credential unavailable. Use Authorize Keychain access once."
         case .automation: "Things automation is unavailable. Check its permission or open Things."
-        case .interrupted: "An interrupted operation was recorded without repeating it."
+        case .interrupted: "An interrupted operation needs journal recovery."
         case .invalid: "Unsupported or invalid sync data."
         }
     }
@@ -190,6 +190,15 @@ public struct JournalState: Codable, Sendable {
             let remote = try await cloud.request("operation", body: ["id": intent.id])
             guard remote["state"] as? String == "executing", remote["claim"] as? String == intent.claim,
                   let currentPayload = remote["payload"] as? JSON, try encoded(currentPayload) == intent.payload else { throw SyncError.interrupted }
+            guard let ordinal = remote["ordinal"] as? Int, ordinal > 0,
+                  let desiredRevision = remote["current_desired_revision"] as? Int, desiredRevision >= 0 else { throw SyncError.invalid }
+            if desiredRevision > ordinal {
+                intent.result = try encoded(["state": "skipped", "reason": "newer_cloud_edit"])
+                intent.phase = "receipt"
+                try journal.update { $0.intents[intent.id] = intent }
+                try await acknowledge(intent)
+                return
+            }
         }
         if intent.phase == "writing" && !recoverable {
             intent.result = try encoded(["state": "uncertain", "reason": "interrupted_write"])

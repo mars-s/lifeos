@@ -67,7 +67,12 @@ import CSQLite
             if supersedeBeforeClaim { operations[index]["state"] = "superseded"; throw SyncError.http(409) }
             operations[index]["claim"] = body!["claim"]; operations[index]["state"] = "executing"
             return operations[index]
-        case "operation": return operations.first { $0["id"] as? String == body!["id"] as? String }!
+        case "operation":
+            var operation = operations.first { $0["id"] as? String == body!["id"] as? String }!
+            let target = (operation["payload"] as? JSON)?["target"] as? String
+            let field = (operation["payload"] as? JSON)?["field"] as? String
+            operation["current_desired_revision"] = operations.filter { ($0["payload"] as? JSON)?["target"] as? String == target && ($0["payload"] as? JSON)?["field"] as? String == field }.compactMap { $0["ordinal"] as? Int }.max() ?? 0
+            return operation
         case "ack":
             ackBodies.append(try encoded(body!))
             acknowledgements += 1
@@ -80,7 +85,7 @@ import CSQLite
         }
     }
     func queue(_ id: String = "op", base: String = "Fixture", desired: String = "Cloud") {
-        operations.append(["id": id, "state": "queued", "payload": ["target": "task", "kind": "todo", "field": "title", "value": desired,
+        operations.append(["id": id, "ordinal": operations.count + 1, "state": "queued", "payload": ["target": "task", "kind": "todo", "field": "title", "value": desired,
                             "base": ["state": "value", "value": base], "conflict_policy": "things_wins"]])
     }
 }
@@ -308,4 +313,48 @@ import CSQLite
     #expect(journal.state.cloudGeneration == generation + 1)
     #expect(journal.state.cloudRevision == 9)
     #expect(try !engine.invalidate(revision: 9))
+}
+
+@Test @MainActor func newerDesiredRevisionPreventsInterruptedOlderSetterReplay() async throws {
+    let (root, journal, things, cloud, engine) = try fixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    cloud.queue("old", desired: "Older")
+    cloud.queue("new", desired: "Latest")
+    for index in cloud.operations.indices {
+        var payload = cloud.operations[index]["payload"] as! JSON
+        payload["version"] = 2; payload["conflict_policy"] = "cloud_wins"
+        cloud.operations[index]["payload"] = payload
+    }
+    let payload = cloud.operations[0]["payload"] as! JSON
+    cloud.operations[0]["state"] = "executing"; cloud.operations[0]["claim"] = "original"
+    var intent = Intent(id: "old", claim: "original", payload: try encoded(payload), phase: "writing", result: nil)
+    intent.appliedAfterSequence = 0
+    try journal.update { $0.intents["old"] = intent }
+    things.title = "Local after interruption"
+    await engine.cycle(force: true)
+    #expect(things.writes == 1)
+    #expect(things.title == "Latest")
+    #expect(cloud.operations[0]["state"] as? String == "skipped")
+    #expect((cloud.operations[0]["result"] as? JSON)?["reason"] as? String == "newer_cloud_edit")
+    #expect(cloud.operations[1]["state"] as? String == "applied")
+    #expect(journal.state.intents.isEmpty)
+}
+
+@Test @MainActor func finalCloudReceiptBlocksInterruptedRecoveryWithoutInventingReceipt() async throws {
+    let (root, journal, things, cloud, engine) = try fixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    cloud.queue()
+    var payload = cloud.operations[0]["payload"] as! JSON
+    payload["version"] = 2; payload["conflict_policy"] = "cloud_wins"
+    cloud.operations[0]["payload"] = payload
+    cloud.operations[0]["state"] = "uncertain"; cloud.operations[0]["claim"] = "original"
+    cloud.operations[0]["result"] = ["state": "uncertain", "reason": "interrupted_write"]
+    let intent = Intent(id: "op", claim: "original", payload: try encoded(payload), phase: "writing", result: nil)
+    try journal.update { $0.intents["op"] = intent }
+    await engine.cycle(force: true)
+    #expect(things.writes == 0)
+    #expect(cloud.ackBodies.isEmpty)
+    #expect(journal.state.intents["op"]?.phase == "writing")
+    #expect(journal.state.intents["op"]?.result == nil)
+    #expect(engine.message.contains("journal recovery"))
 }
