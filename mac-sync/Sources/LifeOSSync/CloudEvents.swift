@@ -70,7 +70,7 @@ final class CloudEvents {
                     let firstMessage = catchup; catchup = false
                     let confirmed = version == 3 ? await onFeedRevision?(revision, firstMessage) : await onRevision?(revision, firstMessage)
                     if let confirmed, confirmed >= revision {
-                        try await connection.send(NativeEventProtocol.acknowledgement(revision: confirmed, version: version))
+                        try await connection.send(NativeEventProtocol.acknowledgement(revision: revision, version: version))
                     }
                 }
             } catch {
