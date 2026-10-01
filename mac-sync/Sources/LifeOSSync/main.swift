@@ -51,6 +51,7 @@ final class Agent: NSObject, NSApplicationDelegate {
     func rebuildMenu() {
         let menu = NSMenu()
         menu.addItem(withTitle: engine?.message ?? setupMessage, action: nil, keyEquivalent: "")
+        if engine != nil, setupMessage != "Secure setup required" { menu.addItem(withTitle: setupMessage, action: nil, keyEquivalent: "") }
         if let engine {
             let date = engine.journal.state.lastSync.map { $0.formatted(date: .omitted, time: .standard) } ?? "Never"
             menu.addItem(withTitle: "Last sync: \(date)", action: nil, keyEquivalent: "")
@@ -78,7 +79,10 @@ final class Agent: NSObject, NSApplicationDelegate {
     @objc func syncNow() { Task { await sync(force: true) } }
     @objc func reload() { if engine == nil { loadEngine() }; rebuildMenu() }
     @objc func login() {
-        do { try SMAppService.mainApp.register() }
+        do {
+            if SMAppService.mainApp.status != .enabled { try SMAppService.mainApp.register() }
+            setupMessage = "Start at login is enabled"
+        }
         catch { setupMessage = "Approve LifeOS Sync in Login Items" }
         rebuildMenu()
     }

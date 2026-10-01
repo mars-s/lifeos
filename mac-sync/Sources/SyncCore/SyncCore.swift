@@ -148,6 +148,7 @@ public struct JournalState: Codable, Sendable {
             try journal.update { $0.intents[intent.id] = intent }
         }
         guard intent.phase == "claimed" else { throw SyncError.invalid }
+        guard !journal.state.paused else { return }
         intent.phase = "writing"
         try journal.update { $0.intents[intent.id] = intent }
         let result: JSON
@@ -182,11 +183,13 @@ public struct JournalState: Codable, Sendable {
             guard let remoteSequence = remote["sequence"] as? Int,
                   remoteSequence <= journal.state.sequence,
                   journal.state.sequence - remoteSequence <= (journal.state.pendingUpload == nil ? 0 : 1) else { throw SyncError.migration }
+            guard !journal.state.paused else { message = "Paused"; return }
             try await upload()
             let pending = try await cloud.request("pending", body: nil)
             guard let operations = pending["operations"] as? [JSON] else { throw SyncError.invalid }
             pendingCount = operations.count
             for op in operations {
+                if journal.state.paused { break }
                 guard let id = op["id"] as? String, let payload = op["payload"] as? JSON else { throw SyncError.invalid }
                 if op["state"] as? String == "executing" { message = "An operation is owned by another journal"; continue }
                 let intent = Intent(id: id, claim: UUID().uuidString, payload: try encoded(payload), phase: "prepared", result: nil)
@@ -194,8 +197,11 @@ public struct JournalState: Codable, Sendable {
                 try await execute(intent)
             }
             if !operations.isEmpty { try await upload() }
+            let remaining = try await cloud.request("pending", body: nil)
+            guard let waiting = remaining["operations"] as? [JSON] else { throw SyncError.invalid }
+            pendingCount = waiting.count
             try journal.update { $0.failures = 0; $0.retryAfter = nil }
-            message = operations.contains(where: { $0["state"] as? String == "executing" }) ? "An operation needs journal recovery" : "Synced"
+            message = journal.state.paused ? "Paused" : waiting.contains(where: { $0["state"] as? String == "executing" }) ? "An operation needs journal recovery" : "Synced"
         } catch {
             message = (error as? LocalizedError)?.errorDescription ?? "Sync paused for retry; journal retained"
             do { try journal.update { $0.failures = min($0.failures + 1, 8); $0.retryAfter = Date().addingTimeInterval(min(3600, pow(2, Double($0.failures)) * 15) + Double.random(in: 0...10)) } }

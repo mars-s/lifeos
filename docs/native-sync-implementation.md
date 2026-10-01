@@ -13,7 +13,7 @@ The user authorized implementation and automatic conflict priority. The first re
 - Online backup and sequence-preserving migration of the existing read-only mirror journal. Pending legacy uploads block migration rather than disappear.
 - User-operated activation script with hidden GitHub credential entry, app installation, private D1 export, additive native schema migration, separate Keychain key/hash and restoration of the old mirror helper if journal import fails.
 
-Validation:8 Swift recovery/migration tests,4 synthetic JXA writer tests,2 secure-provisioning tests,6 native Worker/OAuth tests,7 existing MCP/OAuth tests,9 existing snapshot Worker tests and74 existing companion Python tests passed. TypeScript checking and root Ruff passed. Release app builds and its local code signature verifies. The app bundle is approximately432 KiB; runtime memory and idle energy have not been measured. Tests do not mutate real Things tasks.
+Validation:9 Swift recovery/migration/pause tests,4 synthetic JXA writer tests,2 secure-provisioning tests,6 native Worker/OAuth tests,7 existing MCP/OAuth tests,9 existing snapshot Worker tests and74 existing companion Python tests passed. TypeScript checking and root Ruff passed. Release app builds and its local code signature verifies. The app bundle is approximately432 KiB; runtime memory and idle energy have not been measured. Tests do not mutate real Things tasks.
 
 ## Current production and secure handoff
 

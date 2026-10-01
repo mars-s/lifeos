@@ -61,6 +61,7 @@ try {
     await edit('two','Newest title');
     const page=JSON.parse((await write.sdk.callTool({name:'read_things_mirror',arguments:{}})).content[0].text);
     assert.equal(page.confirmed[0].fields.title.value,'Fixture title');
+    assert.equal(page.effective[0].fields.title.value,'Newest title');assert.equal(page.effective[0].verification,'pending');
     assert.equal(page.pending_overlay.length,1);assert.equal(page.pending_overlay[0].fields.title,'Newest title');
     assert.equal(page.native_operations.find(o=>o.id==='one').state,'superseded');
     assert.equal((await edit('bad','open','status')).isError,true);
@@ -82,6 +83,10 @@ try {
     const completion=JSON.parse((await edit('complete','completed','status')).content[0].text);assert.equal(completion.operation.state,'queued');
     const page=JSON.parse((await write.sdk.callTool({name:'read_things_mirror',arguments:{}})).content[0].text);assert.equal(page.confirmed.length,100);assert.equal(page.next_cursor,100);assert.equal(page.pending_overlay.length,1);
     assert.equal((await native('ack',{id:'complete',claim:'invented',result:{state:'applied'}})).status,409);
+    assert.equal((await native('claim',{id:'complete',claim:'verified-fixture'})).status,200);
+    assert.equal((await native('ack',{id:'complete',claim:'verified-fixture',result:{state:'satisfied'}})).status,200);
+    const retry=JSON.parse((await edit('complete','completed','status')).content[0].text);
+    assert.equal(retry.applied,true);assert.equal(retry.operation.state,'satisfied');
    });
   }finally{await read.sdk.close();await write.sdk.close();}
  });

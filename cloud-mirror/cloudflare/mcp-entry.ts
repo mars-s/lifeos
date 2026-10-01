@@ -109,20 +109,28 @@ async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Re
   // HTTP Origin is checked without trusting identity headers or static role keys.
   const source=request.headers.get('origin');
   if(source&&![origin,'https://chatgpt.com','https://chat.openai.com'].includes(source))return json({error:'Origin denied.'},403);
-  const server=new McpServer({name:'LifeOS Cloud Mirror',version:'0.2.0'});
+  const server=new McpServer({name:'LifeOS Cloud Mirror',version:'0.3.0'});
   const db=new BulkD1(env.DB),queue=new NativeQueue(db,env.LIFEOS_OWNER_ID);
-  server.registerTool('read_things_mirror',{description:'Read the last confirmed Things snapshot with sync age, timezone and a separate pending overlay. This cache is not live ThingsCloud. Follow next_cursor until null; restart pagination if sequence changes. Unsupported, absent and unknown fields remain explicit.',inputSchema:{cursor:z.number().int().min(0).max(10000).default(0)},annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async({cursor})=>{
+  server.registerTool('read_things_mirror',{description:'Read the confirmed Things snapshot with sync age, timezone and pending edits. When present, effective shows the cached view including queued edits, with pending operation markers. Confirmed remains the last verified Things state. This cache is not live ThingsCloud. Follow next_cursor until null; restart pagination if sequence changes. Unsupported, absent and unknown fields remain explicit.',inputSchema:{cursor:z.number().int().min(0).max(10000).default(0)},annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async({cursor})=>{
     const state=await new MirrorStore(db,env.LIFEOS_OWNER_ID).state(cursor);
     if(writesEnabled(env)) {
       const operations=await queue.recent(),pending=await queue.pending();
       Object.assign(state,{conflict_policy:'things_wins',native_operations:operations});
       state.pending_overlay.push(...pending.map(o=>({id:o.id,target:o.payload.target,fields:{[o.payload.field]:o.payload.value},state:o.state})));
+      Object.assign(state,{queue_view:'next 20 operations; durable journal retained',effective:state.confirmed.map(item=>{
+        const fields={...item.fields},pendingOperations=[];
+        for(const operation of pending)if(operation.payload.target===item.id){
+          fields[operation.payload.field]={state:'value',value:operation.payload.value};
+          pendingOperations.push({id:operation.id,field:operation.payload.field,state:operation.state});
+        }
+        return {...item,fields,pending_operations:pendingOperations,verification:pendingOperations.length?'pending':'confirmed'};
+      })});
     }
     return {content:[{type:'text',text:JSON.stringify(state)}],structuredContent:state};
   });
   if(writesEnabled(env)&&c.auth.scope.includes(writeScope)) {
-    server.registerTool('queue_things_edit',{description:'Durably queue one explicit owner-requested title change or task completion. Use a stable operation_id for retries and the field revision from read_things_mirror. Accepted means pending, not applied. Things wins on same-field conflicts. No script, arbitrary fields, delete or bulk edit.',inputSchema:{operation_id:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),target:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),field:z.enum(['title','status']),value:z.string().max(4000),base_revision:z.number().int().positive()},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async({operation_id,...input})=>{
-      try{const operation=await queue.enqueue({id:operation_id,...input});const result={operation,accepted:operation.state==='queued',applied:false,conflict_policy:'things_wins'};return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result};}
+    server.registerTool('queue_things_edit',{description:'Durably queue one explicit owner-requested title change or task completion. Use a stable operation_id for retries and the confirmed field revision from read_things_mirror. A newly accepted edit is pending until the native agent verifies it. Things wins on same-field conflicts. No script, arbitrary fields, delete or bulk edit.',inputSchema:{operation_id:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),target:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),field:z.enum(['title','status']),value:z.string().max(4000),base_revision:z.number().int().positive()},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async({operation_id,...input})=>{
+      try{const operation=await queue.enqueue({id:operation_id,...input});const result={operation,accepted:['queued','executing','applied','satisfied'].includes(operation.state),applied:['applied','satisfied'].includes(operation.state),conflict_policy:'things_wins'};return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result};}
       catch{return {content:[{type:'text',text:'Edit could not be queued. Refresh the target and use only title changes or completed status. An operation ID must never be reused for different content.'}],isError:true};}
     });
   }

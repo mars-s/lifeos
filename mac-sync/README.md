@@ -4,7 +4,7 @@ Swift6.3 menu-bar agent for the existing Cloudflare mirror. This version queues 
 
 ## What is built
 
-- Native menu-bar status, pause/resume, sync now, wake/network refresh and optional start at login.
+- Native menu-bar status, pause/resume, sync now, wake/network refresh, background launch of Things when needed and optional start at login.
 - App-scoped Keychain credential with no recurring interactive retrieval, no Python runtime and no 1Password runtime dependency.
 - Application Support journal, single-instance lock, persisted upload retries, intents before writes and receipts before cloud acknowledgement.
 - Read-before-write and read-back verification through fixed bundled public Things scripts. No private Things database access by the native agent.

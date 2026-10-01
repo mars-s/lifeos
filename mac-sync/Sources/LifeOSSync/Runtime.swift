@@ -119,6 +119,11 @@ final class PublicThings: ThingsAutomation {
         return result
     }
     func inventory() async throws -> JSON {
+        if !NSWorkspace.shared.runningApplications.contains(where: { $0.bundleURL?.path == appPath }) {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = false; configuration.hides = true
+            _ = try await NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: appPath), configuration: configuration)
+        }
         let before = try await classify()
         let request: JSON = ["action": "inventory", "app_path": appPath, "allow_write": false, "classifications": before]
         let output = try await AutomationProcess.run(["-l", "JavaScript", resource("things_read", "js")], input: encoded(request))

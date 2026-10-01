@@ -7,6 +7,7 @@ import CSQLite
     var title = "Fixture"
     var writes = 0
     var failInventory = false
+    var afterWrite: (() throws -> Void)?
     func inventory() async throws -> JSON {
         if failInventory { throw SyncError.automation }
         return ["items": [["id": "task", "kind": "todo", "fields": ["title": ["state": "value", "value": title]]]],
@@ -18,8 +19,21 @@ import CSQLite
         if title == payload["value"] as? String { return ["state": "satisfied"] }
         guard let base = payload["base"] as? JSON, title == base["value"] as? String else { return ["state": "skipped", "reason": "things_changed"] }
         writes += 1; title = payload["value"] as! String
+        try afterWrite?()
         return ["state": "applied"]
     }
+}
+@Test @MainActor func pauseStopsSubsequentWritesButKeepsCurrentReceipt() async throws {
+    let (root, journal, things, cloud, engine) = try fixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    cloud.queue("first"); cloud.queue("second", base: "Cloud", desired: "Later")
+    things.afterWrite = { try engine.pause(true) }
+    await engine.cycle(force: true)
+    #expect(things.writes == 1)
+    #expect(cloud.operations[0]["state"] as? String == "applied")
+    #expect(cloud.operations[1]["state"] as? String == "queued")
+    #expect(journal.state.intents.isEmpty)
+    #expect(engine.message == "Paused")
 }
 @MainActor final class FixtureCloud: CloudTransport {
     var sequence = 0
