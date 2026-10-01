@@ -37,7 +37,7 @@ async function connect(scope,includeWrites=false){
 }
 try {
  const db=await mf.getD1Database('DB');
- for(const name of ['0000_equal_spyke.sql','0001_hard_katie_power.sql','0002_native_sync.sql','0003_event_sync.sql'])await db.batch((await readFile('../site/drizzle/'+name,'utf8')).split('--> statement-breakpoint').map(s=>db.prepare(s.trim())));
+ for(const name of ['0000_equal_spyke.sql','0001_hard_katie_power.sql','0002_native_sync.sql','0003_event_sync.sql','0004_smart_sync.sql'])await db.batch((await readFile('../site/drizzle/'+name,'utf8')).split('--> statement-breakpoint').map(s=>db.prepare(s.trim())));
  await test('native queue, authenticated grants and complete snapshot transport',async t=>{
   await t.test('old upload key cannot claim native operations; browsers and arbitrary routes denied',async()=>{
    assert.equal((await native('pending',undefined,sync)).status,401);

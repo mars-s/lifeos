@@ -13,7 +13,8 @@ export async function fingerprint(v:unknown) {return Array.from(new Uint8Array(a
 function decoded(row:Record<string,unknown>):MirrorOperation {return {...row,content:JSON.parse(String(row.content)),result:row.result?JSON.parse(String(row.result)):null} as MirrorOperation;}
 function fail(message:string):never {throw new DemoError(message);}
 function validID(id:unknown):asserts id is string {if(typeof id!=="string"||!id||id.length>128)fail("Invalid ID.");}
-type Manifest={observed_at:string;zone:string;scopes:string[];count:number;page_hashes:string[];coverage:string;seen_cloud_revision?:number};
+export type ReceiptConfirmation={id:string;receipt_hash:string;applied_after_sequence:number;ordinal:number};
+type Manifest={observed_at:string;zone:string;scopes:string[];count:number;page_hashes:string[];coverage:string;seen_cloud_revision?:number;receipt_confirmations?:ReceiptConfirmation[]};
 export class MirrorStore {
   constructor(private db:Pick<D1Database,"prepare"|"batch">,private owner:string) {if(!owner)throw new DemoError("Owner context required.",401);}
   stmt(sql:string,...args:unknown[]) {return this.db.prepare(sql).bind(...args);}
@@ -22,12 +23,19 @@ export class MirrorStore {
     const row=await this.stmt("SELECT * FROM mirror_uploads WHERE owner=? AND sequence=?",this.owner,sequence).first<{manifest:string;manifest_hash:string;committed:number}>();
     if(!row)fail("Begin this inventory first.");return row;
   }
+  private async validateConfirmations(proofs:ReceiptConfirmation[]|undefined){
+    if(!proofs?.length)return;
+    const valid=await this.stmt(`SELECT COUNT(*) AS n FROM json_each(?) p JOIN native_operations o ON o.owner=? AND o.id=json_extract(p.value,'$.id') JOIN native_receipt_audit a ON a.owner=o.owner AND a.operation_id=o.id WHERE json_extract(o.payload,'$.version')=3 AND o.state IN ('applied','satisfied') AND o.ordinal=json_extract(p.value,'$.ordinal') AND json_extract(a.metadata,'$.receipt_hash')=json_extract(p.value,'$.receipt_hash') AND json_extract(a.metadata,'$.applied_after_sequence')=json_extract(p.value,'$.applied_after_sequence')`,canonical(proofs),this.owner).first<{n:number}>();
+    if(valid?.n!==proofs.length)fail('Receipt confirmation does not match immutable receipt.');
+  }
   async begin(input:{sequence:number;manifest:Manifest}) {
     const {sequence,manifest:m}=input;
     if(m?.seen_cloud_revision!==undefined&&(!Number.isSafeInteger(m.seen_cloud_revision)||m.seen_cloud_revision<0))fail('Invalid cloud revision.');
+    if(m?.receipt_confirmations!==undefined&&(!Array.isArray(m.receipt_confirmations)||m.receipt_confirmations.length>200||new Set(m.receipt_confirmations.map(p=>p.id)).size!==m.receipt_confirmations.length||m.receipt_confirmations.some(p=>!p||Object.keys(p).sort().join(',')!=='applied_after_sequence,id,ordinal,receipt_hash'||typeof p.id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(p.id)||typeof p.receipt_hash!=='string'||!/^[a-f0-9]{64}$/.test(p.receipt_hash)||!Number.isSafeInteger(p.ordinal)||p.ordinal<1||!Number.isSafeInteger(p.applied_after_sequence)||p.applied_after_sequence<0)))fail('Invalid receipt confirmations.');
     if(!Number.isSafeInteger(sequence)||sequence<1||!m||!Number.isInteger(m.count)||m.count<0||m.count>10000||!Array.isArray(m.page_hashes)||m.page_hashes.length<1||m.page_hashes.length>100||m.page_hashes.some(h=>!/^[a-f0-9]{64}$/.test(h))||!Array.isArray(m.scopes)||!m.scopes.length||new Set(m.scopes).size!==m.scopes.length||m.scopes.some(s=>!kinds.has(s)))fail("Invalid complete inventory manifest.");
     if(!/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(m.observed_at)||!Number.isFinite(Date.parse(m.observed_at))||Date.parse(m.observed_at)>Date.now()+30000)fail("Invalid observation timestamp.");
     try{new Intl.DateTimeFormat("en",{timeZone:m.zone});}catch{fail("IANA timezone required.");}
+    await this.validateConfirmations(m.receipt_confirmations);
     const prior=await this.meta();if(prior&&(sequence<prior.sequence||Date.parse(m.observed_at)<Date.parse(prior.observed_at)))fail("Stale inventory or lost helper journal; reconcile rather than resetting sequence.");
     const hash=await fingerprint(m);
     await this.stmt("INSERT OR IGNORE INTO mirror_uploads VALUES(?,?,?,?,0)",this.owner,sequence,canonical(m),hash).run();
@@ -45,6 +53,7 @@ export class MirrorStore {
     const upload=await this.upload(sequence);if(upload.committed)return {duplicate:true};
     const m:Manifest=JSON.parse(upload.manifest),prior=await this.meta();
     if(prior&&sequence<=prior.sequence)fail("A newer snapshot was already committed.");
+    await this.validateConfirmations(m.receipt_confirmations);
     const pages=await this.stmt("SELECT page,items,hash FROM mirror_pages WHERE owner=? AND sequence=? ORDER BY page",this.owner,sequence).all<{page:number;items:string;hash:string}>();
     if(pages.results.length!==m.page_hashes.length||pages.results.some((p,n)=>p.page!==n||p.hash!==m.page_hashes[n]))fail("Missing inventory pages; confirmed snapshot has not changed.");
     const items:MirrorItem[]=pages.results.flatMap(p=>JSON.parse(p.items));
@@ -70,7 +79,15 @@ export class MirrorStore {
     for(const item of priorItems.values())if(m.scopes.includes(item.kind))updates.push(this.stmt("UPDATE mirror_items SET deleted=1,observed_at=? WHERE owner=? AND id=? AND COALESCE((SELECT sequence FROM mirror_meta WHERE owner=?),0)=?",m.observed_at,this.owner,item.id,this.owner,prior?.sequence??0));
     updates.push(this.stmt("INSERT INTO mirror_meta VALUES(?,?,?,?,?,?) ON CONFLICT(owner) DO UPDATE SET sequence=excluded.sequence,manifest_hash=excluded.manifest_hash,observed_at=excluded.observed_at,received_at=excluded.received_at,zone=excluded.zone WHERE mirror_meta.sequence=? AND mirror_meta.sequence<excluded.sequence",this.owner,sequence,upload.manifest_hash,m.observed_at,at(),m.zone,prior?.sequence??0));
     updates.push(this.stmt("UPDATE mirror_uploads SET committed=1 WHERE owner=? AND sequence=? AND EXISTS(SELECT 1 FROM mirror_meta WHERE owner=? AND sequence=? AND manifest_hash=?)",this.owner,sequence,this.owner,sequence,upload.manifest_hash));
-    if(m.seen_cloud_revision!==undefined)updates.push(this.stmt(`DELETE FROM native_desired_fields WHERE owner=? AND ordinal<=? AND EXISTS(SELECT 1 FROM native_operations o JOIN native_receipt_audit a ON a.owner=o.owner AND a.operation_id=o.id JOIN mirror_items i ON i.owner=o.owner AND i.id=native_desired_fields.target WHERE o.owner=native_desired_fields.owner AND o.id=native_desired_fields.operation_id AND o.state IN ('applied','satisfied') AND ?>json_extract(a.metadata,'$.applied_after_sequence') AND i.deleted=0 AND json_extract(i.fields,'$.'||native_desired_fields.field||'.state')='value' AND json_extract(i.fields,'$.'||native_desired_fields.field||'.value')=json_extract(native_desired_fields.value,'$')) AND EXISTS(SELECT 1 FROM mirror_meta WHERE owner=? AND sequence=? AND manifest_hash=?)`,this.owner,m.seen_cloud_revision,sequence,this.owner,sequence,upload.manifest_hash));
+    if(m.seen_cloud_revision!==undefined)updates.push(this.stmt(`DELETE FROM native_desired_fields WHERE owner=? AND ordinal<=? AND EXISTS(SELECT 1 FROM native_operations o JOIN native_receipt_audit a ON a.owner=o.owner AND a.operation_id=o.id JOIN mirror_items i ON i.owner=o.owner AND i.id=native_desired_fields.target WHERE o.owner=native_desired_fields.owner AND o.id=native_desired_fields.operation_id AND json_extract(o.payload,'$.version') IS NOT 3 AND o.state IN ('applied','satisfied') AND ?>json_extract(a.metadata,'$.applied_after_sequence') AND i.deleted=0 AND json_extract(i.fields,'$.'||native_desired_fields.field||'.state')='value' AND json_extract(i.fields,'$.'||native_desired_fields.field||'.value')=json_extract(native_desired_fields.value,'$')) AND EXISTS(SELECT 1 FROM mirror_meta WHERE owner=? AND sequence=? AND manifest_hash=?)`,this.owner,m.seen_cloud_revision,sequence,this.owner,sequence,upload.manifest_hash));
+    if(m.receipt_confirmations?.length&&m.seen_cloud_revision!==undefined){
+      const proofs=canonical(m.receipt_confirmations);
+      updates.push(this.stmt(`INSERT OR IGNORE INTO native_reconciliations(owner,operation_id,ordinal,sequence,disposition,observed,receipt_hash)
+        SELECT d.owner,d.operation_id,d.ordinal,?,CASE WHEN i.deleted=0 AND (d.field='in_trash_list' OR COALESCE(json_extract(i.fields,'$.in_trash_list.value'),0)=0) AND json_extract(i.fields,'$.'||d.field||'.state')='value' AND json_extract(i.fields,'$.'||d.field||'.value')=json_extract(d.value,'$') THEN 'confirmed' ELSE 'post_write_review' END,COALESCE(json_extract(i.fields,'$.'||d.field),'{"state":"unknown"}'),json_extract(p.value,'$.receipt_hash')
+        FROM native_desired_fields d JOIN json_each(?) p ON json_extract(p.value,'$.id')=d.operation_id AND json_extract(p.value,'$.ordinal')=d.ordinal LEFT JOIN mirror_items i ON i.owner=d.owner AND i.id=d.target
+        WHERE d.owner=? AND d.ordinal<=? AND ?>json_extract(p.value,'$.applied_after_sequence') AND EXISTS(SELECT 1 FROM mirror_meta WHERE owner=? AND sequence=? AND manifest_hash=?)`,sequence,proofs,this.owner,m.seen_cloud_revision,sequence,this.owner,sequence,upload.manifest_hash));
+      updates.push(this.stmt('DELETE FROM native_desired_fields WHERE owner=? AND EXISTS(SELECT 1 FROM native_reconciliations r WHERE r.owner=native_desired_fields.owner AND r.operation_id=native_desired_fields.operation_id AND r.ordinal=native_desired_fields.ordinal AND r.sequence=?) AND EXISTS(SELECT 1 FROM mirror_meta WHERE owner=? AND sequence=? AND manifest_hash=?)',this.owner,sequence,this.owner,sequence,upload.manifest_hash));
+    }
     await this.db.batch(updates);
     if(!(await this.upload(sequence)).committed)fail("Inventory raced another upload; refresh.");return {duplicate:false};
   }

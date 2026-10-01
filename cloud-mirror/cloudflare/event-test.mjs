@@ -29,7 +29,7 @@ async function socket(){
 const message=ws=>new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Notification missing')),2000);ws.addEventListener('message',e=>{clearTimeout(timer);resolve(JSON.parse(e.data));},{once:true});});
 try{
  db=await mf.getD1Database('DB');
- for(const name of ['0000_equal_spyke.sql','0001_hard_katie_power.sql','0002_native_sync.sql','0003_event_sync.sql'])await db.batch((await readFile('../site/drizzle/'+name,'utf8')).split('--> statement-breakpoint').map(s=>db.prepare(s.trim())));
+ for(const name of ['0000_equal_spyke.sql','0001_hard_katie_power.sql','0002_native_sync.sql','0003_event_sync.sql','0004_smart_sync.sql'])await db.batch((await readFile('../site/drizzle/'+name,'utf8')).split('--> statement-breakpoint').map(s=>db.prepare(s.trim())));
  await test('event coordinator and causal overlays on local workerd',async t=>{
   const items=Array.from({length:45},(_,n)=>item('task-'+n));
   assert.equal((await snapshot(1,items,0)).status,200);

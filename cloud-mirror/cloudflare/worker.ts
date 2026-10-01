@@ -1,12 +1,14 @@
 import {MirrorStore,fingerprint} from '../site/lib/mirror-store';
 import {NativeQueue} from './native-queue';
 import {ownerSync} from './owner-sync';
+import {SyncFeed} from './sync-feed';
 import {mirrorAPI} from '../site/lib/mirror-api';
 import {BulkD1} from './d1-bulk';
 import {timingSafeEqual} from 'node:crypto';
+export {OwnerSync} from './owner-sync';
 // Wrangler generates the nonsecret bindings; secret bindings are optional until
 // the user-mediated provisioning step completes.
-declare global {interface Env {LIFEOS_SYNC_KEY_SHA256?:string;LIFEOS_READ_KEY_SHA256?:string;LIFEOS_AGENT_KEY_SHA256?:string}}
+declare global {interface Env {LIFEOS_SYNC_KEY_SHA256?:string;LIFEOS_READ_KEY_SHA256?:string;LIFEOS_AGENT_KEY_SHA256?:string;LIFEOS_SMART_SYNC_ENABLED?:string}}
 export const writesEnabled=(env:Env)=>env.LIFEOS_WRITES_ENABLED==='true'&&!!env.LIFEOS_AGENT_KEY_SHA256;
 
 const lists=['TMInboxListSource','TMTodayListSource','TMCalendarListSource','TMNextListSource','TMSomedayListSource','TMLogbookListSource','TMTrashListSource'];
@@ -40,18 +42,21 @@ export default {
         if(!writesEnabled(env))return reply({error:'Native write activation pending.'},503);
         if(!await matches(request.headers.get('x-lifeos-agent-key')??'',env.LIFEOS_AGENT_KEY_SHA256))return reply({error:'Native agent authentication required.'},401);
         if(request.headers.has('origin'))return reply({error:'Native routes do not accept browser requests.'},403);
-        const queue=new NativeQueue(db,env.LIFEOS_OWNER_ID),action=url.pathname.split('/').pop();
+        const queue=new NativeQueue(db,env.LIFEOS_OWNER_ID),feed=new SyncFeed(db,env.LIFEOS_OWNER_ID),action=url.pathname.split('/').pop();
+        if(url.search)return reply({error:'Native routes do not accept query parameters.'},400);
         if(action==='events'&&request.method==='GET'){
           if(url.search||request.headers.get('upgrade')?.toLowerCase()!=='websocket')return reply({error:'Native WebSocket required.'},400);
           return ownerSync(env).fetch(request);
         }
-        if(action==='pending'&&request.method==='GET')return reply({sequence:(await store.meta())?.sequence??0,revision:await queue.revision(),operations:await queue.pending(),overlaysNeedConfirmation:await queue.overlaysNeedConfirmation()});
-        if(request.method!=='POST'||!['snapshot','claim','ack','operation'].includes(action??''))return reply({error:'Native route not found.'},404);
+        if(action==='pending'&&request.method==='GET')return reply({sequence:(await store.meta())?.sequence??0,revision:await queue.revision(),operations:await queue.pending(),overlaysNeedConfirmation:await queue.overlaysNeedConfirmation(),smart_sync_version:3,feed_revision:await feed.revision()});
+        if(request.method!=='POST'||!['snapshot','claim','ack','operation','changes','bootstrap'].includes(action??''))return reply({error:'Native route not found.'},404);
         if(!request.headers.get('content-type')?.includes('application/json'))return reply({error:'JSON required.'},415);
         const input=JSON.parse(new TextDecoder().decode(await body(request,1024*1024)));
+        if(action==='changes')return reply(await feed.changes(input));
+        if(action==='bootstrap')return reply(await feed.bootstrap(input));
         if(action==='operation')return reply(await queue.operationStatus(input.id));
-        if(action==='claim')return reply(await queue.claim(input.id,input.claim));
-        if(action==='ack')return reply(await queue.ack(input.id,input.claim,input.result,input.applied_after_sequence!==undefined?{applied_after_sequence:input.applied_after_sequence,...input.observed_before!==undefined?{observed_before:input.observed_before}:{},...input.verified_after!==undefined?{verified_after:input.verified_after}:{}}:undefined));
+        if(action==='claim')return reply(await ownerSync(env).mutate('claim',input));
+        if(action==='ack')return reply(await ownerSync(env).mutate('ack',input));
         if(!Array.isArray(input.items)||input.items.length>10000||Object.keys(input).sort().join(',')!=='items,manifest,sequence')return reply({error:'Complete inventory required.'},409);
         coverage(input.manifest);
         if(input.items.filter((i:{kind:string})=>['todo','project'].includes(i.kind)).length!==input.manifest.coverage_evidence.classified_records)return reply({error:'Classification count mismatch.'},409);
@@ -59,7 +64,7 @@ export default {
         const manifest={...input.manifest,count:input.items.length,page_hashes:await Promise.all(pages.map(fingerprint))};
         await store.begin({sequence:input.sequence,manifest});
         for(let page=0;page<pages.length;page++)await store.page({sequence:input.sequence,page,items:pages[page]});
-        const result=await store.commit(input.sequence);
+        const result=await ownerSync(env).mutate('commit',{sequence:input.sequence});
         // Preserve retry receipts while bounding retained snapshot transport data.
         await env.DB.batch([
           env.DB.prepare('DELETE FROM mirror_pages WHERE owner=? AND sequence IN(SELECT sequence FROM mirror_uploads WHERE owner=? AND committed=1 ORDER BY sequence DESC LIMIT -1 OFFSET 2)').bind(env.LIFEOS_OWNER_ID,env.LIFEOS_OWNER_ID),
@@ -82,7 +87,7 @@ export default {
           const count=pages.results.flatMap(p=>JSON.parse(p.items)).filter(i=>['todo','project'].includes(i.kind)).length;
           if(count!==m.coverage_evidence.classified_records)return reply({error:'Incomplete classified inventory; confirmed data unchanged.'},409);
         }
-        const result=await mirrorAPI(new Request(request.url,{method:request.method,headers:request.headers,body:bytes}),db,{enabled:'true',owner:env.LIFEOS_OWNER_ID,adapter:env.LIFEOS_ADAPTER_ID,keyHash:env.LIFEOS_SYNC_KEY_SHA256});
+        const result=action==='commit'?reply((await store.upload(input.sequence)).committed?{duplicate:true}:await ownerSync(env).mutate('commit',{sequence:input.sequence})):await mirrorAPI(new Request(request.url,{method:request.method,headers:request.headers,body:bytes}),db,{enabled:'true',owner:env.LIFEOS_OWNER_ID,adapter:env.LIFEOS_ADAPTER_ID,keyHash:env.LIFEOS_SYNC_KEY_SHA256});
         if(action==='commit'&&result.ok) {
           // Keep the two newest committed transport snapshots for retry receipts.
           // Confirmed fields, tombstones, pending operations and audit are retained.

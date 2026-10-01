@@ -13,7 +13,7 @@ const {BulkD1}=await import('./.test-build/cloudflare/d1-bulk.js');
 const dir=await mkdtemp(join(tmpdir(),'lifeos-worker-fixture-'));
 const sync='SYNTHETIC-sync-fixture-only-at-least-32-characters',read='SYNTHETIC-read-fixture-only-at-least-32-characters';
 const hash=k=>createHash('sha256').update(k).digest('hex');
-const options={modules:true,script:await readFile('.test-worker.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'fixture'},d1Persist:dir,bindings:{LIFEOS_OWNER_ID:'fixed-owner',LIFEOS_ADAPTER_ID:'fixture-mac',LIFEOS_SYNC_KEY_SHA256:hash(sync),LIFEOS_READ_KEY_SHA256:hash(read)}};
+const options={modules:true,script:await readFile('.test-worker.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],durableObjects:{OWNER_SYNC:{className:'OwnerSync',useSQLite:true}},d1Databases:{DB:'fixture'},d1Persist:dir,bindings:{LIFEOS_OWNER_ID:'fixed-owner',LIFEOS_ADAPTER_ID:'fixture-mac',LIFEOS_SYNC_KEY_SHA256:hash(sync),LIFEOS_READ_KEY_SHA256:hash(read)}};
 const make=()=>new Miniflare({...convertV4MiniflareOptions(options),resourcePersistencePath:dir});
 let mf=make(),db=await mf.getD1Database('DB');
 const lists=['TMInboxListSource','TMTodayListSource','TMCalendarListSource','TMNextListSource','TMSomedayListSource','TMLogbookListSource','TMTrashListSource'];
@@ -26,7 +26,7 @@ async function begin(sequence,pages,overrides={}) {
 async function stage(sequence,pages) {assert.equal((await begin(sequence,pages)).status,200);for(let page=0;page<pages.length;page++)assert.equal((await request('/api/sync/page',{sequence,page,items:pages[page]})).status,200);}
 async function state(cursor=0){const r=await request('/state?cursor='+cursor,undefined,read);assert.equal(r.status,200);return r.json();}
 try {
- for(const migration of ['0000_equal_spyke.sql','0001_hard_katie_power.sql'])await db.batch((await readFile('../site/drizzle/'+migration,'utf8')).split('--> statement-breakpoint').map(s=>db.prepare(s.trim())));
+ for(const migration of ['0000_equal_spyke.sql','0001_hard_katie_power.sql','0002_native_sync.sql','0003_event_sync.sql','0004_smart_sync.sql'])await db.batch((await readFile('../site/drizzle/'+migration,'utf8')).split('--> statement-breakpoint').map(s=>db.prepare(s.trim())));
  await test('Workers read-only gateway on real local D1',async t=>{
   await t.test('unauthorized and spoofed Sites identity denied',async()=>{
    assert.equal((await request('/health',undefined,'')).status,200);

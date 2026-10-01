@@ -6,7 +6,7 @@ import mirror,{writesEnabled} from './worker';
 import {NativeQueue} from './native-queue';
 import {ownerSync} from './owner-sync';
 export {OwnerSync} from './owner-sync';
-import {MirrorStore} from '../site/lib/mirror-store';
+import {MirrorStore,canonical,type Cell} from '../site/lib/mirror-store';
 import {BulkD1} from './d1-bulk';
 
 // OAuth grants explicitly gate read access and queued writes.
@@ -20,7 +20,7 @@ const resource=origin+'/mcp';
 const scope='things:read';
 const writeScope='things:write';
 const writeSecurity={securitySchemes:[{type:'oauth2',scopes:[scope,writeScope]}]};
-const policyDescription=(env:Env)=>env.LIFEOS_CLOUD_WINS_ENABLED==='true'?'Explicit cloud edits take priority for the requested field until a later Things snapshot confirms them.':'Things wins if the edited field changed; skipped edits remain in the journal.';
+const policyDescription=(env:Env)=>env.LIFEOS_SMART_SYNC_ENABLED==='true'?'Supported fields merge automatically from the exact observed base. Explicit cloud commands resolve same-field conflicts; conflicting alternatives remain in the journal.':env.LIFEOS_CLOUD_WINS_ENABLED==='true'?'Explicit cloud edits take priority for the requested field until a later Things snapshot confirms them.':'Things wins if the edited field changed; skipped edits remain in the journal.';
 const writeConsent=()=>({content:[{type:'text' as const,text:'Reconnect LifeOS and approve things:write before queuing changes.'}],isError:true,_meta:{'mcp/www_authenticate':[`Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", scope="things:read things:write"`]}});
 type Identity={owner:string;github_id:string;role:'reader'};
 const json=(body:unknown,status:number)=>Response.json(body,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
@@ -129,28 +129,40 @@ async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Re
     Object.assign(state,{capabilities:{cloud_queue_enabled:writesEnabled(env),connection_can_write:writesEnabled(env)&&c.auth!.scope.includes(writeScope),supported_writes:['title','complete_todo','trash_todo'],write_access_action:c.auth!.scope.includes(writeScope)?null:'Reconnect this existing app and consent to things:write. Existing read-only grants cannot gain write permission automatically.'}});
     if(writesEnabled(env)) {
       const operations=await queue.recent(),pending=await queue.overlays();
-      Object.assign(state,{conflict_policy:env.LIFEOS_CLOUD_WINS_ENABLED==='true'?'cloud_wins':'things_wins',native_operations:operations});
+      Object.assign(state,{conflict_policy:env.LIFEOS_SMART_SYNC_ENABLED==='true'?'smart_merge_v1':env.LIFEOS_CLOUD_WINS_ENABLED==='true'?'cloud_wins':'things_wins',native_operations:operations});
       state.pending_overlay.push(...pending.map(o=>({id:o.id,target:o.payload.target,fields:{[o.payload.field]:o.payload.value},state:o.state})));
       Object.assign(state,{queue_view:'complete active desired fields; durable journal retained',effective:state.confirmed.map(item=>{
         const fields={...item.fields},pendingOperations=[];
         for(const operation of pending)if(operation.payload.target===item.id){
-          fields[operation.payload.field]={state:'value',value:operation.payload.value};
+          fields[operation.payload.field]={state:'value',value:operation.payload.value,revision:item.fields[operation.payload.field]?.revision};
           pendingOperations.push({id:operation.id,field:operation.payload.field,state:operation.state});
         }
         return {...item,fields,pending_operations:pendingOperations,verification:pendingOperations.length?'pending':'confirmed'};
       })});
+      if(env.LIFEOS_SMART_SYNC_ENABLED==='true'){
+        const effective=(state as typeof state&{effective:typeof state.confirmed}).effective;
+        await queue.effectiveBases(effective,pending,state.sequence);
+        const bases=await queue.presentationBases(state.confirmed.map(i=>i.id));
+        for(const [source,items] of [['confirmed',state.confirmed],['desired',effective]] as const)for(const item of items)for(const [field,cell] of Object.entries(item.fields) as [string,Cell][]){
+          const head=source==='desired'?pending.find(o=>o.payload.target===item.id&&o.payload.field===field):undefined;
+          const effectiveTarget=source==='desired'&&pending.some(o=>o.payload.target===item.id);
+          const vector=Object.fromEntries(['title','status','in_trash_list'].filter(k=>item.fields[k]).map(k=>{const {basis_token,...value}=item.fields[k] as Cell&{basis_token?:string};return [k,value];}));
+          const basis=bases.find(b=>b.target===item.id&&b.field===field&&(effectiveTarget?b.source==='effective'&&b.ordinal===(head?.ordinal??0)&&canonical(JSON.parse(b.target_fields))===canonical(vector):b.source==='confirmed'&&b.revision===cell.revision)&&JSON.parse(b.cell).value===cell.value);
+          if(basis)item.fields[field]={...cell,...{basis_token:basis.token}};
+        }
+      }
     }
     return {content:[{type:'text',text:JSON.stringify(state)}],structuredContent:state};
   });
   if(writesEnabled(env)) {
-    server.registerTool('queue_things_trash',{_meta:writeSecurity,description:'Durably queue an explicitly requested to-do deletion by moving it to Things Trash, where it remains recoverable. Never empties Trash or deletes projects. Use the confirmed in_trash_list revision and a stable operation_id. Pending until the Mac verifies Trash membership. '+policyDescription(env),inputSchema:{operation_id:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),target:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),base_revision:z.number().int().positive()},annotations:{readOnlyHint:false,destructiveHint:true,idempotentHint:true,openWorldHint:false}},async({operation_id,target,base_revision})=>{
+    server.registerTool('queue_things_trash',{_meta:writeSecurity,description:'Durably queue an explicitly requested to-do deletion by moving it to Things Trash, where it remains recoverable. Never empties Trash or deletes projects. Use the confirmed in_trash_list revision and a stable operation_id. Pending until the Mac verifies Trash membership. '+policyDescription(env),inputSchema:{operation_id:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),target:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),base_revision:z.number().int().positive(),basis_token:z.string().regex(/^[a-f0-9]{48}$/).optional()},annotations:{readOnlyHint:false,destructiveHint:true,idempotentHint:true,openWorldHint:false}},async({operation_id,target,base_revision,basis_token})=>{
       if(!c.auth!.scope.includes(writeScope))return writeConsent();
-      try{const operation=await ownerSync(env).enqueue({id:operation_id,target,base_revision,field:'in_trash_list',value:true});const result={operation,accepted:['accepted','queued','executing','applied','satisfied'].includes(operation.state),applied:['applied','satisfied'].includes(operation.state),recoverable:true};return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result};}
+      try{const operation=await ownerSync(env).enqueue({id:operation_id,target,base_revision,field:'in_trash_list',value:true,...basis_token?{basis_token}:{}});const result={operation,accepted:['accepted','queued','executing','applied','satisfied'].includes(operation.state),applied:['applied','satisfied'].includes(operation.state),recoverable:true};return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result};}
       catch{return {content:[{type:'text',text:'To-do could not be queued for Trash. Refresh its confirmed in_trash_list revision. Never reuse an operation ID for different content.'}],isError:true};}
     });
-    server.registerTool('queue_things_edit',{_meta:writeSecurity,description:'Durably queue one explicit owner-requested title change or task completion. Use a stable operation_id for retries and the confirmed field revision from read_things_mirror. A newly accepted edit is pending until the native agent verifies it. No script, arbitrary fields, delete or bulk edit. '+policyDescription(env),inputSchema:{operation_id:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),target:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),field:z.enum(['title','status']),value:z.string().max(4000),base_revision:z.number().int().positive()},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async({operation_id,...input})=>{
+    server.registerTool('queue_things_edit',{_meta:writeSecurity,description:'Durably queue one explicit owner-requested title change or task completion. Use a stable operation_id for retries and the confirmed field revision from read_things_mirror. A newly accepted edit is pending until the native agent verifies it. No script, arbitrary fields, delete or bulk edit. '+policyDescription(env),inputSchema:{operation_id:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),target:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),field:z.enum(['title','status']),value:z.string().max(4000),base_revision:z.number().int().positive(),basis_token:z.string().regex(/^[a-f0-9]{48}$/).optional()},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async({operation_id,...input})=>{
       if(!c.auth!.scope.includes(writeScope))return writeConsent();
-      try{const operation=await ownerSync(env).enqueue({id:operation_id,...input});const result={operation,accepted:['accepted','queued','executing','applied','satisfied'].includes(operation.state),applied:['applied','satisfied'].includes(operation.state),conflict_policy:env.LIFEOS_CLOUD_WINS_ENABLED==='true'?'cloud_wins':'things_wins'};return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result};}
+      try{const operation=await ownerSync(env).enqueue({id:operation_id,...input});const result={operation,accepted:['accepted','queued','executing','applied','satisfied'].includes(operation.state),applied:['applied','satisfied'].includes(operation.state),conflict_policy:env.LIFEOS_SMART_SYNC_ENABLED==='true'?'smart_merge_v1':env.LIFEOS_CLOUD_WINS_ENABLED==='true'?'cloud_wins':'things_wins'};return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result};}
       catch{return {content:[{type:'text',text:'Edit could not be queued. Refresh the target and use only title changes or completed status. An operation ID must never be reused for different content.'}],isError:true};}
     });
   }
