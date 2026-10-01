@@ -50,10 +50,13 @@ import CSQLite
     var supersedeBeforeClaim = false
     var events: [String] = []
     var confirmationNeeded = false
+    var failPending = false
     func request(_ path: String, body: JSON?) async throws -> JSON {
         events.append(path)
         switch path {
-        case "pending": return ["sequence": sequence, "revision": operations.count, "overlaysNeedConfirmation": confirmationNeeded, "operations": Array(operations.filter { ["queued", "executing"].contains($0["state"] as? String ?? "") }.sorted { ($0["state"] as? String == "queued" ? 0 : 1) < ($1["state"] as? String == "queued" ? 0 : 1) }.prefix(20))]
+        case "pending":
+            if failPending { throw SyncError.http(500) }
+            return ["sequence": sequence, "revision": operations.count, "overlaysNeedConfirmation": confirmationNeeded, "operations": Array(operations.filter { ["queued", "executing"].contains($0["state"] as? String ?? "") }.sorted { ($0["state"] as? String == "queued" ? 0 : 1) < ($1["state"] as? String == "queued" ? 0 : 1) }.prefix(20))]
         case "snapshot":
             let bytes = try encoded(body!); uploads.append(bytes)
             sequence = body!["sequence"] as! Int
@@ -262,4 +265,47 @@ import CSQLite
     #expect(cloud.events.firstIndex(of: "ack")! < cloud.events.firstIndex(of: "snapshot")!)
     #expect(cloud.uploads[1] == exact)
     #expect(journal.state.confirmedEventID == 42)
+}
+
+@Test @MainActor func automaticInvalidationsRespectFailureBackoffAndRetainWork() async throws {
+    let (root, journal, things, cloud, engine) = try fixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    cloud.failPending = true
+    try engine.invalidate(revision: 7)
+    await engine.cycle()
+    let deadline = journal.state.retryAfter
+    #expect(deadline != nil)
+    for event in 1...20 {
+        try engine.invalidate(local: true, revision: 7, eventID: UInt64(event))
+        await engine.cycle()
+    }
+    #expect(engine.pendingRequests == 1)
+    #expect(things.reads == 0)
+    #expect(journal.state.failures == 1)
+    #expect(journal.state.retryAfter == deadline)
+    #expect(journal.state.cloudGeneration == 1)
+    #expect(journal.state.localGeneration > journal.state.uploadedLocalGeneration)
+    #expect(journal.state.confirmedEventID == 0)
+    cloud.failPending = false
+    try journal.update { $0.retryAfter = Date().addingTimeInterval(-1) }
+    await engine.cycle()
+    #expect(engine.pendingRequests == 2)
+    #expect(things.reads == 1)
+    #expect(journal.state.retryAfter == nil)
+    #expect(journal.state.localGeneration == journal.state.uploadedLocalGeneration)
+    #expect(journal.state.confirmedEventID == 20)
+}
+
+@Test @MainActor func duplicateCloudHintsDoNotAddWorkButNewConnectionRetainsCatchup() throws {
+    let (root, journal, _, _, engine) = try fixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    #expect(try engine.invalidate(revision: 9))
+    let generation = journal.state.cloudGeneration
+    #expect(try !engine.invalidate(revision: 9))
+    #expect(try !engine.invalidate(revision: 8))
+    #expect(journal.state.cloudGeneration == generation)
+    #expect(try engine.invalidate(revision: 9, reconcile: true))
+    #expect(journal.state.cloudGeneration == generation + 1)
+    #expect(journal.state.cloudRevision == 9)
+    #expect(try !engine.invalidate(revision: 9))
 }

@@ -20,6 +20,7 @@ final class Agent: NSObject, NSApplicationDelegate {
     var wakeObserver: NSObjectProtocol?
     let network = NWPathMonitor()
     var online = false
+    var initialReconciliationPending = true
     var setupMessage = "Secure setup required"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -30,17 +31,18 @@ final class Agent: NSObject, NSApplicationDelegate {
         watcher.onStatus = { [weak self] in self?.writeStatus(); self?.rebuildMenu() }
         watcher.start(since: engine?.journal.state.confirmedEventID ?? 0)
         events.onStatus = { [weak self] _ in self?.writeStatus(); self?.rebuildMenu() }
-        events.onRevision = { [weak self] revision in
+        events.onRevision = { [weak self] revision, catchup in
             guard let self, let engine = self.engine else { return 0 }
-            do { try engine.invalidate(revision: revision) } catch { return 0 }
+            let changed: Bool
+            do { changed = try engine.invalidate(revision: revision, reconcile: catchup) } catch { return 0 }
             // A paused or busy owner retains durable reconciliation work before delivery ack.
-            if engine.busy || engine.journal.state.paused { return engine.journal.state.cloudRevision }
-            await self.sync(force: true)
-            return engine.fetchedRevision
+            if !changed || engine.busy || engine.journal.state.paused { return engine.journal.state.cloudRevision }
+            await self.sync()
+            return engine.journal.state.cloudRevision
         }
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification,
                                                                           object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.events.reconnect(); self?.watcher.start(since: self?.engine?.journal.state.confirmedEventID ?? 0); self?.invalidate(local: true) }
+            Task { @MainActor in self?.events.reconnect(); self?.watcher.start(since: self?.engine?.journal.state.confirmedEventID ?? 0); self?.invalidate(local: true, force: true) }
         }
         calendarObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] notification in
             let things = (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier == "com.culturedcode.ThingsMac"
@@ -54,10 +56,17 @@ final class Agent: NSObject, NSApplicationDelegate {
         scheduleMidnight()
         network.pathUpdateHandler = { [weak self] path in
             let online = path.status == .satisfied
-            Task { @MainActor in self?.online = online; self?.events.setOnline(online); if online { self?.invalidate(local: true) } else { self?.retry?.cancel() } }
+            Task { @MainActor in
+                guard let self else { return }
+                self.online = online; self.events.setOnline(online)
+                if online {
+                    let force = self.initialReconciliationPending
+                    self.initialReconciliationPending = false
+                    self.invalidate(local: true, force: force)
+                } else { self.retry?.cancel() }
+            }
         }
         network.start(queue: DispatchQueue(label: "LifeOSNetwork"))
-        Task { await sync(force: true) }
     }
     func loadEngine() {
         do {
@@ -82,12 +91,12 @@ final class Agent: NSObject, NSApplicationDelegate {
         if let date = engine.journal.state.retryAfter, !engine.journal.state.paused {
             retry = Task { do { try await Task.sleep(for: .seconds(max(0, date.timeIntervalSinceNow))); await sync() } catch { } }
         } else if !engine.journal.state.paused && (engine.journal.state.localGeneration > engine.journal.state.uploadedLocalGeneration || engine.journal.state.cloudGeneration > engine.journal.state.drainedCloudGeneration) {
-            Task { await sync(force: true) }
+            Task { await sync() }
         }
     }
-    func invalidate(local: Bool, eventID: UInt64? = nil) {
+    func invalidate(local: Bool, eventID: UInt64? = nil, force: Bool = false) {
         do { try engine?.invalidate(local: local, eventID: eventID) } catch { setupMessage = "Journal write failed" }
-        Task { await sync(force: true) }
+        Task { await sync(force: force) }
     }
     func scheduleMidnight() {
         midnight?.cancel()
@@ -130,8 +139,8 @@ final class Agent: NSObject, NSApplicationDelegate {
         catch { setupMessage = "Journal write failed" }
         rebuildMenu()
     }
-    @objc func syncNow() { invalidate(local: true) }
-    @objc func reload() { if engine == nil { loadEngine() }; events.reconnect(); invalidate(local: true); rebuildMenu() }
+    @objc func syncNow() { invalidate(local: true, force: true) }
+    @objc func reload() { if engine == nil { loadEngine() }; events.reconnect(); invalidate(local: true, force: true); rebuildMenu() }
     @objc func authorizeCredential() {
         do {
             _ = try Credential.read(interactive: true)

@@ -160,12 +160,16 @@ public struct JournalState: Codable, Sendable {
         self.journal = journal; self.cloud = cloud; self.things = things
     }
     public func pause(_ value: Bool) throws { try journal.update { $0.paused = value }; message = value ? "Paused" : "Ready" }
-    public func invalidate(local: Bool = false, revision: Int? = nil, eventID: UInt64? = nil) throws {
+    @discardableResult public func invalidate(local: Bool = false, revision: Int? = nil, eventID: UInt64? = nil, reconcile: Bool = false) throws -> Bool {
+        let newRevision = revision.map { $0 > journal.state.cloudRevision } ?? false
+        guard local || newRevision || reconcile else { return false }
         try journal.update {
             if local { $0.localGeneration += 1 }
             if let eventID { $0.localEventID = max($0.localEventID, eventID) }
-            if let revision { $0.cloudRevision = max($0.cloudRevision, revision); $0.cloudGeneration += 1 }
+            if let revision { $0.cloudRevision = max($0.cloudRevision, revision) }
+            if newRevision || reconcile { $0.cloudGeneration += 1 }
         }
+        return true
     }
     private func acknowledge(_ intent: Intent) async throws {
         guard let data = intent.result else { throw SyncError.invalid }

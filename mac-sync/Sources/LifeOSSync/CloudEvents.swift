@@ -6,7 +6,7 @@ final class CloudEvents {
     private var socket: URLSessionWebSocketTask?
     private var online = false
     private var session: URLSession
-    var onRevision: ((Int) async -> Int)?
+    var onRevision: ((Int, Bool) async -> Int)?
     var onStatus: ((String) -> Void)?
     private(set) var status = "Offline" { didSet { onStatus?(status) } }
     init() {
@@ -57,6 +57,7 @@ final class CloudEvents {
                     }
                 }
                 defer { maintenance.cancel(); connection.cancel(with: .goingAway, reason: nil) }
+                var catchup = true
                 while online && !Task.isCancelled {
                     let message = try await connection.receive()
                     let data: Data
@@ -64,7 +65,8 @@ final class CloudEvents {
                     guard data.count <= 1024, let revision = try decoded(data)["revision"] as? Int,
                           try decoded(data)["version"] as? Int == 1, revision >= 0 else { throw SyncError.invalid }
                     status = "Connected"; failures = 0
-                    if let confirmed = await onRevision?(revision), confirmed >= revision {
+                    let firstMessage = catchup; catchup = false
+                    if let confirmed = await onRevision?(revision, firstMessage), confirmed >= revision {
                         try await connection.send(.data(try encoded(["version": 1, "ack": confirmed])))
                     }
                 }
