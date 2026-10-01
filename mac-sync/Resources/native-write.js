@@ -39,5 +39,5 @@ function run() {
     if(trash)app.delete(obj);else if(p.field==='title')obj.name=p.value;else obj.status=p.value;
     const after=trash?app.lists.byId('TMTrashListSource').toDos().some(t=>t.id()===p.target):p.field==='title'?obj.name():obj.status();
     return receipt(after===p.value?'applied':'uncertain',after===p.value?null:'verification_failed',after,smart?p.prepared_decision.classification:undefined);
-  }catch(_){return receipt('uncertain','verification_failed');}
+  }catch(_){return receipt('uncertain','verification_failed',undefined,smart?p.prepared_decision.classification:undefined);}
 }
