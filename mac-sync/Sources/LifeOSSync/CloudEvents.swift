@@ -7,6 +7,7 @@ final class CloudEvents {
     private var online = false
     private var session: URLSession
     var onRevision: ((Int, Bool) async -> Int)?
+    var onFeedRevision: ((Int, Bool) async -> Int)?
     var onStatus: ((String) -> Void)?
     private(set) var status = "Offline" { didSet { onStatus?(status) } }
     init() {
@@ -31,7 +32,7 @@ final class CloudEvents {
             do {
                 var request = URLRequest(url: URL(string: "wss://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev/api/native/events")!)
                 request.setValue(try Credential.read(), forHTTPHeaderField: "X-LifeOS-Agent-Key")
-                request.setValue("2", forHTTPHeaderField: "X-LifeOS-Protocol")
+                request.setValue("3", forHTTPHeaderField: "X-LifeOS-Protocol")
                 let connection = session.webSocketTask(with: request)
                 socket = connection; connection.resume(); status = "Connecting"
                 // Register the socket before catch-up. The server sends its durable watermark.
@@ -62,12 +63,14 @@ final class CloudEvents {
                     let message = try await connection.receive()
                     let data: Data
                     switch message { case .data(let bytes): data = bytes; case .string(let string): data = Data(string.utf8); @unknown default: throw SyncError.invalid }
-                    guard data.count <= 1024, let revision = try decoded(data)["revision"] as? Int,
-                          try decoded(data)["version"] as? Int == 1, revision >= 0 else { throw SyncError.invalid }
+                    let value = try decoded(data)
+                    guard data.count <= 1024, let revision = value["revision"] as? Int,
+                          let version = value["version"] as? Int, [1, 3].contains(version), revision >= 0 else { throw SyncError.invalid }
                     status = "Connected"; failures = 0
                     let firstMessage = catchup; catchup = false
-                    if let confirmed = await onRevision?(revision, firstMessage), confirmed >= revision {
-                        try await connection.send(NativeEventProtocol.acknowledgement(revision: confirmed))
+                    let confirmed = version == 3 ? await onFeedRevision?(revision, firstMessage) : await onRevision?(revision, firstMessage)
+                    if let confirmed, confirmed >= revision {
+                        try await connection.send(NativeEventProtocol.acknowledgement(revision: confirmed, version: version))
                     }
                 }
             } catch {

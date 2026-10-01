@@ -62,14 +62,14 @@ final class HTTPSCloud: CloudTransport {
         session = URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
     }
     func request(_ path: String, body: JSON?) async throws -> JSON {
-        guard ["pending", "snapshot", "claim", "ack", "operation"].contains(path),
+        guard ["pending", "snapshot", "claim", "ack", "operation", "changes", "bootstrap"].contains(path),
               let url = URL(string: origin + "/api/native/" + path) else { throw SyncError.invalid }
         var request = URLRequest(url: url)
         request.httpMethod = body == nil ? "GET" : "POST"
         request.setValue(try Credential.read(), forHTTPHeaderField: "X-LifeOS-Agent-Key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("LifeOSNativeSync/2.0", forHTTPHeaderField: "User-Agent")
-        request.setValue("2", forHTTPHeaderField: "X-LifeOS-Protocol")
+        request.setValue("3", forHTTPHeaderField: "X-LifeOS-Protocol")
         if let body { request.httpBody = try encoded(body) }
         // Stream responses and abort above the known queue/snapshot response budget.
         let (bytes, response) = try await session.bytes(for: request)
@@ -130,6 +130,19 @@ final class PublicThings: ThingsAutomation {
         return try decoded(output)
     }
     func apply(_ payload: JSON) async throws -> JSON {
+        if payload["conflict_policy"] as? String == "smart_merge_v1", payload["field"] as? String == "in_trash_list" {
+            let inspection = try decoded(await AutomationProcess.run(["-l", "JavaScript", resource("native-write", "js")], input: encoded(["payload": payload.merging(["prepare_only": true]) { _, new in new }, "app_path": appPath, "allow_write": true])))
+            if payload["prepare_only"] as? Bool == true || payload["recovering"] as? Bool == true { return inspection }
+            guard let decision = inspection["merge_decision"] as? JSON, let local = decision["local"] as? JSON,
+                  let prepared = payload["prepared_decision"] as? JSON, let expected = prepared["local"] as? JSON else { throw SyncError.invalid }
+            if decision["classification"] as? String == "same_value" || decision["classification"] as? String == "no_change" { return inspection }
+            guard try encoded(local) == encoded(expected), local["state"] as? String == "value" else { return ["state": "uncertain", "reason": "verification_failed", "merge_decision": decision, "observed_before": local] }
+            var legacy = payload; legacy["conflict_policy"] = "cloud_wins"; legacy["version"] = 2
+            let request = try TrashRequest(payload: legacy, appPath: appPath)
+            var result = try decoded(await AutomationProcess.run([resource("native-trash", "applescript")] + request.arguments))
+            result["merge_decision"] = decision
+            return result
+        }
         if payload["field"] as? String == "in_trash_list" {
             let request = try TrashRequest(payload: payload, appPath: appPath)
             let data = try await AutomationProcess.run([resource("native-trash", "applescript")] + request.arguments)

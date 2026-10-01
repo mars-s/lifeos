@@ -40,6 +40,12 @@ final class Agent: NSObject, NSApplicationDelegate {
             await self.sync()
             return engine.journal.state.cloudRevision
         }
+        events.onFeedRevision = { [weak self] revision, catchup in
+            guard let self, let engine = self.engine else { return 0 }
+            do { _ = try engine.invalidateFeed(revision: revision, reconcile: catchup) } catch { return 0 }
+            if !engine.busy && !engine.journal.state.paused { await self.sync() }
+            return engine.feedCursor
+        }
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification,
                                                                           object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.events.reconnect(); self?.watcher.start(since: self?.engine?.journal.state.confirmedEventID ?? 0); self?.invalidate(local: true, force: true) }
@@ -90,7 +96,7 @@ final class Agent: NSObject, NSApplicationDelegate {
         retry?.cancel(); retry = nil
         if let date = engine.journal.state.retryAfter, !engine.journal.state.paused {
             retry = Task { do { try await Task.sleep(for: .seconds(max(0, date.timeIntervalSinceNow))); await sync() } catch { } }
-        } else if !engine.journal.state.paused && (engine.journal.state.localGeneration > engine.journal.state.uploadedLocalGeneration || engine.journal.state.cloudGeneration > engine.journal.state.drainedCloudGeneration) {
+        } else if !engine.journal.state.paused && (engine.journal.state.localGeneration > engine.journal.state.uploadedLocalGeneration || engine.journal.state.cloudGeneration > engine.journal.state.drainedCloudGeneration || engine.journal.state.feedHint > engine.feedCursor) {
             Task { await sync() }
         }
     }
@@ -105,7 +111,7 @@ final class Agent: NSObject, NSApplicationDelegate {
     }
     func writeStatus() {
         guard let engine else { return }
-        let summary: JSON = ["status": engine.message, "updated_at": ISO8601DateFormatter().string(from: Date()), "inventoryReads": engine.inventoryReads, "pendingRequests": engine.pendingRequests, "snapshotsUploaded": engine.snapshotsUploaded, "notificationRevision": engine.journal.state.cloudRevision, "connection": events.status, "watcher": watcher.status]
+        let summary: JSON = ["status": engine.message, "updated_at": ISO8601DateFormatter().string(from: Date()), "inventoryReads": engine.inventoryReads, "pendingRequests": engine.pendingRequests, "snapshotsUploaded": engine.snapshotsUploaded, "notificationRevision": engine.journal.state.cloudRevision, "feedCursor": engine.feedCursor, "feedHint": engine.journal.state.feedHint, "smartSync": engine.journal.state.smartSync, "connection": events.status, "watcher": watcher.status]
         try? encoded(summary).write(to: directory.appendingPathComponent("status.json"), options: .atomic)
     }
     func rebuildMenu() {
