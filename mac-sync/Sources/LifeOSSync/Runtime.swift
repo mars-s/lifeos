@@ -24,12 +24,17 @@ enum Credential {
         } else { throw SyncError.configuration }
         guard result == errSecSuccess else { throw SyncError.configuration }
     }
-    static func read() throws -> String {
-        let context = LAContext(); context.interactionNotAllowed = true
+    static func read(interactive: Bool = false) throws -> String {
+        // The login Keychain's legacy ACL dialogs are separate from biometrics.
+        // Background access must never block the menu bar behind a consent dialog.
+        if !interactive { SecKeychainSetUserInteractionAllowed(false) }
+        defer { if !interactive { SecKeychainSetUserInteractionAllowed(true) } }
+        let context = LAContext(); context.interactionNotAllowed = !interactive
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                    kSecAttrService as String: service, kSecAttrAccount as String: "agent",
                                    kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne,
-                                   kSecUseAuthenticationContext as String: context]
+                                   kSecUseAuthenticationContext as String: context,
+                                   kSecUseAuthenticationUI as String: interactive ? kSecUseAuthenticationUIAllow : kSecUseAuthenticationUIFail]
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
               let data = item as? Data, let key = String(data: data, encoding: .utf8),

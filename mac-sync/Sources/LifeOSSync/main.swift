@@ -40,6 +40,11 @@ final class Agent: NSObject, NSApplicationDelegate {
             guard FileManager.default.fileExists(atPath: config.appPath) else { throw SyncError.configuration }
             let journal = try Journal(url: directory.appendingPathComponent("journal.json"))
             engine = SyncEngine(journal: journal, cloud: HTTPSCloud(), things: PublicThings(appPath: config.appPath))
+            engine?.onStatus = { [weak self] status in
+                guard let self else { return }
+                let summary: JSON = ["status": status, "updated_at": ISO8601DateFormatter().string(from: Date())]
+                try? encoded(summary).write(to: self.directory.appendingPathComponent("status.json"), options: .atomic)
+            }
         } catch { setupMessage = (error as? LocalizedError)?.errorDescription ?? "Secure setup required" }
     }
     func sync(force: Bool = false) async {
@@ -62,6 +67,7 @@ final class Agent: NSObject, NSApplicationDelegate {
             add(menu, "Sync now", #selector(syncNow))
         }
         add(menu, "Reload secure setup", #selector(reload))
+        add(menu, "Authorize Keychain access once", #selector(authorizeCredential))
         add(menu, "Start at login", #selector(login))
         menu.addItem(.separator())
         add(menu, "Quit LifeOS Sync", #selector(quit))
@@ -78,6 +84,14 @@ final class Agent: NSObject, NSApplicationDelegate {
     }
     @objc func syncNow() { Task { await sync(force: true) } }
     @objc func reload() { if engine == nil { loadEngine() }; rebuildMenu() }
+    @objc func authorizeCredential() {
+        do {
+            _ = try Credential.read(interactive: true)
+            setupMessage = "Keychain access approved"
+            Task { await sync(force: true) }
+        } catch { setupMessage = "Keychain access was not approved" }
+        rebuildMenu()
+    }
     @objc func login() {
         do {
             if SMAppService.mainApp.status != .enabled { try SMAppService.mainApp.register() }

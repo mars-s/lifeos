@@ -27,4 +27,10 @@ The installed native app uploaded a fresh 59-record snapshot at sequence 35, wit
 
 The first installed reader rejected compiled AppleScript's raw Things dictionary class codes. The reader now accepts the verified `tstk`, `tslt` and `tspt` codes as well as their term names. Regression tests cover repeated list entries and reject conflicting or unknown classes. All 11 Swift tests passed, and the corrected installed reader completed its live inventory and upload.
 
+## Queued deletion and authorization repair
+
+The server now advertises read/write scopes for initial authorization, includes tool-level OAuth metadata and an insufficient-scope challenge, and explicitly reports whether the current connection can write. Old reader grants cannot execute writes. `queue_things_trash` queues a to-do move to recoverable Things Trash; projects and permanent deletion remain unavailable. Seven native/OAuth tests and five synthetic writer tests passed. The installed writer moved one explicitly created disposable task to Things Trash and verified membership; a retry reported satisfied without another mutation.
+
+The complete cloud queue to native receipt round trip is still unverified. The updated ad-hoc build requires owner Keychain trust. A live process sample showed the previous build waiting inside `SecItemCopyMatching`. Background access now explicitly disables legacy Keychain interaction as well as biometric interaction, returns a clear status promptly, and exposes an owner-operated authorization menu action. Its private status file contains only a fixed diagnostic message and timestamp. The existing plugin's read/write OAuth consent was prepared in Helium but not approved by the agent. Owner consent and Keychain trust are the remaining activation steps.
+
 Actual queued phone edit while the Mac is asleep, native execution after wake, Mac read-back receipt and Things iPhone visibility remain unverified until this secure activation. No perfect cross-device conflict-free or exactly-once guarantee is claimed. The original local Python MCP adapter remains installed, so prompts from that separate legacy reader may still need a later migration.

@@ -7,7 +7,7 @@ import {NativeQueue} from './native-queue';
 import {MirrorStore} from '../site/lib/mirror-store';
 import {BulkD1} from './d1-bulk';
 
-// Deployed read-only entry. Credentials are native Worker secret bindings.
+// OAuth grants explicitly gate read access and queued writes.
 type OAuthEnv=Env & {
   OAUTH_KV?:KVNamespace; OAUTH_PROVIDER?:OAuthHelpers;
   GITHUB_CLIENT_ID?:string; GITHUB_CLIENT_SECRET?:string;
@@ -17,6 +17,8 @@ const origin='https://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev';
 const resource=origin+'/mcp';
 const scope='things:read';
 const writeScope='things:write';
+const writeSecurity={securitySchemes:[{type:'oauth2',scopes:[scope,writeScope]}]};
+const writeConsent=()=>({content:[{type:'text' as const,text:'Reconnect LifeOS and approve things:write before queuing changes.'}],isError:true,_meta:{'mcp/www_authenticate':[`Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", scope="things:read things:write"`]}});
 type Identity={owner:string;github_id:string;role:'reader'};
 const json=(body:unknown,status:number)=>Response.json(body,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 const escape=(value:string)=>value.replace(/[&<>"']/g,c=>`&#${c.charCodeAt(0)};`);
@@ -43,7 +45,7 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       const clientOrigin=new URL(req.redirectUri).origin;
       headers.set('Content-Security-Policy',`default-src 'none'; form-action 'self' https://github.com ${clientOrigin}; base-uri 'none'; frame-ancestors 'none'`);
       const writing=req.scope.includes(writeScope);
-      return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><title>LifeOS access</title><h1>Allow ${writing?'reading and queued edits':'cloud mirror reading'}?</h1><p>${escape(facts.clientName)} requests access to cached Things tasks, projects, areas and tags, including notes.${writing?' It may queue title changes and task completion. Your Mac applies them when awake. Things wins if the edited field changed; skipped edits remain in the journal.':' Changes remain disabled for this grant.'}</p><p>Tokens return to ${escape(facts.redirectHost)}.${facts.redirectIsLoopback?' This is a local app; verify which app requested access.':''}</p><p>Permissions: things:read${writing?', things:write':''}. Offline access lets the client refresh its sign-in.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><button name="decision" value="allow">Allow with GitHub</button><button name="decision" value="deny">Deny</button></form></html>`,{headers});
+      return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><title>LifeOS access</title><h1>Allow ${writing?'reading and queued edits':'cloud mirror reading'}?</h1><p>${escape(facts.clientName)} requests access to cached Things tasks, projects, areas and tags, including notes.${writing?' It may queue title changes, task completion and moving to-dos to recoverable Things Trash. Your Mac applies them when awake. Things wins if the edited field changed; skipped edits remain in the journal.':' Changes remain disabled for this grant.'}</p><p>Tokens return to ${escape(facts.redirectHost)}.${facts.redirectIsLoopback?' This is a local app; verify which app requested access.':''}</p><p>Permissions: things:read${writing?', things:write':''}. Offline access lets the client refresh its sign-in.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><button name="decision" value="allow">Allow with GitHub</button><button name="decision" value="deny">Deny</button></form></html>`,{headers});
     }
     if(url.pathname==='/authorize'&&request.method==='POST') {
       stage='consent_session';
@@ -109,10 +111,11 @@ async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Re
   // HTTP Origin is checked without trusting identity headers or static role keys.
   const source=request.headers.get('origin');
   if(source&&![origin,'https://chatgpt.com','https://chat.openai.com'].includes(source))return json({error:'Origin denied.'},403);
-  const server=new McpServer({name:'LifeOS Cloud Mirror',version:'0.3.0'});
+  const server=new McpServer({name:'LifeOS Cloud Mirror',version:'0.4.0'});
   const db=new BulkD1(env.DB),queue=new NativeQueue(db,env.LIFEOS_OWNER_ID);
   server.registerTool('read_things_mirror',{description:'Read the confirmed Things snapshot with sync age, timezone and pending edits. When present, effective shows the cached view including queued edits, with pending operation markers. Confirmed remains the last verified Things state. This cache is not live ThingsCloud. Follow next_cursor until null; restart pagination if sequence changes. Unsupported, absent and unknown fields remain explicit.',inputSchema:{cursor:z.number().int().min(0).max(10000).default(0)},annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async({cursor})=>{
     const state=await new MirrorStore(db,env.LIFEOS_OWNER_ID).state(cursor);
+    Object.assign(state,{capabilities:{cloud_queue_enabled:writesEnabled(env),connection_can_write:writesEnabled(env)&&c.auth!.scope.includes(writeScope),supported_writes:['title','complete_todo','trash_todo'],write_access_action:c.auth!.scope.includes(writeScope)?null:'Reconnect this existing app and consent to things:write. Existing read-only grants cannot gain write permission automatically.'}});
     if(writesEnabled(env)) {
       const operations=await queue.recent(),pending=await queue.pending();
       Object.assign(state,{conflict_policy:'things_wins',native_operations:operations});
@@ -128,8 +131,14 @@ async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Re
     }
     return {content:[{type:'text',text:JSON.stringify(state)}],structuredContent:state};
   });
-  if(writesEnabled(env)&&c.auth.scope.includes(writeScope)) {
-    server.registerTool('queue_things_edit',{description:'Durably queue one explicit owner-requested title change or task completion. Use a stable operation_id for retries and the confirmed field revision from read_things_mirror. A newly accepted edit is pending until the native agent verifies it. Things wins on same-field conflicts. No script, arbitrary fields, delete or bulk edit.',inputSchema:{operation_id:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),target:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),field:z.enum(['title','status']),value:z.string().max(4000),base_revision:z.number().int().positive()},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async({operation_id,...input})=>{
+  if(writesEnabled(env)) {
+    server.registerTool('queue_things_trash',{_meta:writeSecurity,description:'Durably queue an explicitly requested to-do deletion by moving it to Things Trash, where it remains recoverable. Never empties Trash or deletes projects. Use the confirmed in_trash_list revision and a stable operation_id. Pending until the Mac verifies Trash membership. Things wins conflicts.',inputSchema:{operation_id:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),target:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),base_revision:z.number().int().positive()},annotations:{readOnlyHint:false,destructiveHint:true,idempotentHint:true,openWorldHint:false}},async({operation_id,target,base_revision})=>{
+      if(!c.auth!.scope.includes(writeScope))return writeConsent();
+      try{const operation=await queue.enqueue({id:operation_id,target,base_revision,field:'in_trash_list',value:true});const result={operation,accepted:['queued','executing','applied','satisfied'].includes(operation.state),applied:['applied','satisfied'].includes(operation.state),recoverable:true};return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result};}
+      catch{return {content:[{type:'text',text:'To-do could not be queued for Trash. Refresh its confirmed in_trash_list revision. Never reuse an operation ID for different content.'}],isError:true};}
+    });
+    server.registerTool('queue_things_edit',{_meta:writeSecurity,description:'Durably queue one explicit owner-requested title change or task completion. Use a stable operation_id for retries and the confirmed field revision from read_things_mirror. A newly accepted edit is pending until the native agent verifies it. Things wins on same-field conflicts. No script, arbitrary fields, delete or bulk edit.',inputSchema:{operation_id:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),target:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),field:z.enum(['title','status']),value:z.string().max(4000),base_revision:z.number().int().positive()},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async({operation_id,...input})=>{
+      if(!c.auth!.scope.includes(writeScope))return writeConsent();
       try{const operation=await queue.enqueue({id:operation_id,...input});const result={operation,accepted:['queued','executing','applied','satisfied'].includes(operation.state),applied:['applied','satisfied'].includes(operation.state),conflict_policy:'things_wins'};return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result};}
       catch{return {content:[{type:'text',text:'Edit could not be queued. Refresh the target and use only title changes or completed status. An operation ID must never be reused for different content.'}],isError:true};}
     });
@@ -139,7 +148,7 @@ async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Re
   try {const response=await transport.handleRequest(request);response.headers.set('Cache-Control','no-store');return response;}
   finally {await server.close();}
 }
-const provider=new OAuthProvider<OAuthEnv>({apiRoute:'/mcp',apiHandler:{fetch:mcp},defaultHandler:{fetch:auth},authorizeEndpoint:'/authorize',tokenEndpoint:'/oauth/token',clientRegistrationEndpoint:'/oauth/register',clientIdMetadataDocumentEnabled:false,scopesSupported:[scope,writeScope,'offline_access'],requiredScopes:[scope],resourceMetadata:{resource,authorization_servers:[origin],resource_name:'LifeOS cloud mirror'},accessTokenTTL:3600,refreshTokenTTL:2592000,clientRegistrationTTL:7776000,onError:()=>{},tokenExchangeCallback(options){if(!owner(options.props,options.env)||options.scope.some(s=>![scope,writeScope,'offline_access'].includes(s))||options.scope.includes(writeScope)&&!writesEnabled(options.env))throw new OAuthError('invalid_grant',{description:'Owner grant required.'});}});
+const provider=new OAuthProvider<OAuthEnv>({apiRoute:'/mcp',apiHandler:{fetch:mcp},defaultHandler:{fetch:auth},authorizeEndpoint:'/authorize',tokenEndpoint:'/oauth/token',clientRegistrationEndpoint:'/oauth/register',clientIdMetadataDocumentEnabled:false,scopesSupported:[scope,writeScope,'offline_access'],requiredScopes:[scope,writeScope],resourceMetadata:{resource,authorization_servers:[origin],resource_name:'LifeOS cloud mirror'},accessTokenTTL:3600,refreshTokenTTL:2592000,clientRegistrationTTL:7776000,onError:()=>{},tokenExchangeCallback(options){if(!owner(options.props,options.env)||options.scope.some(s=>![scope,writeScope,'offline_access'].includes(s))||options.scope.includes(writeScope)&&!writesEnabled(options.env))throw new OAuthError('invalid_grant',{description:'Owner grant required.'});}});
 export default {async fetch(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Response> {
   const path=new URL(request.url).pathname;
   if(path==='/health'||path==='/state'||path.startsWith('/api/'))return mirror.fetch(request,env);

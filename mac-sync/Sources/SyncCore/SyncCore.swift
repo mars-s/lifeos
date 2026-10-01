@@ -13,7 +13,7 @@ public enum SyncError: Error, LocalizedError {
         case .http: "Cloud request failed; the durable journal is retained."
         case .storage: "Local journal could not be saved. Sync is stopped."
         case .migration: "Import the existing mirror journal before starting."
-        case .configuration: "Finish secure connection setup to start syncing."
+        case .configuration: "Secure credential unavailable. Use Authorize Keychain access once."
         case .automation: "Things automation is unavailable. Check its permission or open Things."
         case .interrupted: "An interrupted operation was recorded without repeating it."
         case .invalid: "Unsupported or invalid sync data."
@@ -110,7 +110,8 @@ public struct JournalState: Codable, Sendable {
     private let cloud: any CloudTransport
     private let things: any ThingsAutomation
     public private(set) var busy = false
-    public private(set) var message = "Paused"
+    public var onStatus: ((String) -> Void)?
+    public private(set) var message = "Paused" { didSet { onStatus?(message) } }
     public private(set) var pendingCount = 0
     public init(journal: Journal, cloud: any CloudTransport, things: any ThingsAutomation) {
         self.journal = journal; self.cloud = cloud; self.things = things
@@ -161,6 +162,7 @@ public struct JournalState: Codable, Sendable {
     }
     private func upload() async throws {
         if journal.state.pendingUpload == nil {
+            message = "Reading Things inventory"
             let inventory = try await things.inventory()
             guard let items = inventory["items"] as? [JSON], items.count <= 10000 else { throw SyncError.invalid }
             var manifest = inventory; manifest.removeValue(forKey: "items")
@@ -170,6 +172,7 @@ public struct JournalState: Codable, Sendable {
             try journal.update { $0.sequence += 1; $0.pendingUpload = data }
         }
         guard let data = journal.state.pendingUpload else { throw SyncError.invalid }
+        message = "Uploading cloud snapshot"
         _ = try await cloud.request("snapshot", body: decoded(data))
         try journal.update { $0.pendingUpload = nil; $0.lastSync = Date() }
     }
@@ -178,6 +181,7 @@ public struct JournalState: Codable, Sendable {
         guard force || journal.state.retryAfter.map({ $0 <= Date() }) ?? true else { return }
         busy = true; defer { busy = false }
         do {
+            message = "Reading cloud queue"
             for saved in journal.state.intents.values.sorted(by: { $0.id < $1.id }) { try await execute(saved) }
             let remote = try await cloud.request("pending", body: nil)
             guard let remoteSequence = remote["sequence"] as? Int,

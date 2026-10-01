@@ -46,12 +46,14 @@ try {
   const read=await connect('things:read offline_access'),write=await connect('things:read things:write offline_access');
   try {
    await t.test('read grants remain read-only after activation and cannot expand on refresh',async()=>{
-    assert.deepEqual((await read.sdk.listTools()).tools.map(t=>t.name),['read_things_mirror']);
+    const tools=(await read.sdk.listTools()).tools;
+    assert.deepEqual(tools.map(t=>t.name),['read_things_mirror','queue_things_trash','queue_things_edit']);
+    assert.deepEqual(tools.find(t=>t.name==='queue_things_edit')._meta.securitySchemes,[{type:'oauth2',scopes:['things:read','things:write']}]);
     assert.equal((await read.sdk.callTool({name:'queue_things_edit',arguments:{}})).isError,true);
     const refresh=await read.req('/oauth/token',new URLSearchParams({grant_type:'refresh_token',client_id:read.client,refresh_token:read.access.refresh_token,scope:'things:read things:write offline_access',resource}));
     if(refresh.status===200)assert.ok(!(await refresh.json()).scope.split(' ').includes('things:write'));
     else assert.equal(refresh.status,400);
-    assert.deepEqual((await write.sdk.listTools()).tools.map(t=>t.name),['read_things_mirror','queue_things_edit']);
+    assert.deepEqual((await write.sdk.listTools()).tools.map(t=>t.name),['read_things_mirror','queue_things_trash','queue_things_edit']);
    });
    const edit=async(operation_id,value,field='title',base_revision=1)=>write.sdk.callTool({name:'queue_things_edit',arguments:{operation_id,target:'task',field,value,base_revision}});
    await t.test('durable retry, latest queued title, pending overlay and ID immutability',async()=>{
@@ -87,6 +89,21 @@ try {
     assert.equal((await native('ack',{id:'complete',claim:'verified-fixture',result:{state:'satisfied'}})).status,200);
     const retry=JSON.parse((await edit('complete','completed','status')).content[0].text);
     assert.equal(retry.applied,true);assert.equal(retry.operation.state,'satisfied');
+   });
+   await t.test('recoverable Trash queue requires write consent and has a verified retry receipt',async()=>{
+    const args={operation_id:'trash-fixture',target:'task',base_revision:1};
+    const denied=await read.sdk.callTool({name:'queue_things_trash',arguments:args});
+    assert.equal(denied.isError,true);assert.match(denied._meta['mcp/www_authenticate'][0],/insufficient_scope/);
+    assert.equal((await db.prepare("SELECT COUNT(*) AS count FROM native_operations WHERE id='trash-fixture'").first()).count,0);
+    const queued=JSON.parse((await write.sdk.callTool({name:'queue_things_trash',arguments:args})).content[0].text);
+    assert.equal(queued.operation.state,'queued');assert.equal(queued.operation.payload.value,true);
+    const page=JSON.parse((await read.sdk.callTool({name:'read_things_mirror',arguments:{cursor:100}})).content[0].text);
+    assert.equal(page.capabilities.connection_can_write,false);
+    assert.equal(page.effective.find(i=>i.id==='task').fields.in_trash_list.value,true);
+    assert.equal((await native('claim',{id:'trash-fixture',claim:'trash-claim'})).status,200);
+    assert.equal((await native('ack',{id:'trash-fixture',claim:'trash-claim',result:{state:'applied'}})).status,200);
+    const retry=JSON.parse((await write.sdk.callTool({name:'queue_things_trash',arguments:args})).content[0].text);
+    assert.equal(retry.applied,true);assert.equal(retry.recoverable,true);
    });
   }finally{await read.sdk.close();await write.sdk.close();}
  });
