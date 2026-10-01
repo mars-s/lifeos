@@ -63,7 +63,13 @@ import Testing
     #expect(things.invocations == 1)
     #expect(cloud.operations[0]["state"] as? String == "uncertain")
     let recoveredAck = try decoded(cloud.ackBodies[0])
-    #expect((recoveredAck["merge_decision"] as? JSON)?["classification"] as? String == "interrupted")
+    let recoveredDecision = recoveredAck["merge_decision"] as? JSON
+    #expect(recoveredDecision?["classification"] as? String == "interrupted")
+    #expect(try encoded(recoveredDecision?["base"] as! JSON) == encoded(payload["base"] as! JSON))
+    #expect(recoveredDecision?["desired"] as? String == payload["value"] as? String)
+    #expect((recoveredAck["observed_before"] as? JSON)?["state"] as? String == "unknown")
+    #expect((recoveredAck["observed_before"] as? JSON)?["reason"] as? String == "verification_failed")
+    #expect(recoveredAck["verified_after"] == nil)
     await engine.cycle(force: true)
     #expect(things.invocations == 1)
 }
@@ -133,6 +139,8 @@ import Testing
     #expect(cloud.operations[0]["state"] as? String == "uncertain")
     let ack = try decoded(cloud.ackBodies[0])
     #expect((ack["merge_decision"] as? JSON)?["classification"] as? String == "cloud_only")
+    #expect((ack["observed_before"] as? JSON)?["value"] as? String == "Fixture")
+    #expect(ack["verified_after"] == nil)
     #expect(ack["applied_after_sequence"] as? Int == 0)
     #expect(journal.state.uncertainOperationIDs.contains("op"))
     await engine.cycle(force: true)

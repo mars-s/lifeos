@@ -214,5 +214,38 @@ try{
    const legacy=await socket(2),legacyMessage=await message(legacy);assert.equal(legacyMessage.version,1);assert.equal(legacyMessage.revision,state.revision);legacy.send(JSON.stringify({version:1,ack:legacyMessage.revision}));await closeSocket(legacy);
    await ok('/__smart_test/tick');assert.equal((await ok('/__smart_test/inspect')).alarm,null);
   });
+  await t.test('Unicode operation transport is bounded without truncating bases or retained vectors',async()=>{
+   const base='漢'.repeat(4000),desired='文'.repeat(4000);
+   const targets=Array.from({length:20},(_,n)=>item('unicode-'+n,base));
+   await snapshot([...currentItems,...targets,item('oversized-base','漢'.repeat(4001))]);
+   const accepted=[];
+   for(const target of targets){
+    const row=await db.prepare("SELECT fields FROM mirror_items WHERE owner='smart-owner' AND id=?").bind(target.id).first();
+    const revision=JSON.parse(row.fields).title.revision;
+    const op=await queued('unicode-op-'+target.id,target.id,desired,{base_revision:revision});
+    assert.deepEqual(Object.keys(op.payload.basis.target_fields).sort(),['in_trash_list','status','title']);
+    assert.equal(op.payload.base.value,base);assert.equal(op.payload.value,desired);accepted.push(op);
+   }
+   const retained=await db.prepare("SELECT * FROM native_bases WHERE owner='smart-owner' AND target='unicode-0' AND field='title' AND source='desired' AND ordinal=?").bind(accepted[0].ordinal).first();
+   assert.ok(retained);assert.ok(!JSON.parse(retained.target_fields).notes);
+   const successor=await queued('unicode-pending-successor','unicode-0',base,{basis_token:retained.token,base_revision:retained.revision});
+   assert.deepEqual(Object.keys(successor.payload.basis.target_fields).sort(),['in_trash_list','status','title']);
+   assert.equal(successor.payload.base.value,desired);
+   const effectiveToken='e'.repeat(48);
+   await db.prepare('INSERT INTO native_bases(token,owner,target,field,revision,sequence,source,ordinal,cell,target_fields,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').bind(effectiveToken,'smart-owner','unicode-1','title',retained.revision,sequence,'effective',accepted[1].ordinal,retained.cell,JSON.stringify({...JSON.parse(retained.target_fields),notes:value('Synthetic private-shaped unrelated notes')}),new Date().toISOString()).run();
+   const effective=await queued('unicode-effective-successor','unicode-1',base,{basis_token:effectiveToken,base_revision:retained.revision});
+   assert.deepEqual(Object.keys(effective.payload.basis.target_fields).sort(),['in_trash_list','status','title']);
+   const response=await request('/api/native/pending');assert.equal(response.status,200);
+   const bytes=await response.arrayBuffer();assert.ok(bytes.byteLength<256*1024);
+   const page=JSON.parse(new TextDecoder().decode(bytes));assert.ok(page.operations.length>0&&page.operations.length<=20);
+   t.diagnostic(`Unicode pending response: ${bytes.byteLength} bytes, ${page.operations.length} complete operations`);
+   const runnable=(await db.prepare("SELECT id FROM native_operations o WHERE owner='smart-owner' AND state='queued' AND NOT EXISTS(SELECT 1 FROM native_operations held WHERE held.owner=o.owner AND held.state='executing' AND json_extract(held.payload,'$.target')=json_extract(o.payload,'$.target')) ORDER BY ordinal").all()).results.map(row=>row.id);
+   const returned=page.operations.filter(op=>op.state==='queued').map(op=>op.id);assert.deepEqual(returned,runnable.slice(0,returned.length));
+   assert.ok(returned.length>0);
+   for(const op of page.operations){const full=await operation(op.id);assert.deepEqual(op.payload,full.payload);}
+   const tooLong=await db.prepare("SELECT fields FROM mirror_items WHERE owner='smart-owner' AND id='oversized-base'").first();
+   assert.equal((await enqueue('oversized-base-command','oversized-base',desired,{base_revision:JSON.parse(tooLong.fields).title.revision})).status,409);
+   assert.equal(await db.prepare("SELECT id FROM native_operations WHERE owner='smart-owner' AND id='oversized-base-command'").first(),null);
+  });
  });
 }finally{await mf.dispose();await rm(dir,{recursive:true,force:true});await rm(output,{force:true});}
