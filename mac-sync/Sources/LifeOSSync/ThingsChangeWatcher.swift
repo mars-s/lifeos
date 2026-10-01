@@ -10,20 +10,10 @@ final class ThingsChangeWatcher {
     private(set) var status = "Local watcher unavailable" { didSet { onStatus?() } }
     func start(since eventID: UInt64 = 0) {
         stop()
-        do {
-            let groups = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Group Containers")
-            let candidates = [groups.appendingPathComponent("JLMPQHK86H.com.culturedcode.ThingsMac")]
-            var roots: [String] = []
-            for group in candidates {
-                let children = try FileManager.default.contentsOfDirectory(at: group, includingPropertiesForKeys: nil)
-                for child in children where child.lastPathComponent.hasPrefix("ThingsData-") {
-                    roots.append(child.appendingPathComponent("Things Database.thingsdatabase").path)
-                    roots.append(child.path)
-                }
-            }
-            guard !roots.isEmpty else { status = "Local watcher degraded: Things storage not found"; return }
-            // Parent metadata catches replacement. No storage contents are read.
-            roots.append(contentsOf: candidates.map(\.path))
+            let group = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Group Containers/JLMPQHK86H.com.culturedcode.ThingsMac")
+            // Register only for metadata events. Opening the protected directory to
+            // discover children can block startup on an unnecessary App Data prompt.
+            let roots = [group.path]
             var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
             let callback: FSEventStreamCallback = { _, info, count, eventPaths, flags, ids in
                 guard let info else { return }
@@ -44,7 +34,6 @@ final class ThingsChangeWatcher {
             FSEventStreamSetDispatchQueue(stream, .main)
             guard FSEventStreamStart(stream) else { stop(); status = "Local watcher degraded: permission or storage unavailable"; return }
             status = "Watching local metadata"
-        } catch { status = "Local watcher degraded: permission or storage unavailable" }
     }
     private func changed(dropped: Bool, eventID: UInt64) {
         latestEventID = max(latestEventID, eventID)
