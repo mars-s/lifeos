@@ -1,0 +1,22 @@
+{
+  "name": "lifeos-read-mirror-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test.mjs",
+    "typecheck": "tsc --noEmit",
+    "dry-run": "wrangler deploy --dry-run",
+    "test:mcp": "node mcp-test.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "5.9.3",
+    "wrangler": "4.144.0"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.1",
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "zod": "4.3.6"
+  }
+}

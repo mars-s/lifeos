@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>LifeOS week plan</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg:#f7f7f5; --panel:#fff; --muted-panel:#efefec; --raised:#e9e9e5;
+      --text:#191918; --muted:#6b6b66; --line:#ddddda; --accent:#2559d6;
+      --accent-text:#fff; --focus:#6e96f6; --warning:#9b4c09; --warning-bg:#fff1df;
+      --blue:#e6ecff; --blue-text:#17377e; --green:#e5f2ea; --green-text:#245438;
+      --plum:#f2e8f7; --plum-text:#5b2b72; --shadow:0 12px 34px rgba(28,28,26,.09);
+    }
+    @media (prefers-color-scheme:dark) {
+      :root { --bg:#161615; --panel:#20201f; --muted-panel:#292927; --raised:#323230;
+        --text:#f3f3ef; --muted:#b0b0aa; --line:#3a3a37; --accent:#789cff;
+        --accent-text:#101423; --focus:#9ab4ff; --warning:#f3b56e; --warning-bg:#3b2a1b;
+        --blue:#25345a; --blue-text:#dbe5ff; --green:#203f2e; --green-text:#d8f4e2;
+        --plum:#442a4c; --plum-text:#f3dcf8; --shadow:0 14px 38px rgba(0,0,0,.28); }
+    }
+    * { box-sizing:border-box; }
+    html,body { margin:0; min-height:100%; background:transparent; color:var(--text);
+      font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    body { padding:10px; overflow-x:hidden; scrollbar-color:var(--muted) transparent; }
+    ::selection { background:color-mix(in srgb,var(--accent) 28%,transparent); }
+    button { font:inherit; -webkit-tap-highlight-color:transparent; }
+    button:focus-visible,summary:focus-visible { outline:3px solid color-mix(in srgb,var(--focus) 65%,transparent); outline-offset:2px; }
+    .shell { width:100%; max-width:min(820px,calc(100vw - 20px)); margin:auto; overflow:hidden; border-radius:14px; background:var(--panel); box-shadow:var(--shadow); }
+    .empty { display:grid; min-height:280px; place-items:center; padding:32px; color:var(--muted); text-align:center; }
+    header { display:flex; justify-content:space-between; gap:18px; padding:20px 20px 16px; border-bottom:1px solid var(--line); }
+    header > div { min-width:0; }
+    h1 { margin:0; font-size:clamp(20px,4.5vw,27px); line-height:1.08; letter-spacing:-.025em; font-weight:670; }
+    .subtitle { margin:6px 0 0; overflow-wrap:anywhere; color:var(--muted); font-size:13px; line-height:1.4; }
+    .status { display:inline-flex; align-items:center; gap:7px; align-self:flex-start; min-height:30px; padding:0 10px; border-radius:999px; background:var(--muted-panel); color:var(--muted); font-size:11px; font-weight:650; white-space:nowrap; }
+    .status::before { width:7px; height:7px; border-radius:50%; background:#3da46a; content:""; }
+    .week-strip { display:grid; max-width:100%; grid-auto-flow:column; grid-auto-columns:minmax(94px,1fr); overflow-x:auto; border-bottom:1px solid var(--line); scrollbar-width:thin; }
+    .day-tab { min-height:62px; padding:10px 12px; border:0; border-right:1px solid var(--line); background:transparent; color:var(--muted); text-align:left; cursor:pointer; }
+    .day-tab:hover { background:var(--muted-panel); }
+    .day-tab[aria-current="date"] { background:var(--raised); color:var(--text); box-shadow:inset 0 -2px var(--accent); }
+    .day-name,.day-load { display:block; }
+    .day-name { font-size:13px; font-weight:680; }
+    .day-load { margin-top:4px; font-size:11px; font-variant-numeric:tabular-nums; }
+    .content { min-width:0; max-width:100%; padding:18px 20px 20px; }
+    .section-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:12px; }
+    .section-head h2 { margin:0; font-size:13px; font-weight:680; }
+    .hint { color:var(--muted); font-size:11px; }
+    .hint.editing { color:var(--accent); font-weight:650; }
+    .timeline { position:relative; min-height:300px; overflow:hidden; border-radius:12px; background:var(--muted-panel); }
+    .timeline.editing { box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 48%,transparent); }
+    .grid-line { position:absolute; left:66px; right:0; border-top:1px solid color-mix(in srgb,var(--line) 80%,transparent); }
+    .time-label { position:absolute; left:10px; width:48px; color:var(--muted); font-size:11px; line-height:1; white-space:nowrap; transform:translateY(-50%); font-variant-numeric:tabular-nums; }
+    .blocks { position:absolute; inset:0 8px 0 66px; }
+    .block { position:absolute; min-height:40px; padding:9px 34px 9px 11px; overflow:hidden; border:0; border-radius:10px; background:var(--blue); color:var(--blue-text); text-align:left; cursor:pointer; transition:filter 140ms ease-out,transform 140ms ease-out,box-shadow 140ms ease-out; }
+    .block:nth-child(3n+2) { background:var(--green); color:var(--green-text); }
+    .block:nth-child(3n+3) { background:var(--plum); color:var(--plum-text); }
+    .block:hover { filter:brightness(.97); transform:translateY(-1px); }
+    .block.editable { padding-bottom:13px; cursor:grab; touch-action:none; user-select:none; }
+    .block.editable:active { z-index:20; cursor:grabbing; transform:none; box-shadow:0 8px 18px color-mix(in srgb,var(--text) 12%,transparent); }
+    .block-title,.block-time { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .block-title { font-size:13px; line-height:1.25; font-weight:650; }
+    .block-time { margin-top:3px; font-size:11px; line-height:1.2; opacity:.78; font-variant-numeric:tabular-nums; }
+    .handle { position:absolute; right:0; bottom:0; left:0; height:10px; cursor:ns-resize; }
+    .handle::after { position:absolute; bottom:3px; left:50%; width:28px; height:2px; border-radius:999px; background:currentColor; opacity:.34; content:""; transform:translateX(-50%); }
+    .details { margin-top:14px; border-top:1px solid var(--line); }
+    details { padding-top:12px; }
+    summary { display:flex; justify-content:space-between; align-items:center; min-height:34px; color:var(--muted); font-size:12px; font-weight:630; cursor:pointer; list-style:none; }
+    summary::-webkit-details-marker { display:none; }
+    .disclosure { width:8px; height:8px; margin-right:3px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; transform:rotate(45deg); transition:transform 140ms ease-out; }
+    details[open] .disclosure { transform:rotate(225deg); }
+    .unscheduled { display:grid; gap:8px; margin:4px 0 0; padding:0; list-style:none; }
+    .unscheduled li { padding:10px 11px; border-radius:10px; background:var(--warning-bg); color:var(--warning); }
+    .unscheduled strong,.unscheduled span { display:block; font-size:11px; line-height:1.4; }
+    .unscheduled strong { font-size:13px; }
+    footer { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:14px 20px 18px; border-top:1px solid var(--line); }
+    .week-total { color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; }
+    .actions { display:flex; min-width:0; gap:8px; }
+    .action { min-width:0; min-height:44px; padding:0 14px; border:0; border-radius:10px; color:var(--text); background:var(--muted-panel); font-size:13px; font-weight:650; cursor:pointer; }
+    .action.primary { color:var(--accent-text); background:var(--accent); }
+    .action:hover { filter:brightness(.96); } .action:active { transform:translateY(1px); }
+    .action:disabled { opacity:.46; cursor:not-allowed; filter:none; transform:none; }
+    @media (max-width:520px) { body{padding:6px}.shell{max-width:calc(100vw - 12px)}header{flex-wrap:wrap;padding:17px 16px 14px}.content{padding:16px}footer{align-items:stretch;flex-direction:column;max-width:100%;padding:12px 16px 16px}.actions{display:grid;width:100%;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.action{overflow:hidden;padding-inline:8px;text-overflow:ellipsis;white-space:nowrap}.status{font-size:11px}.hint:not(.editing){display:none} }
+    @media (prefers-reduced-motion:reduce) { *,*::before,*::after{transition:none!important} }
+  </style>
+</head>
+<body>
+  <main class="shell" aria-live="polite"><div id="app" class="empty">Waiting for the week plan…</div></main>
+  <script>
+    (() => {
+      const app=document.getElementById("app"); let latest=null,draft=null,baseline=null,selected=0,editing=false,changed=false;
+      const demo={range_start:"2026-09-23T08:00:00+10:00",range_end:"2026-09-26T18:00:00+10:00",days:[
+        {day_start:"2026-09-23T08:00:00+10:00",day_end:"2026-09-23T18:00:00+10:00",blocks:[{task_id:"p1",title:"Paperless MCP security review",start:"2026-09-23T09:00:00+10:00",end:"2026-09-23T10:30:00+10:00",duration_minutes:90,part:1,calendar_id:"planned-tasks"},{task_id:"u1",title:"FIT3155 suffix-tree notes",start:"2026-09-23T14:00:00+10:00",end:"2026-09-23T15:30:00+10:00",duration_minutes:90,part:1,calendar_id:"planned-tasks"}]},
+        {day_start:"2026-09-24T08:00:00+10:00",day_end:"2026-09-24T18:00:00+10:00",blocks:[{task_id:"p2",title:"Integrations UI ticket",start:"2026-09-24T10:00:00+10:00",end:"2026-09-24T11:00:00+10:00",duration_minutes:60,part:1,calendar_id:"planned-tasks"}]},
+        {day_start:"2026-09-25T08:00:00+10:00",day_end:"2026-09-25T18:00:00+10:00",blocks:[]}
+      ],unscheduled:[{task_id:"x",title:"Sort Things inbox",reason:"No free block is at least 45 minutes",remaining_minutes:45}],proposal_ready:true,mutates_external_systems:false,demo:true};
+      const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n};
+      const clone=value=>JSON.parse(JSON.stringify(value)); const date=value=>{const d=new Date(value);return Number.isNaN(d.getTime())?null:d};
+      const time=d=>new Intl.DateTimeFormat("en-AU",{hour:"numeric",minute:"2-digit"}).format(d);
+      const day=d=>new Intl.DateTimeFormat("en-AU",{weekday:"short",day:"numeric",month:"short"}).format(d);
+      const minutes=blocks=>blocks.reduce((sum,b)=>sum+Number(b.duration_minutes||0),0);
+      const durationLabel=value=>`${Math.floor(value/60)}h ${value%60}m`;
+      const follow=prompt=>window.openai?.sendFollowUpMessage?window.openai.sendFollowUpMessage({prompt,scrollToBottom:true}):window.parent.postMessage({jsonrpc:"2.0",method:"ui/message",params:{role:"user",content:[{type:"text",text:prompt}] }},"*");
+      const fingerprint=data=>JSON.stringify((data?.days||[]).map(d=>({day_start:d.day_start,day_end:d.day_end,blocks:(d.blocks||[]).map(({task_id,start,end})=>({task_id,start,end}))})));
+
+      function layout(blocks,start,end,height){const span=end-start,min=40,gap=2;const items=blocks.map((b,index)=>{const s=date(b.start),e=date(b.end);if(!s||!e||s>=e)return null;const top=Math.max(0,Math.min(height,((s-start)/span)*height));const h=Math.min(height-top,Math.max(min,((e-s)/span)*height-2));return{b,index,s,e,top,h,bottom:top+h}}).filter(Boolean).sort((a,b)=>a.top-b.top||a.bottom-b.bottom);let cluster=null;items.forEach(i=>{if(!cluster||i.top>=cluster.bottom+gap)cluster={bottom:i.bottom,lanes:[]};let lane=cluster.lanes.findIndex(v=>v+gap<=i.top);if(lane<0)lane=cluster.lanes.length;cluster.lanes[lane]=i.bottom;cluster.bottom=Math.max(cluster.bottom,i.bottom);i.lane=lane;i.cluster=cluster});items.forEach(i=>i.laneCount=i.cluster.lanes.length);return items}
+      function mutate(index,blockIndex,start,end,mode,next){const b=draft.days[index].blocks[blockIndex],s=date(b.start),e=date(b.end);if(!s||!e)return;if(mode==="move"){const span=e-s,ns=new Date(Math.max(start.getTime(),Math.min(end.getTime()-span,next.getTime())));b.start=ns.toISOString();b.end=new Date(ns.getTime()+span).toISOString()}else{const ne=new Date(Math.max(s.getTime()+15*60000,Math.min(end.getTime(),next.getTime())));b.end=ne.toISOString();b.duration_minutes=Math.round((ne-s)/60000)}}
+      function editBlock(button,item,timeline,start,end,total){button.classList.add("editable");button.setAttribute("aria-label",`Edit ${item.b.title}. Arrow keys move it. Option plus arrow keys change duration.`);let gesture=null;button.addEventListener("pointerdown",event=>{if(event.button!==0)return;gesture={id:event.pointerId,y:event.clientY,s:item.s,e:item.e,mode:event.target.closest(".handle")?"resize":"move",moved:false};button.setPointerCapture(event.pointerId)});button.addEventListener("pointermove",event=>{if(!gesture||gesture.id!==event.pointerId)return;const delta=Math.round((((event.clientY-gesture.y)/timeline.clientHeight)*total)/15)*15;gesture.moved ||= Math.abs(event.clientY-gesture.y)>3;if(gesture.mode==="resize"){const ne=new Date(Math.max(item.s.getTime()+15*60000,Math.min(end.getTime(),gesture.e.getTime()+delta*60000)));button.style.height=`${Math.max(40,((ne-item.s)/(end-start))*timeline.clientHeight-2)}px`;button.querySelector(".block-time").textContent=`${time(item.s)}–${time(ne)} · ${Math.round((ne-item.s)/60000)} min`}else{const span=item.e-item.s,ns=new Date(Math.max(start.getTime(),Math.min(end.getTime()-span,gesture.s.getTime()+delta*60000)));button.style.top=`${((ns-start)/(end-start))*100}%`;button.querySelector(".block-time").textContent=`${time(ns)}–${time(new Date(ns.getTime()+span))} · ${Math.round(span/60000)} min`}});const finish=event=>{if(!gesture||gesture.id!==event.pointerId)return;const delta=Math.round((((event.clientY-gesture.y)/timeline.clientHeight)*total)/15)*15;if(gesture.moved)mutate(selected,item.index,start,end,gesture.mode,new Date((gesture.mode==="move"?gesture.s:gesture.e).getTime()+delta*60000));const moved=gesture.moved;gesture=null;if(moved)render(draft)};button.addEventListener("pointerup",finish);button.addEventListener("pointercancel",()=>{gesture=null;render(draft)});button.addEventListener("keydown",event=>{if(!["ArrowUp","ArrowDown"].includes(event.key))return;event.preventDefault();const amount=(event.shiftKey?60:15)*(event.key==="ArrowUp"?-1:1);mutate(selected,item.index,start,end,event.altKey?"resize":"move",new Date((event.altKey?item.e:item.s).getTime()+amount*60000));render(draft);app.querySelector(`[data-index="${item.index}"]`)?.focus()})}
+
+      function render(data){if(!data||!Array.isArray(data.days)||!data.days.length){app.className="empty";app.textContent="This week plan could not be displayed. Ask ChatGPT to render it again.";return}selected=Math.min(selected,data.days.length-1);app.className="";app.replaceChildren();const allBlocks=data.days.flatMap(d=>d.blocks||[]),totalMinutes=minutes(allBlocks);
+        const head=el("header"),copy=el("div");copy.append(el("h1","","Plan the week"),el("p","subtitle",`${day(date(data.range_start))} to ${day(date(data.range_end))} · Calendar remains the timing authority`));head.append(copy,el("div","status",editing?"Editing draft":changed?"Edited preview":data.demo?"Demo preview":"Preview only"));app.append(head);
+        const strip=el("nav","week-strip");strip.setAttribute("aria-label","Planning days");data.days.forEach((d,i)=>{const tab=el("button","day-tab");tab.type="button";if(i===selected)tab.setAttribute("aria-current","date");tab.append(el("span","day-name",day(date(d.day_start))),el("span","day-load",`${(d.blocks||[]).length} blocks · ${durationLabel(minutes(d.blocks||[]))}`));tab.addEventListener("click",()=>{selected=i;render(data)});strip.append(tab)});app.append(strip);
+        const current=data.days[selected],start=date(current.day_start),end=date(current.day_end);if(!start||!end||start>=end){const invalid=el("div","empty","This day has an invalid planning window.");app.append(invalid);return}const content=el("section","content"),sectionHead=el("div","section-head"),hint=el("span",editing?"hint editing":"hint",editing?"Drag blocks · pull the lower edge to resize":changed?"Draft adjusted · Nothing changed yet":"Nothing has changed yet");sectionHead.append(el("h2","",new Intl.DateTimeFormat("en-AU",{weekday:"long",day:"numeric",month:"long"}).format(start)),hint);content.append(sectionHead);
+        const timeline=el("div",editing?"timeline editing":"timeline");timeline.setAttribute("aria-label",`Schedule for ${day(start)}`);const total=(end-start)/60000,height=Math.max(300,Math.min(520,total*.62));timeline.style.height=`${height}px`;const tick=total<=360?60:120;for(let m=0;m<total;m+=tick){const top=(m/total)*100,line=el("div","grid-line"),label=el("span","time-label",time(new Date(start.getTime()+m*60000)));line.style.top=`${top}%`;label.style.top=m===0?"9px":`${top}%`;timeline.append(line,label)}const layer=el("div","blocks");layout(current.blocks||[],start,end,height).forEach(item=>{const b=el("button","block");b.type="button";b.dataset.index=String(item.index);b.style.top=`${(item.top/height)*100}%`;b.style.height=`${item.h}px`;b.style.left=`${(item.lane/item.laneCount)*100}%`;b.style.width=item.laneCount===1?"100%":`calc(${100/item.laneCount}% - 4px)`;b.append(el("span","block-title",item.b.title||"Untitled task"),el("span","block-time",`${time(item.s)}–${time(item.e)} · ${item.b.duration_minutes} min`));if(editing){const handle=el("span","handle");handle.setAttribute("aria-hidden","true");b.append(handle);editBlock(b,item,timeline,start,end,total)}else{b.setAttribute("aria-label",`Open ${item.b.title} in Things`);b.addEventListener("click",()=>{const href=`things:///show?id=${encodeURIComponent(item.b.task_id)}`;window.openai?.openExternal?window.openai.openExternal({href,redirectUrl:false}):follow(`Open the Things task for ${item.b.title}.`)})}layer.append(b)});timeline.append(layer);content.append(timeline);
+        const uns=data.unscheduled||[];if(uns.length){const wrap=el("div","details"),details=document.createElement("details"),sum=document.createElement("summary"),list=el("ul","unscheduled"),indicator=el("span","disclosure");indicator.setAttribute("aria-hidden","true");sum.append(document.createTextNode(`${uns.length} task${uns.length===1?" still needs":"s still need"} time`),indicator);uns.forEach(item=>{const li=el("li");li.append(el("strong","",item.title||"Untitled task"),el("span","",item.reason||"No suitable time was found."));list.append(li)});details.append(sum,list);wrap.append(details);content.append(wrap)}app.append(content);
+        const foot=el("footer"),summary=el("span","week-total",`${allBlocks.length} blocks · ${durationLabel(totalMinutes)} across ${data.days.length} days`),actions=el("div","actions"),adjust=el("button","action",editing?"Cancel":"Adjust week"),prepare=el("button","action primary",editing?"Done editing":"Prepare proposal");adjust.type=prepare.type="button";adjust.addEventListener("click",()=>{if(editing){draft=clone(baseline);editing=false}else{baseline=clone(draft);editing=true}render(draft)});prepare.disabled=allBlocks.length===0;prepare.addEventListener("click",()=>{if(editing){editing=false;changed=JSON.stringify(draft.days)!==JSON.stringify(latest.days);window.openai?.setWidgetState?.({draft,changed,sourceFingerprint:fingerprint(latest)});render(draft);return}const exact=JSON.stringify({range_start:data.range_start,range_end:data.range_end,days:data.days,unscheduled:data.unscheduled||[]});follow(`Prepare a LifeOS proposal from this exact reviewed multi-day plan JSON: ${exact}. Keep these scheduled times, re-read the required Things and Calendar snapshots, and show the immutable proposal for approval. Do not apply it.`)});actions.append(adjust,prepare);foot.append(summary,actions);app.append(foot);window.openai?.notifyIntrinsicHeight?.()}
+      function receive(data){if(!data||!Array.isArray(data.days)){render(data);return}latest=data;const stored=window.openai?.widgetState,matches=stored?.sourceFingerprint===fingerprint(data);draft=matches?clone(stored.draft):clone(data);changed=matches&&Boolean(stored?.changed);editing=false;selected=0;render(draft)}
+      window.addEventListener("message",event=>{if(event.source!==window.parent)return;const message=event.data;if(message?.jsonrpc==="2.0"&&message.method==="ui/notifications/tool-result")receive(message.params?.structuredContent)},{passive:true});
+      window.addEventListener("openai:set_globals",event=>{const output=event.detail?.globals?.toolOutput;if(output)receive(output)},{passive:true});
+      if(window.openai?.toolOutput)receive(window.openai.toolOutput);else if(new URLSearchParams(location.search).get("demo")==="1")receive(demo);
+    })();
+  </script>
+</body>
+</html>

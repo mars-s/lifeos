@@ -1,0 +1,4 @@
+[
+  {"id":"fixture-flight", "fields":{"title":"Check flight details", "notes":"Synthetic example", "deadline":"2026-10-03", "completed":false}},
+  {"id":"fixture-pack", "fields":{"title":"Pack travel adapter", "notes":"Synthetic example", "deadline":null, "completed":false}}
+]

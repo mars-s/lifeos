@@ -1,0 +1,130 @@
+import OAuthProvider,{OAuthError,authorizationErrorRedirect,type OAuthHelpers,type OAuthResourceAuth} from '@cloudflare/workers-oauth-provider';
+import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
+import {WebStandardStreamableHTTPServerTransport} from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import {z} from 'zod';
+import mirror from './worker';
+import {MirrorStore} from '../site/lib/mirror-store';
+import {BulkD1} from './d1-bulk';
+
+// Deployed read-only entry. Credentials are native Worker secret bindings.
+type OAuthEnv=Env & {
+  OAUTH_KV?:KVNamespace; OAUTH_PROVIDER?:OAuthHelpers;
+  GITHUB_CLIENT_ID?:string; GITHUB_CLIENT_SECRET?:string;
+  LIFEOS_GITHUB_OWNER_ID?:string;
+};
+const origin='https://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev';
+const resource=origin+'/mcp';
+const scope='things:read';
+type Identity={owner:string;github_id:string;role:'reader'};
+const json=(body:unknown,status:number)=>Response.json(body,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
+const escape=(value:string)=>value.replace(/[&<>"']/g,c=>`&#${c.charCodeAt(0)};`);
+function owner(identity:unknown,env:OAuthEnv):identity is Identity {
+  const p=identity as Partial<Identity>|undefined;
+  return !!p&&p.owner===env.LIFEOS_OWNER_ID&&p.github_id===env.LIFEOS_GITHUB_OWNER_ID&&p.role==='reader';
+}
+async function challenge(verifier:string) {
+  return btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier))))).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
+}
+async function auth(request:Request,env:OAuthEnv):Promise<Response> {
+  const url=new URL(request.url),oauth=env.OAUTH_PROVIDER!;
+  let stage='request';
+  try {
+    if(url.pathname==='/authorize'&&request.method==='GET') {
+      stage='client_authorization';
+      const req=await oauth.parseAuthRequest(request);
+      if(req.scope.some(s=>s!==scope&&s!=='offline_access'))return json({error:'Only read-only Things access is available.'},400);
+      stage='consent_start';
+      const facts=await oauth.describeConsent(req),consent=await oauth.beginConsent(req);
+      const headers=consent.headers;headers.set('Content-Type','text/html; charset=utf-8');
+      // Chromium applies form-action to the GitHub redirect after this POST.
+      // The validated client redirect is also needed when the owner declines.
+      const clientOrigin=new URL(req.redirectUri).origin;
+      headers.set('Content-Security-Policy',`default-src 'none'; form-action 'self' https://github.com ${clientOrigin}; base-uri 'none'; frame-ancestors 'none'`);
+      return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><title>LifeOS read access</title><h1>Allow cloud mirror reading?</h1><p>${escape(facts.clientName)} requests read-only access to cached Things tasks, projects, areas and tags, including notes. Changes and approvals remain disabled.</p><p>Tokens return to ${escape(facts.redirectHost)}.${facts.redirectIsLoopback?' This is a local app; verify which app requested access.':''}</p><p>Permission: things:read. Offline access lets the client refresh its sign-in.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><button name="decision" value="allow">Allow with GitHub</button><button name="decision" value="deny">Deny</button></form></html>`,{headers});
+    }
+    if(url.pathname==='/authorize'&&request.method==='POST') {
+      stage='consent_session';
+      if(request.headers.get('origin')!==origin)return json({error:'Same-origin consent required.'},403);
+      const form=await request.formData(),handle=String(form.get('handle')??'');
+      if(form.get('decision')==='deny') {const denied=await oauth.denyConsent(request,handle);return new Response(null,{status:302,headers:denied.headers});}
+      if(form.get('decision')!=='allow')return json({error:'Consent required.'},400);
+      // Scope and request are server-selected/recovered, never accepted from the form.
+      const approved=await oauth.approveConsent(request,handle,{scope:[scope,'offline_access']});
+      const verifier=crypto.randomUUID()+crypto.randomUUID();
+      stage='github_redirect';
+      const upstream=await oauth.beginUpstream(approved.request,{data:{verifier},headers:approved.headers});
+      const target=new URL('https://github.com/login/oauth/authorize');
+      target.search=new URLSearchParams({client_id:env.GITHUB_CLIENT_ID!,redirect_uri:origin+'/callback',scope:'',state:upstream.state,code_challenge:await challenge(verifier),code_challenge_method:'S256',allow_signup:'false'}).toString();
+      upstream.headers.set('Location',target.href);return new Response(null,{status:302,headers:upstream.headers});
+    }
+    if(url.pathname==='/callback'&&request.method==='GET') {
+      stage='callback_session';
+      const resumed=await oauth.finishUpstream<{verifier:string}>(request);
+      const deny=()=>{resumed.headers.set('Location',authorizationErrorRedirect(resumed.request,'access_denied'));return new Response(null,{status:302,headers:resumed.headers});};
+      const code=url.searchParams.get('code');if(url.searchParams.has('error')||!code)return deny();
+      // Access token lives only during this callback, not in grant props/logs/D1.
+      stage='github_exchange';
+      const exchange=await fetch('https://github.com/login/oauth/access_token',{method:'POST',redirect:'manual',signal:AbortSignal.timeout(15000),headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:env.GITHUB_CLIENT_ID!,client_secret:env.GITHUB_CLIENT_SECRET!,code,redirect_uri:origin+'/callback',code_verifier:resumed.data.verifier})});
+      if(!exchange.ok)return deny();
+      const result=await exchange.json() as {access_token?:string;scope?:string;token_type?:string};
+      // Refuse an app whose earlier grants accidentally carry repository/user scopes.
+      if(!result.access_token||result.token_type!=='bearer'||result.scope?.trim())return deny();
+      stage='github_identity';
+      const identity=await fetch('https://api.github.com/user',{redirect:'manual',signal:AbortSignal.timeout(15000),headers:{Authorization:'Bearer '+result.access_token,Accept:'application/vnd.github+json','User-Agent':'LifeOSReadOnlyMirror/0.1'}});
+      if(!identity.ok)return deny();
+      const user=await identity.json() as {id?:number};
+      if(!Number.isSafeInteger(user.id)||String(user.id)!==env.LIFEOS_GITHUB_OWNER_ID)return deny();
+      stage='grant_completion';
+      const done=await oauth.completeAuthorization({request:resumed.request,userId:String(user.id),metadata:{role:'reader'},scope:[scope,'offline_access'],props:{owner:env.LIFEOS_OWNER_ID,github_id:String(user.id),role:'reader'} satisfies Identity});
+      resumed.headers.set('Location',done.redirectTo);return new Response(null,{status:302,headers:resumed.headers});
+    }
+    return json({error:'OAuth route not found.'},404);
+  }catch(error){
+    // Map only fixed library messages. Never expose exception text, URLs,
+    // cookies, transaction handles, upstream codes or credentials.
+    const description=(error as {description?:string})?.description;
+    const reasons:Record<string,string>={
+      'This authorization was not started in this browser; start again':'browser_session_missing',
+      'This authorization belongs to a different browser session; start again':'browser_session_mismatch',
+      'This authorization expired or was already used; start again':'session_expired_or_unavailable',
+      'Missing state parameter':'callback_state_missing',
+      'Missing transaction handle':'consent_handle_missing',
+      'client_id is required':'connection_request_missing',
+      'Invalid client_id':'client_registration_missing',
+      'Invalid redirect URI':'client_redirect_mismatch'
+    };
+    return json({error:'Sign-in could not be completed. Restart the connection.',stage,reason:description&&reasons[description]||'authorization_failed'},400);
+  }
+}
+async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Response> {
+  const c=ctx as ExecutionContext&{props?:Identity;auth?:OAuthResourceAuth};
+  if(!owner(c.props,env))return json({error:'Owner read access required.'},403);
+  if(!c.auth?.scope.includes(scope))return json({error:'Read scope required.'},403);
+  if(new URL(request.url).pathname!=='/mcp')return json({error:'MCP route not found.'},404);
+  // HTTP Origin is checked without trusting identity headers or static role keys.
+  const source=request.headers.get('origin');
+  if(source&&![origin,'https://chatgpt.com','https://chat.openai.com'].includes(source))return json({error:'Origin denied.'},403);
+  const server=new McpServer({name:'LifeOS Cloud Mirror',version:'0.2.0'});
+  server.registerTool('read_things_mirror',{description:'Read the last confirmed Things snapshot with sync age, timezone and a separate pending overlay. This cache is not live ThingsCloud. Follow next_cursor until null; restart pagination if sequence changes. Unsupported, absent and unknown fields remain explicit.',inputSchema:{cursor:z.number().int().min(0).max(10000).default(0)},annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async({cursor})=>{
+    const state=await new MirrorStore(new BulkD1(env.DB),env.LIFEOS_OWNER_ID).state(cursor);
+    return {content:[{type:'text',text:JSON.stringify(state)}],structuredContent:state};
+  });
+  const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true,maxRequestBodySize:65536});
+  await server.connect(transport);
+  try {const response=await transport.handleRequest(request);response.headers.set('Cache-Control','no-store');return response;}
+  finally {await server.close();}
+}
+const provider=new OAuthProvider<OAuthEnv>({apiRoute:'/mcp',apiHandler:{fetch:mcp},defaultHandler:{fetch:auth},authorizeEndpoint:'/authorize',tokenEndpoint:'/oauth/token',clientRegistrationEndpoint:'/oauth/register',clientIdMetadataDocumentEnabled:false,scopesSupported:[scope,'offline_access'],requiredScopes:[scope],resourceMetadata:{resource,authorization_servers:[origin],resource_name:'LifeOS read-only cloud mirror'},accessTokenTTL:3600,refreshTokenTTL:2592000,clientRegistrationTTL:7776000,onError:()=>{},tokenExchangeCallback(options){if(!owner(options.props,options.env)||options.scope.some(s=>s!==scope&&s!=='offline_access'))throw new OAuthError('invalid_grant',{description:'Owner read grant required.'});}});
+export default {async fetch(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Response> {
+  const path=new URL(request.url).pathname;
+  if(path==='/health'||path==='/state'||path.startsWith('/api/'))return mirror.fetch(request,env);
+  if(new URL(request.url).origin!==origin)return json({error:'OAuth host denied.'},403);
+  if(!env.OAUTH_KV||!env.GITHUB_CLIENT_ID||!env.GITHUB_CLIENT_SECRET||!env.LIFEOS_GITHUB_OWNER_ID)return json({error:'Dot OAuth setup is not activated. Mac sync remains available.'},503);
+  if(request.method==='POST') {
+    const chunks:Uint8Array[]=[];let size=0;const reader=request.body?.getReader();
+    if(reader)for(;;){const p=await reader.read();if(p.done)break;size+=p.value.length;if(size>65536){void reader.cancel();return json({error:'OAuth/MCP request exceeds budget.'},413);}chunks.push(p.value);}
+    const bytes=new Uint8Array(size);let pos=0;for(const c of chunks){bytes.set(c,pos);pos+=c.length;}
+    request=new Request(request,{body:bytes});
+  }
+  return provider.fetch(request,env,ctx);
+}};

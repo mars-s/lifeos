@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>LifeOS proposal review</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: light-dark(#f5f4f0, #1f201e);
+      --panel: light-dark(#ffffff, #272825);
+      --panel-soft: light-dark(#ecebe6, #30312e);
+      --text: light-dark(#20211f, #f4f3ef);
+      --muted: light-dark(#686a65, #b7b8b2);
+      --line: light-dark(#d8d7d1, #41423e);
+      --line-strong: light-dark(#b8b8b1, #5a5b55);
+      --blue: light-dark(#315dc9, #86a5ff);
+      --blue-soft: light-dark(#e7edff, #29395f);
+      --green: light-dark(#257844, #7bd899);
+      --green-soft: light-dark(#e1f2e6, #213f2a);
+      --amber: light-dark(#9b5a10, #f2b35e);
+      --amber-soft: light-dark(#f7ead8, #49331e);
+      --red: light-dark(#a4433d, #f39a91);
+      --red-soft: light-dark(#f7e4e1, #4b2925);
+      --focus: light-dark(#244ba9, #adc0ff);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { margin: 0; min-width: 0; background: transparent; }
+
+    body {
+      color: var(--text);
+      font: 15px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow-wrap: anywhere;
+      text-rendering: optimizeLegibility;
+    }
+
+    ::selection { color: var(--text); background: var(--blue-soft); }
+
+    button { font: inherit; }
+
+    button:focus-visible, summary:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--focus) 70%, transparent);
+      outline-offset: 3px;
+    }
+
+    .empty {
+      min-height: 180px;
+      display: grid;
+      place-items: center;
+      padding: 28px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .review {
+      overflow: hidden;
+      border-radius: 18px;
+      background: var(--bg);
+      box-shadow: 0 16px 44px rgba(0, 0, 0, 0.16);
+    }
+
+    .header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 28px 28px 22px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1, h2, p { margin: 0; }
+
+    h1 {
+      max-width: 22ch;
+      font-size: clamp(24px, 4vw, 34px);
+      line-height: 1.08;
+      letter-spacing: -0.03em;
+    }
+
+    .subtitle { margin-top: 8px; max-width: 66ch; color: var(--muted); }
+
+    .state {
+      flex: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--panel-soft);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
+    .state[data-state="approved"] .state-dot,
+    .state[data-state="applied"] .state-dot { background: var(--green); }
+    .state[data-state="rejected"] .state-dot,
+    .state[data-state="stale"] .state-dot,
+    .state[data-state="partial_failure"] .state-dot { background: var(--red); }
+
+    .facts {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .fact { padding: 16px 28px; min-width: 0; }
+    .fact + .fact { border-inline-start: 1px solid var(--line); }
+    .fact strong { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+    .fact span { display: block; margin-top: 2px; color: var(--muted); font-size: 13px; }
+    .fingerprint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .content { padding: 24px 28px 28px; }
+
+    .notice {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 22px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      color: var(--muted);
+      background: var(--blue-soft);
+    }
+
+    .notice svg { flex: none; width: 20px; height: 20px; color: var(--blue); }
+    .notice strong { color: var(--text); }
+
+    .domains { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+
+    .domain {
+      min-width: 0;
+      overflow: hidden;
+      border-radius: 16px;
+      background: var(--panel);
+    }
+
+    .domain-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .domain-head h2 { font-size: 16px; letter-spacing: -0.01em; }
+    .count { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+    .changes { margin: 0; padding: 0; list-style: none; }
+    .change { padding: 17px 18px 18px; }
+    .change + .change { border-top: 1px solid var(--line); }
+
+    .change-title { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
+    .operation {
+      flex: none;
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .change-title strong { min-width: 0; font-size: 15px; }
+    .change-meta { margin-top: 5px; color: var(--muted); font-size: 13px; }
+
+    .field-list {
+      display: grid;
+      grid-template-columns: minmax(88px, auto) minmax(0, 1fr);
+      gap: 6px 14px;
+      margin: 12px 0 0;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .field-list dt { color: var(--muted); }
+    .field-list dd { margin: 0; min-width: 0; }
+
+    .no-changes { padding: 22px 18px; color: var(--muted); }
+
+    .failure {
+      margin-top: 18px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      color: var(--red);
+      background: var(--red-soft);
+    }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 18px 28px;
+      border-top: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .footer-copy { max-width: 58ch; color: var(--muted); font-size: 13px; }
+    .actions { display: flex; flex: none; gap: 10px; }
+
+    .action {
+      min-height: 42px;
+      padding: 10px 16px;
+      border: 0;
+      border-radius: 12px;
+      cursor: pointer;
+      font-weight: 750;
+      transition: transform 140ms ease, background-color 140ms ease, color 140ms ease;
+    }
+    .action:hover:not(:disabled) { transform: translateY(-1px); }
+    .action:disabled { cursor: wait; opacity: 0.58; }
+    .secondary { color: var(--text); background: var(--panel-soft); }
+    .primary { color: #101521; background: #83a2ff; }
+    .danger { color: var(--red); background: var(--red-soft); }
+    .feedback { min-height: 20px; margin-top: 14px; color: var(--muted); font-size: 13px; }
+    .feedback[role="alert"] { color: var(--red); }
+
+    @media (max-width: 700px) {
+      .review { border-radius: 14px; }
+      .header { display: block; padding: 22px 18px 18px; }
+      .state { margin-top: 16px; }
+      .facts { grid-template-columns: 1fr; }
+      .fact { padding: 12px 18px; }
+      .fact + .fact { border-inline-start: 0; border-top: 1px solid var(--line); }
+      .content { padding: 18px; }
+      .domains { grid-template-columns: 1fr; }
+      .footer { align-items: stretch; flex-direction: column; padding: 16px 18px 18px; }
+      .actions { width: 100%; }
+      .action { flex: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
+    }
+  </style>
+</head>
+<body>
+  <main id="app" class="empty" aria-live="polite">Waiting for the proposal...</main>
+  <script>
+    (() => {
+      const app = document.getElementById("app");
+      const pendingCalls = new Map();
+      let requestId = 0;
+      let current;
+      let busy = false;
+      let feedback = "";
+      let feedbackIsError = false;
+
+      const demo = {
+        proposal_id: "paperless-launch-r1",
+        revision_number: 1,
+        revision_hash: "1a9c542669c93467f216fb2675664475683f1f1e0f5e33f12d78321aa14bd907",
+        state: "draft",
+        source_snapshots: [{ system: "things", record_id: "meeting-demo", version: "v1", data: {} }],
+        things_changes: [
+          { operation: "create", task_id: null, destructive: false, fields: { title: "Sync with Middy on MCP testing", area: "Paperless", when: "today", notes: "Confirmed by the meeting transcript." } },
+          { operation: "create", task_id: null, destructive: false, fields: { title: "Redesign subscription and integrations pages", area: "Paperless", notes: "Work with Mehdi and Priyanshi." } }
+        ],
+        calendar_changes: [
+          { operation: "create", calendar_id: "Planned Tasks", event_id: null, destructive: false, fields: { title: "MCP testing with Middy", start: "2026-09-23T14:00:00+10:00", end: "2026-09-23T15:00:00+10:00" } }
+        ],
+        created_at: "2026-09-23T11:30:00+10:00",
+        approved_revision_hash: null,
+        failure_detail: null
+      };
+
+      function el(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      }
+
+      function infoIcon() {
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("aria-hidden", "true");
+        const circle = document.createElementNS(svg.namespaceURI, "circle");
+        circle.setAttribute("cx", "12"); circle.setAttribute("cy", "12"); circle.setAttribute("r", "9");
+        const path = document.createElementNS(svg.namespaceURI, "path");
+        path.setAttribute("d", "M12 11v5M12 8h.01");
+        [circle, path].forEach((item) => { item.setAttribute("fill", "none"); item.setAttribute("stroke", "currentColor"); item.setAttribute("stroke-width", "1.8"); item.setAttribute("stroke-linecap", "round"); svg.append(item); });
+        return svg;
+      }
+
+      function titleForChange(change, domain) {
+        const fields = change.fields || {};
+        return String(fields.title || fields.name || (domain === "Things" ? change.task_id : change.event_id) || "Untitled change");
+      }
+
+      function displayValue(value, key = "") {
+        if (value === null || value === undefined || value === "") return "Not set";
+        if (Array.isArray(value)) return value.map((item) => displayValue(item)).join(", ");
+        if (typeof value === "object") return JSON.stringify(value);
+        if (typeof value === "boolean") return value ? "Yes" : "No";
+        if (["start", "end", "due", "when"].includes(key) && typeof value === "string") {
+          const date = new Date(value);
+          if (!Number.isNaN(date.getTime()) && value.includes("T")) {
+            return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+          }
+        }
+        return String(value);
+      }
+
+      function renderChange(change, domain) {
+        const row = el("li", "change");
+        const title = el("div", "change-title");
+        title.append(el("span", "operation", String(change.operation || "change")), el("strong", "", titleForChange(change, domain)));
+        row.append(title);
+        const identifier = domain === "Things" ? change.task_id : change.event_id;
+        const target = domain === "Calendar" ? `Calendar: ${change.calendar_id}` : identifier ? `Task: ${identifier}` : "New Things task";
+        row.append(el("p", "change-meta", `${target}${change.destructive ? " · Destructive" : ""}`));
+        const fields = Object.entries(change.fields || {}).filter(([key]) => key !== "title" && key !== "name");
+        if (fields.length) {
+          const list = el("dl", "field-list");
+          fields.forEach(([key, value]) => {
+            list.append(el("dt", "", key.replaceAll("_", " ")), el("dd", "", displayValue(value, key)));
+          });
+          row.append(list);
+        }
+        return row;
+      }
+
+      function renderDomain(title, changes) {
+        const section = el("section", "domain");
+        const head = el("div", "domain-head");
+        head.append(el("h2", "", title), el("span", "count", `${changes.length} change${changes.length === 1 ? "" : "s"}`));
+        section.append(head);
+        if (!changes.length) {
+          section.append(el("p", "no-changes", `No ${title} changes in this revision.`));
+          return section;
+        }
+        const list = el("ul", "changes");
+        changes.forEach((change) => list.append(renderChange(change, title)));
+        section.append(list);
+        return section;
+      }
+
+      function labelForState(state) {
+        return ({ draft: "Awaiting review", approved: "Approved", applying: "Applying", applied: "Applied", partial_failure: "Needs attention", stale: "Source changed", rejected: "Rejected", reverted: "Reverted" })[state] || "Unknown state";
+      }
+
+      function followUp(prompt) {
+        if (window.openai?.sendFollowUpMessage) return window.openai.sendFollowUpMessage({ prompt, scrollToBottom: true });
+        window.parent.postMessage({ jsonrpc: "2.0", method: "ui/message", params: { role: "user", content: [{ type: "text", text: prompt }] } }, "*");
+      }
+
+      function callTool(name, args) {
+        if (window.openai?.callTool) return window.openai.callTool(name, args);
+        const id = `lifeos-${++requestId}`;
+        return new Promise((resolve, reject) => {
+          pendingCalls.set(id, { resolve, reject });
+          window.parent.postMessage({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } }, "*");
+          window.setTimeout(() => {
+            if (!pendingCalls.has(id)) return;
+            pendingCalls.delete(id);
+            reject(new Error("ChatGPT did not return a tool result."));
+          }, 30_000);
+        });
+      }
+
+      async function transition(toolName, successText) {
+        if (busy || !current) return;
+        busy = true;
+        feedback = toolName === "approve_proposal" ? "Approving this exact revision…" : "Rejecting this exact revision…";
+        feedbackIsError = false;
+        render(current);
+        try {
+          const result = await callTool(toolName, { proposal_id: current.proposal_id, revision_hash: current.revision_hash });
+          const output = result?.structuredContent || result?.structured_content || result?.data || result;
+          if (output && output.proposal_id) current = output;
+          else current = { ...current, state: toolName === "approve_proposal" ? "approved" : "rejected", approved_revision_hash: toolName === "approve_proposal" ? current.revision_hash : null };
+          feedback = successText;
+        } catch (error) {
+          feedback = error instanceof Error ? error.message : "The proposal could not be updated. Try again from ChatGPT.";
+          feedbackIsError = true;
+        } finally {
+          busy = false;
+          render(current);
+        }
+      }
+
+      function render(data) {
+        if (!data || !data.proposal_id || !data.revision_hash) {
+          app.className = "empty";
+          app.textContent = "This proposal is incomplete. Ask ChatGPT to load it again.";
+          return;
+        }
+        current = data;
+        app.className = "review";
+        app.replaceChildren();
+
+        const header = el("header", "header");
+        const heading = el("div");
+        heading.append(el("h1", "", "Review proposed changes"), el("p", "subtitle", "Nothing in Things or Calendar changes until this exact revision is approved and applied."));
+        const state = el("div", "state");
+        state.dataset.state = String(data.state || "draft");
+        state.append(el("span", "state-dot"), document.createTextNode(labelForState(data.state)));
+        header.append(heading, state);
+
+        const facts = el("section", "facts");
+        const factValues = [
+          [String(data.revision_number), "revision"],
+          [String((data.source_snapshots || []).length), (data.source_snapshots || []).length === 1 ? "source snapshot" : "source snapshots"],
+          [String(data.revision_hash).slice(0, 12), "revision fingerprint"]
+        ];
+        factValues.forEach(([value, label], index) => {
+          const fact = el("div", "fact");
+          const strong = el("strong", index === 2 ? "fingerprint" : "", value);
+          if (index === 2) strong.title = String(data.revision_hash);
+          fact.append(strong, el("span", "", label));
+          facts.append(fact);
+        });
+
+        const content = el("section", "content");
+        const notice = el("div", "notice");
+        const noticeCopy = el("p");
+        noticeCopy.append(el("strong", "", "Approval is not application. "), document.createTextNode("It locks your consent to the fingerprint above. Applying remains a separate confirmed action."));
+        notice.append(infoIcon(), noticeCopy);
+        const domains = el("div", "domains");
+        domains.append(renderDomain("Things", data.things_changes || []), renderDomain("Calendar", data.calendar_changes || []));
+        content.append(notice, domains);
+        if (data.failure_detail) content.append(el("p", "failure", String(data.failure_detail)));
+        const statusText = el("p", "feedback", feedback);
+        if (feedbackIsError) statusText.setAttribute("role", "alert");
+        content.append(statusText);
+
+        const footer = el("footer", "footer");
+        footer.append(el("p", "footer-copy", `Proposal ${data.proposal_id} · The full revision hash is retained by LifeOS.`));
+        const actions = el("div", "actions");
+        if (data.state === "draft") {
+          const reject = el("button", "action danger", "Reject");
+          const approve = el("button", "action primary", busy ? "Working…" : "Approve revision");
+          reject.type = approve.type = "button";
+          reject.disabled = approve.disabled = busy;
+          reject.addEventListener("click", () => transition("reject_proposal", "Revision rejected. Nothing was changed."));
+          approve.addEventListener("click", () => transition("approve_proposal", "Revision approved. It has not been applied yet."));
+          actions.append(reject, approve);
+        } else if (data.state === "approved") {
+          const apply = el("button", "action primary", "Apply approved changes");
+          apply.type = "button";
+          apply.addEventListener("click", () => followUp(`Apply the exact approved LifeOS proposal ${data.proposal_id} at revision hash ${data.revision_hash}. Re-check freshness and ask for the required destructive-action confirmation before writing to Things or Calendar.`));
+          actions.append(apply);
+        } else {
+          const refresh = el("button", "action secondary", "Check current state");
+          refresh.type = "button";
+          refresh.addEventListener("click", () => followUp(`Get the current state of LifeOS proposal ${data.proposal_id} and render the proposal review again.`));
+          actions.append(refresh);
+        }
+        footer.append(actions);
+        app.append(header, facts, content, footer);
+        window.openai?.notifyIntrinsicHeight?.();
+      }
+
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent) return;
+        const message = event.data;
+        if (!message || message.jsonrpc !== "2.0") return;
+        if (message.method === "ui/notifications/tool-result") render(message.params?.structuredContent);
+        if (message.id && pendingCalls.has(message.id)) {
+          const pending = pendingCalls.get(message.id);
+          pendingCalls.delete(message.id);
+          if (message.error) pending.reject(new Error(message.error.message || "Tool call failed."));
+          else pending.resolve(message.result);
+        }
+      }, { passive: true });
+
+      window.addEventListener("openai:set_globals", (event) => {
+        const output = event.detail?.globals?.toolOutput;
+        if (output) render(output);
+      }, { passive: true });
+
+      if (window.openai?.toolOutput) render(window.openai.toolOutput);
+      else if (new URLSearchParams(window.location.search).get("demo") === "1") render(demo);
+    })();
+  </script>
+</body>
+</html>

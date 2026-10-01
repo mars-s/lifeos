@@ -1,0 +1,16 @@
+interface:
+  display_name: "Meeting Debrief"
+  short_description: "Pull out my tasks and route them by area"
+  brand_color: "#789CFF"
+  default_prompt: "Use $meeting-debrief to extract only my own tasks from these meeting notes and transcript, verify ownership against the transcript, and route each task to the right LifeOS area."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "lifeos"
+      description: "LifeOS durable capture and review tools"
+      transport: "streamable_http"
+      url: "https://unpitched-snowless-agripina.ngrok-free.dev/mcp"
+
+policy:
+  allow_implicit_invocation: true

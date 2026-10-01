@@ -1,0 +1,813 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>LifeOS day plan</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f7f5;
+      --panel: #ffffff;
+      --panel-muted: #efefec;
+      --text: #191918;
+      --muted: #6b6b66;
+      --faint: #656560;
+      --line: #ddddda;
+      --accent: #2559d6;
+      --accent-text: #ffffff;
+      --focus: #6e96f6;
+      --warning: #9b4c09;
+      --warning-bg: #fff1df;
+      --block-a: #e6ecff;
+      --block-a-text: #17377e;
+      --block-b: #e5f2ea;
+      --block-b-text: #245438;
+      --block-c: #f2e8f7;
+      --block-c-text: #5b2b72;
+      --shadow: 0 12px 34px rgba(28, 28, 26, 0.09);
+      --radius: 14px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #161615;
+        --panel: #20201f;
+        --panel-muted: #292927;
+        --text: #f3f3ef;
+        --muted: #b0b0aa;
+        --faint: #a1a19a;
+        --line: #3a3a37;
+        --accent: #789cff;
+        --accent-text: #101423;
+        --focus: #9ab4ff;
+        --warning: #f3b56e;
+        --warning-bg: #3b2a1b;
+        --block-a: #25345a;
+        --block-a-text: #dbe5ff;
+        --block-b: #203f2e;
+        --block-b-text: #d8f4e2;
+        --block-c: #442a4c;
+        --block-c-text: #f3dcf8;
+        --shadow: 0 14px 38px rgba(0, 0, 0, 0.28);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: transparent;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+    }
+
+    body {
+      padding: 10px;
+      overflow-x: hidden;
+      accent-color: var(--accent);
+      scrollbar-color: var(--faint) transparent;
+    }
+
+    ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+
+    button, a { -webkit-tap-highlight-color: transparent; }
+
+    button:focus-visible, a:focus-visible, summary:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--focus) 65%, transparent);
+      outline-offset: 2px;
+    }
+
+    .shell {
+      width: 100%;
+      max-width: 760px;
+      margin: 0 auto;
+      overflow: hidden;
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 20px 20px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(20px, 4.5vw, 27px);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+      font-weight: 670;
+    }
+
+    .subtitle {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .status {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: var(--panel-muted);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #3da46a;
+      box-shadow: 0 2px 6px rgba(39, 132, 82, 0.3);
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border-bottom: 1px solid var(--line);
+    }
+
+    .metric {
+      min-width: 0;
+      padding: 13px 20px;
+    }
+
+    .metric + .metric { border-left: 1px solid var(--line); }
+
+    .metric-value {
+      display: block;
+      font-size: 15px;
+      line-height: 1.2;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metric-label {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.25;
+    }
+
+    .content { padding: 18px 20px 20px; }
+
+    .timeline-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .timeline-heading h2 {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.2;
+      font-weight: 680;
+    }
+
+    .timeline-heading span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .timeline {
+      position: relative;
+      min-height: 300px;
+      border-radius: 12px;
+      background: var(--panel-muted);
+      overflow: hidden;
+    }
+
+    .timeline.editing {
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 48%, transparent);
+    }
+
+    .blocks-layer {
+      position: absolute;
+      inset: 0 8px 0 66px;
+    }
+
+    .grid-line {
+      position: absolute;
+      left: 66px;
+      right: 0;
+      border-top: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+    }
+
+    .time-label {
+      position: absolute;
+      left: 10px;
+      width: 48px;
+      color: var(--faint);
+      font-size: 10px;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      transform: translateY(-50%);
+    }
+
+    .plan-block {
+      position: absolute;
+      min-height: 40px;
+      padding: 9px 34px 9px 11px;
+      overflow: hidden;
+      border: 0;
+      border-radius: 10px;
+      background: var(--block-a);
+      color: var(--block-a-text);
+      text-align: left;
+      cursor: pointer;
+      transition: filter 140ms ease-out, transform 140ms ease-out, box-shadow 140ms ease-out;
+    }
+
+    .plan-block:nth-of-type(3n + 2) { background: var(--block-b); color: var(--block-b-text); }
+    .plan-block:nth-of-type(3n + 3) { background: var(--block-c); color: var(--block-c-text); }
+    .plan-block:hover { filter: brightness(0.97); transform: translateY(-1px); }
+
+    .plan-block.is-editing {
+      padding-bottom: 13px;
+      cursor: grab;
+      touch-action: none;
+      user-select: none;
+    }
+
+    .plan-block.is-editing:active {
+      z-index: 20;
+      cursor: grabbing;
+      filter: brightness(0.95);
+      transform: none;
+      box-shadow: 0 8px 18px color-mix(in srgb, var(--text) 12%, transparent);
+    }
+
+    .resize-grip {
+      position: absolute;
+      z-index: 2;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      height: 10px;
+      cursor: ns-resize;
+    }
+
+    .resize-grip::after {
+      position: absolute;
+      bottom: 3px;
+      left: 50%;
+      width: 28px;
+      height: 2px;
+      border-radius: 999px;
+      background: currentColor;
+      opacity: 0.34;
+      content: "";
+      transform: translateX(-50%);
+    }
+
+    .block-title {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      line-height: 1.25;
+      font-weight: 650;
+    }
+
+    .block-time {
+      display: block;
+      margin-top: 3px;
+      font-size: 11px;
+      line-height: 1.2;
+      opacity: 0.78;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .things-mark {
+      position: absolute;
+      top: 10px;
+      right: 11px;
+      width: 15px;
+      height: 15px;
+      opacity: 0.58;
+    }
+
+    .edit-note {
+      color: var(--accent) !important;
+      font-weight: 630;
+    }
+
+    .details {
+      margin-top: 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    details { padding: 12px 0 0; }
+
+    summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 34px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 630;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    summary::-webkit-details-marker { display: none; }
+
+    .unscheduled-list {
+      display: grid;
+      gap: 8px;
+      margin: 4px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .unscheduled-item {
+      padding: 10px 11px;
+      border-radius: 10px;
+      background: var(--warning-bg);
+      color: var(--warning);
+    }
+
+    .unscheduled-item strong { display: block; font-size: 12px; }
+    .unscheduled-item span { display: block; margin-top: 3px; font-size: 11px; line-height: 1.4; }
+
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 14px 20px 18px;
+      border-top: 1px solid var(--line);
+    }
+
+    .action {
+      min-width: 0;
+      min-height: 44px;
+      padding: 0 14px;
+      border: 0;
+      border-radius: 10px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .action-secondary { background: var(--panel-muted); color: var(--text); }
+    .action-primary { background: var(--accent); color: var(--accent-text); }
+    .action:hover { filter: brightness(0.96); }
+    .action:active { transform: translateY(1px); }
+    .action:disabled { opacity: 0.46; cursor: not-allowed; }
+
+    .empty {
+      display: grid;
+      place-items: center;
+      min-height: 300px;
+      padding: 36px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 520px) {
+      body { padding: 6px; }
+      .header { padding: 17px 16px 14px; }
+      .content { padding: 16px; }
+      .metric { padding: 11px 12px; }
+      .actions { padding: 12px 16px 16px; }
+      .action { flex: 1 1 0; padding-inline: 10px; }
+      .status { padding-inline: 8px; font-size: 11px; }
+      .timeline-heading span { display: none; }
+      .timeline-heading .edit-note { display: inline; }
+      .metric-label { overflow-wrap: anywhere; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell" aria-live="polite">
+    <div id="app" class="empty">Waiting for the day plan…</div>
+  </main>
+
+  <script>
+    (() => {
+      const app = document.getElementById("app");
+      let latestOutput = null;
+      let draftOutput = null;
+      let editBaseline = null;
+      let editMode = false;
+      let hasEdits = false;
+
+      const demo = {
+        day_start: "2026-09-22T08:00:00+10:00",
+        day_end: "2026-09-22T18:00:00+10:00",
+        blocks: [
+          { task_id: "demo-1", title: "Review FIT3155 lecture notes", start: "2026-09-22T08:30:00+10:00", end: "2026-09-22T10:00:00+10:00", duration_minutes: 90, part: 1, calendar_id: "planned-tasks" },
+          { task_id: "demo-2", title: "Heimdall customer story revisions", start: "2026-09-22T10:30:00+10:00", end: "2026-09-22T12:00:00+10:00", duration_minutes: 90, part: 1, calendar_id: "planned-tasks" },
+          { task_id: "demo-3", title: "Monash automation check-in", start: "2026-09-22T14:00:00+10:00", end: "2026-09-22T15:00:00+10:00", duration_minutes: 60, part: 1, calendar_id: "planned-tasks" }
+        ],
+        unscheduled: [{ task_id: "demo-4", title: "Sort Things inbox", reason: "No contiguous free block is at least 45 minutes", remaining_minutes: 45 }],
+        proposal_ready: true,
+        mutates_external_systems: false,
+        demo: true
+      };
+
+      function node(tag, className, text) {
+        const element = document.createElement(tag);
+        if (className) element.className = className;
+        if (text !== undefined) element.textContent = text;
+        return element;
+      }
+
+      function parseDate(value) {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+      }
+
+      function formatTime(date) {
+        return new Intl.DateTimeFormat(document.documentElement.lang || "en-AU", {
+          hour: "numeric",
+          minute: "2-digit"
+        }).format(date);
+      }
+
+      function formatDay(date) {
+        return new Intl.DateTimeFormat(document.documentElement.lang || "en-AU", {
+          weekday: "long",
+          day: "numeric",
+          month: "long"
+        }).format(date);
+      }
+
+      function openIcon() {
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("class", "things-mark");
+        svg.setAttribute("viewBox", "0 0 20 20");
+        svg.setAttribute("aria-hidden", "true");
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", "M6 14 14 6M8 6h6v6");
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke", "currentColor");
+        path.setAttribute("stroke-width", "2.2");
+        path.setAttribute("stroke-linecap", "round");
+        path.setAttribute("stroke-linejoin", "round");
+        svg.append(path);
+        return svg;
+      }
+
+      function dragIcon() {
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("class", "things-mark");
+        svg.setAttribute("viewBox", "0 0 20 20");
+        svg.setAttribute("aria-hidden", "true");
+        [6, 10, 14].forEach((y) => {
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("d", `M5 ${y}h10`);
+          path.setAttribute("fill", "none");
+          path.setAttribute("stroke", "currentColor");
+          path.setAttribute("stroke-width", "1.8");
+          path.setAttribute("stroke-linecap", "round");
+          svg.append(path);
+        });
+        return svg;
+      }
+
+      function metric(value, label) {
+        const wrapper = node("div", "metric");
+        wrapper.append(node("span", "metric-value", value), node("span", "metric-label", label));
+        return wrapper;
+      }
+
+      function followUp(prompt) {
+        if (window.openai?.sendFollowUpMessage) {
+          return window.openai.sendFollowUpMessage({ prompt, scrollToBottom: true });
+        }
+        window.parent.postMessage({ jsonrpc: "2.0", method: "ui/message", params: { role: "user", content: [{ type: "text", text: prompt }] } }, "*");
+      }
+
+      function clone(value) {
+        return JSON.parse(JSON.stringify(value));
+      }
+
+      function planFingerprint(data) {
+        return JSON.stringify({
+          day_start: data?.day_start,
+          day_end: data?.day_end,
+          blocks: (data?.blocks || []).map(({ task_id, start, end }) => ({ task_id, start, end }))
+        });
+      }
+
+      function layoutBlocks(blocks, start, end, timelineHeight) {
+        const totalMs = end - start;
+        const minimumHeight = 40;
+        const gap = 2;
+        const items = blocks.map((block, index) => {
+          const blockStart = parseDate(block.start);
+          const blockEnd = parseDate(block.end);
+          if (!blockStart || !blockEnd || blockStart >= blockEnd) return null;
+          const top = Math.max(0, Math.min(timelineHeight, ((blockStart - start) / totalMs) * timelineHeight));
+          const exactHeight = ((blockEnd - blockStart) / totalMs) * timelineHeight;
+          const height = Math.min(timelineHeight - top, Math.max(minimumHeight, exactHeight - 2));
+          return { block, index, blockStart, blockEnd, top, height, bottom: top + height };
+        }).filter(Boolean).sort((a, b) => a.top - b.top || a.bottom - b.bottom);
+
+        let cluster = null;
+        items.forEach((item) => {
+          if (!cluster || item.top >= cluster.bottom + gap) {
+            cluster = { bottom: item.bottom, laneBottoms: [], items: [] };
+          }
+          let lane = cluster.laneBottoms.findIndex((bottom) => bottom + gap <= item.top);
+          if (lane === -1) lane = cluster.laneBottoms.length;
+          cluster.laneBottoms[lane] = item.bottom;
+          cluster.bottom = Math.max(cluster.bottom, item.bottom);
+          cluster.items.push(item);
+          item.lane = lane;
+          item.cluster = cluster;
+        });
+
+        items.forEach((item) => { item.laneCount = item.cluster.laneBottoms.length; });
+        return items;
+      }
+
+      function moveBlock(blockIndex, nextStart, dayStart, dayEnd) {
+        const block = draftOutput.blocks[blockIndex];
+        const currentStart = parseDate(block.start);
+        const currentEnd = parseDate(block.end);
+        if (!currentStart || !currentEnd) return;
+        const duration = currentEnd - currentStart;
+        const clampedStart = new Date(Math.max(dayStart.getTime(), Math.min(dayEnd.getTime() - duration, nextStart.getTime())));
+        block.start = clampedStart.toISOString();
+        block.end = new Date(clampedStart.getTime() + duration).toISOString();
+      }
+
+      function resizeBlock(blockIndex, nextEnd, dayEnd) {
+        const block = draftOutput.blocks[blockIndex];
+        const currentStart = parseDate(block.start);
+        if (!currentStart) return;
+        const minimumEnd = currentStart.getTime() + 15 * 60000;
+        const clampedEnd = new Date(Math.max(minimumEnd, Math.min(dayEnd.getTime(), nextEnd.getTime())));
+        block.end = clampedEnd.toISOString();
+        block.duration_minutes = Math.round((clampedEnd - currentStart) / 60000);
+      }
+
+      function attachEditing(button, item, timeline, start, end, totalMinutes) {
+        const stepMinutes = 15;
+        button.classList.add("is-editing");
+        button.setAttribute("aria-label", `Edit ${item.block.title}. Currently ${formatTime(item.blockStart)} to ${formatTime(item.blockEnd)}. Arrow keys move it. Option plus arrow keys change its duration.`);
+
+        let gesture = null;
+        button.addEventListener("pointerdown", (event) => {
+          if (event.button !== 0) return;
+          const mode = event.target.closest(".resize-grip") ? "resize" : "move";
+          gesture = { pointerId: event.pointerId, y: event.clientY, initialStart: item.blockStart, initialEnd: item.blockEnd, mode, moved: false };
+          button.setPointerCapture(event.pointerId);
+        });
+        button.addEventListener("pointermove", (event) => {
+          if (!gesture || gesture.pointerId !== event.pointerId) return;
+          const deltaMinutes = ((event.clientY - gesture.y) / timeline.clientHeight) * totalMinutes;
+          const snappedDelta = Math.round(deltaMinutes / stepMinutes) * stepMinutes;
+          gesture.moved ||= Math.abs(event.clientY - gesture.y) > 3;
+          if (gesture.mode === "resize") {
+            const minimumEnd = item.blockStart.getTime() + stepMinutes * 60000;
+            const proposedEnd = gesture.initialEnd.getTime() + snappedDelta * 60000;
+            const nextEnd = new Date(Math.max(minimumEnd, Math.min(end.getTime(), proposedEnd)));
+            const duration = nextEnd - item.blockStart;
+            const exactHeight = (duration / (end - start)) * timeline.clientHeight;
+            button.style.height = `${Math.max(40, exactHeight - 2)}px`;
+            button.querySelector(".block-time").textContent = `${formatTime(item.blockStart)}–${formatTime(nextEnd)} · ${Math.round(duration / 60000)} min`;
+          } else {
+            const duration = item.blockEnd - item.blockStart;
+            const proposed = new Date(gesture.initialStart.getTime() + snappedDelta * 60000);
+            const clamped = new Date(Math.max(start.getTime(), Math.min(end.getTime() - duration, proposed.getTime())));
+            button.style.top = `${((clamped - start) / (end - start)) * 100}%`;
+            button.querySelector(".block-time").textContent = `${formatTime(clamped)}–${formatTime(new Date(clamped.getTime() + duration))} · ${Math.round(duration / 60000)} min`;
+          }
+        });
+        const finishGesture = (event) => {
+          if (!gesture || gesture.pointerId !== event.pointerId) return;
+          const moved = gesture.moved;
+          const deltaMinutes = ((event.clientY - gesture.y) / timeline.clientHeight) * totalMinutes;
+          const snappedDelta = Math.round(deltaMinutes / stepMinutes) * stepMinutes;
+          if (moved && gesture.mode === "resize") resizeBlock(item.index, new Date(gesture.initialEnd.getTime() + snappedDelta * 60000), end);
+          else if (moved) moveBlock(item.index, new Date(gesture.initialStart.getTime() + snappedDelta * 60000), start, end);
+          gesture = null;
+          if (moved) render(draftOutput);
+        };
+        button.addEventListener("pointerup", finishGesture);
+        button.addEventListener("pointercancel", () => { gesture = null; render(draftOutput); });
+        button.addEventListener("keydown", (event) => {
+          if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+          event.preventDefault();
+          const direction = event.key === "ArrowUp" ? -1 : 1;
+          const amount = (event.shiftKey ? 60 : stepMinutes) * direction;
+          if (event.altKey) resizeBlock(item.index, new Date(item.blockEnd.getTime() + amount * 60000), end);
+          else moveBlock(item.index, new Date(item.blockStart.getTime() + amount * 60000), start, end);
+          render(draftOutput);
+          app.querySelector(`[data-block-index="${item.index}"]`)?.focus();
+        });
+      }
+
+      function render(data) {
+        if (!data || !Array.isArray(data.blocks)) {
+          app.className = "empty";
+          app.textContent = "This plan could not be displayed. Ask ChatGPT to render it again.";
+          return;
+        }
+
+        const start = parseDate(data.day_start);
+        const end = parseDate(data.day_end);
+        if (!start || !end || start >= end) {
+          app.className = "empty";
+          app.textContent = "The planning window is invalid. Ask ChatGPT to create a new day plan.";
+          return;
+        }
+
+        app.className = "";
+        app.replaceChildren();
+
+        const header = node("header", "header");
+        const heading = node("div");
+        heading.append(node("h1", "", formatDay(start)));
+        heading.append(node("p", "subtitle", `${formatTime(start)} to ${formatTime(end)} · Calendar remains the timing authority`));
+        const status = node("div", "status");
+        const statusText = editMode ? "Editing draft" : hasEdits ? "Edited preview" : data.demo ? "Demo preview" : "Preview only";
+        status.append(node("span", "status-dot"), document.createTextNode(statusText));
+        header.append(heading, status);
+
+        const scheduledMinutes = data.blocks.reduce((sum, block) => sum + Number(block.duration_minutes || 0), 0);
+        const summary = node("section", "summary");
+        summary.setAttribute("aria-label", "Plan summary");
+        summary.append(
+          metric(String(data.blocks.length), data.blocks.length === 1 ? "planned block" : "planned blocks"),
+          metric(`${Math.floor(scheduledMinutes / 60)}h ${scheduledMinutes % 60}m`, "focused time"),
+          metric(String((data.unscheduled || []).length), "not scheduled")
+        );
+
+        const content = node("section", "content");
+        const timelineHeading = node("div", "timeline-heading");
+        const headingNote = node("span", editMode ? "edit-note" : "", editMode ? "Drag blocks · pull the lower edge to resize" : hasEdits ? "Draft adjusted · Nothing changed yet" : "Nothing has changed yet");
+        timelineHeading.append(node("h2", "", "Proposed schedule"), headingNote);
+        const timeline = node("div", "timeline");
+        timeline.setAttribute("aria-label", "Proposed schedule timeline");
+        if (editMode) timeline.classList.add("editing");
+
+        const totalMinutes = (end - start) / 60000;
+        const timelineHeight = Math.max(300, Math.min(520, totalMinutes * 0.62));
+        timeline.style.height = `${timelineHeight}px`;
+
+        const tickMinutes = totalMinutes <= 360 ? 60 : 120;
+        for (let minute = 0; minute < totalMinutes; minute += tickMinutes) {
+          const top = (minute / totalMinutes) * 100;
+          const tick = new Date(start.getTime() + minute * 60000);
+          const line = node("div", "grid-line");
+          line.style.top = `${top}%`;
+          const label = node("span", "time-label", formatTime(tick));
+          label.style.top = minute === 0 ? "9px" : `${top}%`;
+          timeline.append(line, label);
+        }
+
+        const blocksLayer = node("div", "blocks-layer");
+        layoutBlocks(data.blocks, start, end, timelineHeight).forEach((item) => {
+          const { block, blockStart, blockEnd, lane, laneCount } = item;
+          const button = node("button", "plan-block");
+          button.type = "button";
+          button.dataset.blockIndex = String(item.index);
+          button.style.top = `${(item.top / timelineHeight) * 100}%`;
+          button.style.height = `${item.height}px`;
+          button.style.left = `${(lane / laneCount) * 100}%`;
+          button.style.width = laneCount === 1 ? "100%" : `calc(${100 / laneCount}% - 4px)`;
+          button.setAttribute("aria-label", `Open ${block.title} in Things, scheduled ${formatTime(blockStart)} to ${formatTime(blockEnd)}`);
+          button.append(
+            node("span", "block-title", String(block.title || "Untitled task")),
+            node("span", "block-time", `${formatTime(blockStart)}–${formatTime(blockEnd)} · ${block.duration_minutes} min`),
+            editMode ? dragIcon() : openIcon()
+          );
+          if (editMode) {
+            const grip = node("span", "resize-grip");
+            grip.setAttribute("aria-hidden", "true");
+            grip.title = "Drag to change duration";
+            button.append(grip);
+            attachEditing(button, item, timeline, start, end, totalMinutes);
+          } else {
+            button.addEventListener("click", () => {
+              const href = `things:///show?id=${encodeURIComponent(block.task_id)}`;
+              if (window.openai?.openExternal) window.openai.openExternal({ href, redirectUrl: false });
+              else followUp(`Open the Things task for ${block.title}.`);
+            });
+          }
+          blocksLayer.append(button);
+        });
+        timeline.append(blocksLayer);
+
+        content.append(timelineHeading, timeline);
+
+        const unscheduled = Array.isArray(data.unscheduled) ? data.unscheduled : [];
+        if (unscheduled.length) {
+          const detailsWrap = node("div", "details");
+          const details = document.createElement("details");
+          const summaryEl = document.createElement("summary");
+          summaryEl.append(document.createTextNode(`${unscheduled.length} task${unscheduled.length === 1 ? " still needs" : "s still need"} time`), node("span", "", "+"));
+          const list = node("ul", "unscheduled-list");
+          unscheduled.forEach((item) => {
+            const li = node("li", "unscheduled-item");
+            li.append(node("strong", "", String(item.title || "Untitled task")), node("span", "", String(item.reason || "No suitable time was found.")));
+            list.append(li);
+          });
+          details.append(summaryEl, list);
+          detailsWrap.append(details);
+          content.append(detailsWrap);
+        }
+
+        const actions = node("footer", "actions");
+        const revise = node("button", "action action-secondary", editMode ? "Cancel" : "Adjust plan");
+        revise.type = "button";
+        revise.addEventListener("click", () => {
+          if (editMode) {
+            draftOutput = clone(editBaseline);
+            editMode = false;
+          } else {
+            editBaseline = clone(draftOutput);
+            editMode = true;
+          }
+          render(draftOutput);
+        });
+        const prepare = node("button", "action action-primary", editMode ? "Done editing" : "Prepare proposal");
+        prepare.type = "button";
+        prepare.disabled = data.blocks.length === 0;
+        prepare.addEventListener("click", () => {
+          if (editMode) {
+            editMode = false;
+            hasEdits = JSON.stringify(draftOutput.blocks) !== JSON.stringify(latestOutput.blocks);
+            window.openai?.setWidgetState?.({ draftOutput, hasEdits, sourceFingerprint: planFingerprint(latestOutput) });
+            render(draftOutput);
+            return;
+          }
+          if (hasEdits) {
+            const editedPlan = JSON.stringify({ day_start: data.day_start, day_end: data.day_end, blocks: data.blocks, unscheduled: data.unscheduled || [] });
+            followUp(`Prepare a LifeOS proposal from this exact edited day plan JSON: ${editedPlan}. Keep these scheduled times, re-read the required Things and Calendar snapshots, and show me the proposal for approval. Do not apply it.`);
+          } else {
+            followUp("Prepare a LifeOS proposal from the exact day plan shown above. Re-read the required Things and Calendar snapshots if needed. Show me the proposal for approval, but do not apply it.");
+          }
+        });
+        actions.append(revise, prepare);
+
+        app.append(header, summary, content, actions);
+        window.openai?.notifyIntrinsicHeight?.();
+      }
+
+      function receiveOutput(data) {
+        if (!data || !Array.isArray(data.blocks)) {
+          render(data);
+          return;
+        }
+        latestOutput = data;
+        const stored = window.openai?.widgetState;
+        const storedDraft = stored?.draftOutput;
+        const matchesStoredPlan = stored?.sourceFingerprint === planFingerprint(data);
+        draftOutput = matchesStoredPlan ? clone(storedDraft) : clone(data);
+        hasEdits = matchesStoredPlan && Boolean(stored?.hasEdits);
+        editMode = false;
+        render(draftOutput);
+      }
+
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent) return;
+        const message = event.data;
+        if (!message || message.jsonrpc !== "2.0") return;
+        if (message.method === "ui/notifications/tool-result") receiveOutput(message.params?.structuredContent);
+      }, { passive: true });
+
+      window.addEventListener("openai:set_globals", (event) => {
+        const output = event.detail?.globals?.toolOutput;
+        if (output) receiveOutput(output);
+      }, { passive: true });
+
+      if (window.openai?.toolOutput) receiveOutput(window.openai.toolOutput);
+      else if (new URLSearchParams(window.location.search).get("demo") === "1") receiveOutput(demo);
+    })();
+  </script>
+</body>
+</html>

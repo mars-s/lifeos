@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.lifeos.mcp</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/uv</string>
+		<string>--directory</string>
+		<string>/Users/REPLACE_ME/Documents/ChatGPT/lifeos</string>
+		<string>run</string>
+		<string>lifeos-mcp</string>
+		<string>--transport</string>
+		<string>streamable-http</string>
+		<string>--host</string>
+		<string>127.0.0.1</string>
+		<string>--port</string>
+		<string>48763</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>LIFEOS_PUBLIC_BASE_URL</key>
+		<string>https://REPLACE_ME.ngrok-free.dev</string>
+		<key>LIFEOS_GITHUB_CLIENT_ID</key>
+		<string>REPLACE_ME</string>
+		<key>LIFEOS_GITHUB_CLIENT_SECRET_KEYCHAIN_SERVICE</key>
+		<string>LifeOS-GitHub-OAuth</string>
+		<key>LIFEOS_GITHUB_CLIENT_SECRET_KEYCHAIN_ACCOUNT</key>
+		<string>REPLACE_ME</string>
+		<key>LIFEOS_GITHUB_ALLOWED_LOGIN</key>
+		<string>REPLACE_ME</string>
+		<key>THINGSDB</key>
+		<string>/Users/REPLACE_ME/Library/Group Containers/JLMPQHK86H.com.culturedcode.ThingsMac/ThingsData-REPLACE_ME/Things Database.thingsdatabase/main.sqlite</string>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/REPLACE_ME/Documents/ChatGPT/lifeos</string>
+	<key>StandardOutPath</key>
+	<string>/Users/REPLACE_ME/Library/Logs/lifeos-mcp.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/REPLACE_ME/Library/Logs/lifeos-mcp.error.log</string>
+</dict>
+</plist>

@@ -1,0 +1,21 @@
+name: Verify LifeOS
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.14
+      - run: uv sync --extra test
+      - run: sh scripts/verify.sh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lifeos-verification
+          path: artifacts/verification/
+          if-no-files-found: ignore

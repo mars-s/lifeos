@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>LifeOS brain-dump canvas</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --panel: #ffffff;
+      --field: #f2f2ef;
+      --field-raised: #e9e9e5;
+      --text: #191918;
+      --muted: #6b6b66;
+      --faint: #888883;
+      --line: #ddddda;
+      --accent: #2559d6;
+      --accent-text: #ffffff;
+      --focus: #6e96f6;
+      --blue: #e6ecff;
+      --blue-text: #17377e;
+      --green: #e5f2ea;
+      --green-text: #245438;
+      --plum: #f2e8f7;
+      --plum-text: #5b2b72;
+      --amber: #fff1df;
+      --amber-text: #8d4509;
+      --shadow: 0 12px 34px rgba(28, 28, 26, 0.09);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --panel: #20201f;
+        --field: #292927;
+        --field-raised: #323230;
+        --text: #f3f3ef;
+        --muted: #b0b0aa;
+        --faint: #92928c;
+        --line: #3a3a37;
+        --accent: #789cff;
+        --accent-text: #101423;
+        --focus: #9ab4ff;
+        --blue: #25345a;
+        --blue-text: #dbe5ff;
+        --green: #203f2e;
+        --green-text: #d8f4e2;
+        --plum: #442a4c;
+        --plum-text: #f3dcf8;
+        --amber: #3b2a1b;
+        --amber-text: #f3b56e;
+        --shadow: 0 14px 38px rgba(0, 0, 0, 0.28);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      min-height: 100%;
+      margin: 0;
+      background: transparent;
+      color: var(--text);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      padding: 10px;
+      overflow-x: hidden;
+      accent-color: var(--accent);
+      scrollbar-color: var(--faint) transparent;
+    }
+
+    ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+
+    button { font: inherit; -webkit-tap-highlight-color: transparent; }
+    button:focus-visible, iframe:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--focus) 65%, transparent);
+      outline-offset: 2px;
+    }
+
+    .shell {
+      width: 100%;
+      min-width: 0;
+      max-width: 920px;
+      margin: 0 auto;
+      overflow: hidden;
+      border-radius: 14px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 20px 20px 17px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(20px, 4.5vw, 27px);
+      font-weight: 670;
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+
+    .subtitle {
+      max-width: 68ch;
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .status {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: var(--field);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #3da46a;
+      box-shadow: 0 2px 6px rgba(39, 132, 82, 0.3);
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      width: 100%;
+      min-width: 0;
+      min-height: 42px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .summary-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 16px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .summary-item + .summary-item { border-left: 1px solid var(--line); }
+    .summary-item strong { color: var(--text); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+    .canvas {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      grid-auto-rows: 44px;
+      gap: 10px;
+      padding: 18px 20px 20px;
+      background: var(--panel);
+    }
+
+    .zone {
+      min-width: 0;
+      overflow: auto;
+      border-radius: 12px;
+      background: var(--field);
+      scrollbar-width: thin;
+      scrollbar-color: var(--faint) transparent;
+    }
+
+    .zone-header {
+      position: sticky;
+      z-index: 2;
+      top: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 42px;
+      padding: 0 13px;
+      border-bottom: 1px solid var(--line);
+      background: var(--field);
+    }
+
+    .zone-title {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .zone-title svg { flex: 0 0 auto; width: 16px; height: 16px; color: var(--muted); }
+    .zone-title h2 {
+      overflow: hidden;
+      margin: 0;
+      font-size: 13px;
+      font-weight: 680;
+      line-height: 1.2;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .kind {
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 650;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    .zone-body { padding: 11px 13px 13px; }
+    .zone-copy { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+    .zone-copy + .items { margin-top: 11px; }
+
+    .items { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+    .item {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 9px;
+      padding: 9px 0;
+    }
+
+    .item + .item { border-top: 1px solid color-mix(in srgb, currentColor 13%, transparent); }
+
+    .marker {
+      display: grid;
+      width: 18px;
+      height: 18px;
+      margin-top: 1px;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--muted);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .calendar .marker { width: 6px; border: 0; border-radius: 999px; background: var(--accent); }
+    .questions .marker { border-radius: 50%; background: var(--amber); color: var(--amber-text); }
+    .journal .marker { border: 0; border-radius: 50%; background: var(--plum); }
+
+    .item-main { min-width: 0; }
+    .item-title { display: block; font-size: 12px; font-weight: 650; line-height: 1.35; }
+    .item-detail { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 6px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 21px;
+      padding: 0 7px;
+      border-radius: 999px;
+      background: var(--field-raised);
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 620;
+    }
+
+    .zone[data-accent="blue"] { background: var(--blue); color: var(--blue-text); }
+    .zone[data-accent="green"] { background: var(--green); color: var(--green-text); }
+    .zone[data-accent="plum"] { background: var(--plum); color: var(--plum-text); }
+    .zone[data-accent="amber"] { background: var(--amber); color: var(--amber-text); }
+    .zone[data-accent]:not([data-accent="neutral"]) .zone-header { background: inherit; border-color: color-mix(in srgb, currentColor 18%, transparent); }
+    .zone[data-accent]:not([data-accent="neutral"]) .zone-title svg,
+    .zone[data-accent]:not([data-accent="neutral"]) .kind,
+    .zone[data-accent]:not([data-accent="neutral"]) .zone-copy { color: inherit; opacity: 0.8; }
+
+    .heading { overflow: visible; background: transparent; }
+    .heading .zone-header { display: none; }
+    .heading .zone-body { padding: 6px 2px; }
+    .heading .zone-copy { color: var(--text); font-size: 15px; font-weight: 670; line-height: 1.25; letter-spacing: -0.015em; }
+
+    .custom-html { overflow: hidden; background: var(--field); }
+    .custom-html .zone-body { padding: 0; height: calc(100% - 42px); min-height: 140px; }
+    .custom-frame { display: block; width: 100%; height: 100%; min-height: 140px; border: 0; background: transparent; }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 20px 18px;
+      border-top: 1px solid var(--line);
+    }
+
+    .safety { color: var(--muted); font-size: 11px; line-height: 1.4; }
+    .action {
+      flex: 0 0 auto;
+      min-height: 44px;
+      padding: 0 14px;
+      border: 0;
+      border-radius: 10px;
+      background: var(--accent);
+      color: var(--accent-text);
+      font-size: 13px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .action:hover { filter: brightness(0.96); }
+    .action:active { transform: translateY(1px); }
+
+    .empty {
+      display: grid;
+      min-height: 260px;
+      padding: 36px;
+      place-items: center;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    @media (max-width: 650px) {
+      body { padding: 6px; }
+      .header { flex-direction: column; gap: 11px; padding: 17px 16px 14px; }
+      .status { align-self: flex-start; padding-inline: 8px; font-size: 11px; }
+      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .summary-item { min-height: 42px; padding-inline: 16px; }
+      .summary-item:nth-child(n + 3) { border-top: 1px solid var(--line); }
+      .summary-item:nth-child(3) { border-left: 0; }
+      .canvas { display: flex; flex-direction: column; padding: 14px 16px 16px; }
+      .zone { width: 100%; min-height: 132px !important; }
+      .kind { display: none; }
+      .heading { min-height: 0 !important; }
+      .custom-html { min-height: 260px !important; }
+      .footer { align-items: stretch; flex-direction: column; padding: 13px 16px 16px; }
+      .action { width: 100%; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell" aria-live="polite">
+    <div id="app" class="empty">Waiting for the brain-dump canvas…</div>
+  </main>
+
+  <script>
+    (() => {
+      const app = document.getElementById("app");
+      const searchParams = new URLSearchParams(window.location.search);
+      const captureWidth = Number(searchParams.get("captureWidth"));
+      if (captureWidth >= 320 && captureWidth <= 1200) document.body.style.width = `${captureWidth}px`;
+      const demo = {
+        version: "1",
+        title: "Everything on your mind",
+        subtitle: "Three tasks, one journal note, and two details to resolve before scheduling.",
+        capture_id: "demo-capture",
+        revision_hash: "demo-revision",
+        demo: true,
+        nodes: [
+          { id: "tasks", kind: "tasks", title: "Candidate tasks", accent: "blue", x: 1, y: 1, width: 7, min_height: 6, items: [
+            { id: "t1", title: "Finish FIT3155 suffix-tree notes", area: "University", time_expression: "before class", state: "candidate" },
+            { id: "t2", title: "Review the flaky login test", area: "Heimdall", meta: "Work", state: "candidate" },
+            { id: "t3", title: "Call Mum", area: "Personal", time_expression: "this week", state: "unresolved" }
+          ]},
+          { id: "calendar", kind: "calendar", title: "Calendar preview", accent: "green", x: 8, y: 1, width: 5, min_height: 6, body: "Possible shape of the week. Exact times stay open until the questions below are answered.", items: [
+            { id: "e1", title: "FIT3155 notes", time_expression: "Before class", state: "unscheduled" },
+            { id: "e2", title: "Login test review", time_expression: "Next focus block", state: "unscheduled" }
+          ]},
+          { id: "journal", kind: "journal", title: "Journal", accent: "plum", x: 1, y: 7, width: 7, min_height: 4, body: "The blue planning cards feel right. Keep the interface calm and let the schedule carry the visual weight." },
+          { id: "questions", kind: "questions", title: "Needs your input", accent: "amber", x: 8, y: 7, width: 5, min_height: 4, items: [
+            { id: "q1", title: "What time is the FIT3155 class?", state: "unresolved" },
+            { id: "q2", title: "When would you like to call Mum?", state: "unresolved" }
+          ]},
+          { id: "map", kind: "custom_html", title: "Thought map", accent: "neutral", x: 1, y: 11, width: 12, min_height: 5,
+            html: '<main><button class="seed" type="button">Brain dump</button><section><button type="button">Study</button><button type="button">Work</button><button type="button">Personal</button></section><p>Tap a branch to focus it.</p></main>',
+            css: 'body{background:#292927;color:#f3f3ef}main{min-height:220px;display:grid;place-items:center;align-content:center;padding:24px}button{position:relative;z-index:1;border:0;border-radius:10px;padding:10px 16px;background:#3a3a37;color:inherit;font:600 13px ui-sans-serif,-apple-system,sans-serif;cursor:pointer;transition:opacity 140ms ease-out,background 140ms ease-out}.seed{background:#789cff;color:#101423}.seed::after{position:absolute;top:100%;left:50%;width:1px;height:30px;background:#686864;content:""}section{position:relative;display:flex;flex-wrap:wrap;justify-content:center;gap:18px;margin-top:30px;padding-top:24px}section::before{position:absolute;top:0;right:28px;left:28px;height:1px;background:#686864;content:""}section button::before{position:absolute;bottom:100%;left:50%;width:1px;height:24px;background:#686864;content:""}button.active{background:#789cff;color:#101423}main[data-focus] section button:not(.active){opacity:.42}p{margin:17px 0 0;color:#a1a19a;font-size:11px}',
+            javascript: 'const message=document.querySelector("p");document.querySelectorAll("section button").forEach((button)=>button.addEventListener("click",()=>{document.querySelectorAll("section button").forEach((item)=>item.classList.remove("active"));button.classList.add("active");document.querySelector("main").dataset.focus=button.textContent;message.textContent=`Focused on ${button.textContent}. Tap another branch to compare.`}));'
+          }
+        ],
+        mutates_external_systems: false
+      };
+
+      function element(tag, className, text) {
+        const result = document.createElement(tag);
+        if (className) result.className = className;
+        if (text !== undefined) result.textContent = text;
+        return result;
+      }
+
+      function icon(kind) {
+        const paths = {
+          tasks: ["M5 5.5h14M5 12h14M5 18.5h14", "M1.75 5.5h.5M1.75 12h.5M1.75 18.5h.5"],
+          calendar: ["M4 5h16v16H4zM8 2v6M16 2v6M4 10h16"],
+          journal: ["M5 3.5h12a2 2 0 0 1 2 2v15H7a2 2 0 0 1-2-2zM8 3.5v17"],
+          questions: ["M12 20.5h.01M9.6 8.4a2.7 2.7 0 1 1 3.8 2.5c-1 .6-1.4 1.2-1.4 2.6v.5M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0"],
+          note: ["M5 3h10l4 4v14H5zM15 3v5h4M8 12h8M8 16h6"],
+          custom_html: ["M4 5h16v14H4zM8 9l-2 3 2 3M16 9l2 3-2 3M14 8l-4 8"]
+        };
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("aria-hidden", "true");
+        (paths[kind] || paths.note).forEach((data) => {
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("d", data);
+          path.setAttribute("fill", "none");
+          path.setAttribute("stroke", "currentColor");
+          path.setAttribute("stroke-width", "1.7");
+          path.setAttribute("stroke-linecap", "round");
+          path.setAttribute("stroke-linejoin", "round");
+          svg.append(path);
+        });
+        return svg;
+      }
+
+      function followUp(prompt) {
+        if (window.openai?.sendFollowUpMessage) {
+          return window.openai.sendFollowUpMessage({ prompt, scrollToBottom: true });
+        }
+        window.parent.postMessage({ jsonrpc: "2.0", method: "ui/message", params: { role: "user", content: [{ type: "text", text: prompt }] } }, "*");
+      }
+
+      function itemMeta(item) {
+        return [item.area, item.project, item.meta, item.start && item.end ? `${item.start}–${item.end}` : item.start, item.time_expression].filter(Boolean);
+      }
+
+      function renderItems(zone, node) {
+        const items = Array.isArray(node.items) ? node.items : [];
+        if (!items.length) return;
+        const list = element("ul", "items");
+        items.forEach((item, index) => {
+          const row = element("li", "item");
+          const marker = element("span", "marker", node.kind === "questions" ? "?" : node.kind === "tasks" ? "" : String(index + 1));
+          marker.setAttribute("aria-hidden", "true");
+          const main = element("div", "item-main");
+          main.append(element("span", "item-title", String(item.title || "Untitled")));
+          const detail = item.detail || item.source_excerpt;
+          if (detail) main.append(element("span", "item-detail", String(detail)));
+          const values = itemMeta(item);
+          if (values.length) {
+            const meta = element("div", "meta");
+            values.forEach((value) => meta.append(element("span", "chip", String(value))));
+            main.append(meta);
+          }
+          row.append(marker, main);
+          list.append(row);
+        });
+        zone.append(list);
+      }
+
+      function sandboxDocument(node) {
+        const policy = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'";
+        const css = String(node.css || "");
+        const html = String(node.html || "");
+        const javascript = String(node.javascript || "");
+        const reducedMotion = "@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}";
+        const motionGuard = "if(matchMedia('(prefers-reduced-motion: reduce)').matches){window.requestAnimationFrame=()=>0;window.cancelAnimationFrame=()=>{};if(Element.prototype.animate){Element.prototype.animate=function(){return{cancel(){},finish(){},pause(){},play(){},finished:Promise.resolve()}}}}";
+        return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${policy}"><style>html,body{margin:0;min-height:100%;color-scheme:light dark;font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}*{box-sizing:border-box}${css}${reducedMotion}</style></head><body>${html}<script>${motionGuard};${javascript}<\/script></body></html>`;
+      }
+
+      function estimatedSpan(node) {
+        const requested = Math.max(1, Math.min(12, Number(node.min_height) || 2));
+        if (node.kind === "custom_html") return Math.max(requested, 4);
+        if (node.kind === "heading") return Math.max(requested, 1);
+
+        const itemCount = Array.isArray(node.items) ? node.items.length : 0;
+        const bodyLines = node.body ? Math.max(1, Math.ceil(String(node.body).length / 78)) : 0;
+        const estimatedPixels = 42 + 24 + bodyLines * 18 + itemCount * 64;
+        const contentSpan = Math.max(2, Math.ceil((estimatedPixels + 10) / 54));
+        return Math.max(requested, Math.min(12, contentSpan));
+      }
+
+      function placeNodes(nodes) {
+        const occupied = Array.from({ length: 13 }, () => new Set());
+        return nodes.map((node) => {
+          const x = Math.max(1, Math.min(12, Number(node.x) || 1));
+          const width = Math.max(1, Math.min(13 - x, Number(node.width) || 12));
+          const span = estimatedSpan(node);
+          let y = Math.max(1, Number(node.y) || 1);
+
+          const collides = (candidateY) => {
+            for (let column = x; column < x + width; column += 1) {
+              for (let row = candidateY; row < candidateY + span; row += 1) {
+                if (occupied[column].has(row)) return true;
+              }
+            }
+            return false;
+          };
+
+          while (collides(y)) y += 1;
+          for (let column = x; column < x + width; column += 1) {
+            for (let row = y; row < y + span; row += 1) occupied[column].add(row);
+          }
+          return { ...node, x, y, width, renderSpan: span };
+        });
+      }
+
+      function renderNode(node) {
+        const zone = element("section", `zone ${node.kind || "note"}`);
+        zone.dataset.accent = node.accent || "neutral";
+        zone.style.gridColumn = `${node.x} / span ${node.width}`;
+        zone.style.gridRow = `${node.y} / span ${node.renderSpan}`;
+        zone.style.minHeight = `${Math.max(88, Number(node.renderSpan) * 44)}px`;
+
+        const header = element("header", "zone-header");
+        const title = element("div", "zone-title");
+        title.append(icon(node.kind), element("h2", "", String(node.title || "Untitled")));
+        header.append(title, element("span", "kind", String(node.kind || "note").replace("_", " ")));
+
+        const body = element("div", "zone-body");
+        if (node.kind === "custom_html") {
+          const frame = element("iframe", "custom-frame");
+          frame.setAttribute("title", String(node.title || "Custom LifeOS canvas scene"));
+          frame.setAttribute("sandbox", "allow-scripts");
+          frame.setAttribute("referrerpolicy", "no-referrer");
+          frame.srcdoc = sandboxDocument(node);
+          body.append(frame);
+        } else {
+          if (node.body) body.append(element("p", "zone-copy", String(node.body)));
+          renderItems(body, node);
+        }
+        zone.append(header, body);
+        return zone;
+      }
+
+      function countItems(nodes, kind) {
+        return nodes.filter((node) => node.kind === kind).reduce((total, node) => total + (Array.isArray(node.items) ? node.items.length : 0), 0);
+      }
+
+      function summaryItem(value, label) {
+        const item = element("div", "summary-item");
+        item.append(element("strong", "", String(value)), document.createTextNode(label));
+        return item;
+      }
+
+      function render(data) {
+        app.replaceChildren();
+        app.className = "";
+        if (!data || !Array.isArray(data.nodes) || data.nodes.length === 0) {
+          app.className = "empty";
+          app.textContent = "This canvas does not contain any nodes yet.";
+          return;
+        }
+
+        const nodes = placeNodes(
+          [...data.nodes].sort((a, b) => (a.y || 1) - (b.y || 1) || (a.x || 1) - (b.x || 1))
+        );
+        const header = element("header", "header");
+        const heading = element("div");
+        heading.append(element("h1", "", String(data.title || "Brain dump")));
+        if (data.subtitle) heading.append(element("p", "subtitle", String(data.subtitle)));
+        const status = element("div", "status");
+        status.append(element("span", "status-dot"), document.createTextNode(data.demo ? "Demo · Preview only" : "Preview only"));
+        header.append(heading, status);
+
+        const summary = element("div", "summary");
+        summary.append(
+          summaryItem(countItems(nodes, "tasks"), "candidate tasks"),
+          summaryItem(countItems(nodes, "calendar"), "calendar blocks"),
+          summaryItem(nodes.filter((node) => node.kind === "journal").length, "journal previews"),
+          summaryItem(countItems(nodes, "questions"), "open questions")
+        );
+
+        const canvas = element("div", "canvas");
+        nodes.forEach((node) => canvas.append(renderNode(node)));
+
+        const footer = element("footer", "footer");
+        footer.append(element("span", "safety", "Nothing has changed in Things or Calendar."));
+        const action = element("button", "action", "Continue planning");
+        action.type = "button";
+        action.addEventListener("click", () => {
+          followUp("Continue from the exact LifeOS brain-dump canvas above. Resolve its open questions with me, then prepare a reviewable Things and Calendar proposal. Do not apply anything yet.");
+        });
+        footer.append(action);
+
+        app.append(header, summary, canvas, footer);
+        window.openai?.notifyIntrinsicHeight?.();
+      }
+
+      function receiveOutput(output) {
+        render(output?.canvas || output);
+      }
+
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent) return;
+        const message = event.data;
+        if (!message || message.jsonrpc !== "2.0") return;
+        if (message.method === "ui/notifications/tool-result") receiveOutput(message.params?.structuredContent);
+      }, { passive: true });
+
+      window.addEventListener("openai:set_globals", (event) => {
+        const output = event.detail?.globals?.toolOutput;
+        if (output) receiveOutput(output);
+      }, { passive: true });
+
+      if (window.openai?.toolOutput) receiveOutput(window.openai.toolOutput);
+      else if (searchParams.get("demo") === "1") receiveOutput(demo);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "lifeos-read-mirror",
+  "account_id": "d0f2ba4b10b5789ddd200648bbf055a7",
+  "main": "mcp-entry.ts",
+  "compatibility_date": "2026-09-30",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": false
+  },
+  "vars": {
+    "LIFEOS_OWNER_ID": "avi-lifeos-owner",
+    "LIFEOS_ADAPTER_ID": "avi-mac-things-readonly",
+    "LIFEOS_GITHUB_OWNER_ID": "71009876"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lifeos-read-mirror",
+      "database_id": "980cb359-5819-4deb-b2c7-c57c446ba6dc",
+      "migrations_dir": "../site/drizzle"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "104729ae5c99424fb6d293062e0856a3"
+    }
+  ]
+}

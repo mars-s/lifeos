@@ -1,0 +1,19 @@
+{
+  "name": "lifeos",
+  "version": "0.3.0",
+  "description": "Capture thoughts and meeting evidence locally and coordinate reviewed Things and Calendar changes.",
+  "author": {
+    "name": "Avi Das"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "LifeOS",
+    "shortDescription": "Capture thoughts, debrief meetings, and plan reviewed work.",
+    "longDescription": "LifeOS preserves brain dumps and meeting evidence locally and coordinates reviewed changes with Things and Apple Calendar.",
+    "developerName": "Avi Das",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": "I just had a meeting. Use the transcript to extract only my own follow-up tasks and route each one to the right LifeOS area."
+  },
+  "mcpServers": "./.mcp.json"
+}

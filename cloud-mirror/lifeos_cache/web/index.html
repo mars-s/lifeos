@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LifeOS · dot cache review</title><link rel="stylesheet" href="/dot.css"><script src="/dot.js" defer></script></head>
+<body><main><button id="dot" aria-expanded="false" aria-controls="review" aria-label="Open LifeOS review">●</button><p>LifeOS</p><p id="status" role="status">Connect to see the last Things sync.</p>
+<section id="review" hidden><h1>Review your next change</h1><p class="notice">Fixture preview · Changes affect synthetic tasks only. Queued Things edits wait while your Mac is closed.</p>
+<form id="connect"><label>Review access <input id="token" type="password" autocomplete="off" required></label><button>Connect</button></form>
+<div id="workspace" hidden><h2>Last confirmed snapshot</h2><div id="tasks"></div><form id="edit"><label>Task <select id="target"></select></label><label>New title <input id="title" maxlength="4000" required></label><label>Timezone <input id="zone" value="Etc/UTC" required></label><button>Propose title edit</button></form><h2>Proposals and outcomes</h2><div id="operations"></div><button id="reconnect">Simulate Mac reconnect</button><button id="refresh">Refresh</button></div>
+<p id="error" role="alert"></p></section></main></body></html>

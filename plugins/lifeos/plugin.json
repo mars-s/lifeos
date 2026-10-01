@@ -1,0 +1,29 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "lifeos",
+  "version": "0.4.0",
+  "description": "Capture thoughts and meeting evidence locally, organize Things, and plan time through Apple Calendar.",
+  "author": {
+    "name": "Avi Das"
+  },
+  "license": "MIT",
+  "keywords": ["productivity", "things", "calendar", "brain-dump", "meeting", "transcript"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "LifeOS",
+        "shortDescription": "Capture thoughts, debrief meetings, and plan reviewed work.",
+        "longDescription": "LifeOS preserves brain dumps and meeting evidence locally, turns them into reviewable candidate work, and coordinates approved changes with Things and Apple Calendar.",
+        "developerName": "Avi Das",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "defaultPrompt": [
+          "Brain dump this and sort the useful parts without creating tasks yet.",
+          "I just had a meeting. Use the transcript to extract only my own follow-up tasks, verify ownership against the notes, and route each task to the right LifeOS area.",
+          "Read my captured thoughts and help me turn the actionable ones into a reviewed plan."
+        ],
+        "brandColor": "#789CFF"
+      }
+    }
+  }
+}

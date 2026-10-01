@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>LifeOS memory source review</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface: light-dark(#fff, #20201f);
+      --soft: light-dark(#f1f1ee, #292927);
+      --text: light-dark(#191918, #f3f3ef);
+      --muted: light-dark(#656560, #b0b0aa);
+      --line: light-dark(#ddddda, #3a3a37);
+      --blue: light-dark(#2559d6, #a6bdff);
+      --blue-soft: light-dark(#e6ecff, #25345a);
+      --focus: light-dark(#6e96f6, #9ab4ff);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-width: 0; background: transparent; }
+    body { color: var(--text); font: 14px/1.5 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; overflow-wrap: anywhere; }
+    ::selection { background: var(--blue-soft); color: var(--text); }
+    :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+    .shell { margin: 0 auto; max-width: 1120px; overflow: hidden; border-radius: 14px; background: var(--surface); }
+    header { padding: 26px 28px 22px; border-bottom: 1px solid var(--line); }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: clamp(22px, 3vw, 29px); line-height: 1.1; letter-spacing: -.025em; }
+    .intro { margin-top: 8px; max-width: 70ch; color: var(--muted); }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 16px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .meta span { max-width: 100%; }
+    .columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    section { min-width: 0; padding: 24px 28px 30px; }
+    section + section { border-left: 1px solid var(--line); }
+    h2 { font-size: 16px; line-height: 1.25; letter-spacing: -.01em; }
+    .section-note { margin-top: 6px; color: var(--muted); font-size: 13px; }
+    .source { margin-top: 18px; padding: 18px; border-radius: 12px; background: var(--soft); white-space: pre-wrap; font: inherit; max-height: 520px; overflow: auto; }
+    .claims { margin: 18px 0 0; padding: 0; list-style: none; }
+    .claims li { padding: 0 0 18px; }
+    .claims li + li { padding-top: 18px; border-top: 1px solid var(--line); }
+    .claim-text { font-size: 15px; font-weight: 610; line-height: 1.4; }
+    .status { display: inline-block; margin-top: 8px; padding: 4px 9px; border-radius: 999px; background: var(--blue-soft); color: var(--blue); font-size: 11px; font-weight: 700; }
+    .empty { margin-top: 18px; padding: 18px; border-radius: 12px; background: var(--soft); color: var(--muted); }
+    footer { padding: 15px 28px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    @media (max-width: 700px) {
+      header { padding: 22px 20px; }
+      .columns { grid-template-columns: 1fr; }
+      section { padding: 22px 20px; }
+      section + section { border-left: 0; border-top: 1px solid var(--line); }
+      footer { padding: 15px 20px; }
+      .source { max-height: 300px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell" id="app" aria-live="polite">
+    <header><h1>Memory source review</h1><p class="intro">Waiting for a captured source.</p></header>
+  </main>
+  <script>
+    (() => {
+      const root = document.getElementById("app");
+      const node = (tag, className, content) => {
+        const element = document.createElement(tag);
+        if (className) element.className = className;
+        if (content != null) element.textContent = String(content);
+        return element;
+      };
+      function render(data) {
+        if (!data || !data.capture_id) return;
+        root.replaceChildren();
+        const header = node("header");
+        header.append(
+          node("h1", "", "Memory source review"),
+          node("p", "intro", "Extracted memories are suggestions, not verified facts. Compare each claim with the exact words before relying on it.")
+        );
+        const meta = node("div", "meta");
+        meta.append(node("span", "", `Capture ${data.capture_id}`), node("span", "", `Extraction: ${data.status || "unknown"}`));
+        header.append(meta);
+        const columns = node("div", "columns");
+        const source = node("section");
+        source.append(node("h2", "", "Original capture"), node("p", "section-note", "Stored verbatim in LifeOS"), node("div", "source", data.raw_text || ""));
+        const review = node("section");
+        review.append(node("h2", "", "Extracted claims"), node("p", "section-note", "No claim has been confirmed by you"));
+        if (Array.isArray(data.claims) && data.claims.length) {
+          const list = node("ol", "claims");
+          for (const claim of data.claims) {
+            const item = node("li");
+            item.append(node("p", "claim-text", claim.text), node("span", "status", "Unreviewed"));
+            list.append(item);
+          }
+          review.append(list);
+        } else {
+          review.append(node("p", "empty", data.status === "not_indexed" ? "This capture has not been indexed for memory yet." : "No claims are available yet."));
+        }
+        columns.append(source, review);
+        root.append(header, columns, node("footer", "", "These claims are linked to this capture; extraction can misstate or combine source material."));
+        window.openai?.notifyIntrinsicHeight?.();
+      }
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent || event.data?.jsonrpc !== "2.0") return;
+        if (event.data.method === "ui/notifications/tool-result") render(event.data.params?.structuredContent);
+      }, { passive: true });
+      window.addEventListener("openai:set_globals", (event) => {
+        if (event.detail?.globals?.toolOutput) render(event.detail.globals.toolOutput);
+      }, { passive: true });
+      if (window.openai?.toolOutput) render(window.openai.toolOutput);
+      if (new URLSearchParams(location.search).has("demo")) render({
+        capture_id: "demo-only", status: "done",
+        raw_text: "Meeting notes: Priya suggested a Friday review. The transcript says Avi will draft the first version, but no deadline was agreed.",
+        claims: [{ text: "Avi will draft the first version before Friday." }, { text: "Priya suggested a Friday review." }]
+      });
+    })();
+  </script>
+</body>
+</html>
