@@ -316,7 +316,22 @@ public struct JournalState: Codable, Sendable {
             if let decision = intent.mergeDecision { requestPayload["prepared_decision"] = try decoded(decision) }
             result = try await things.apply(requestPayload)
         }
-        catch { result = ["state": "uncertain", "reason": "verification_failed"] }
+        catch {
+            result = ["state": "uncertain", "reason": "verification_failed"]
+            if smart {
+                let decision: JSON
+                if let retained = intent.mergeDecision {
+                    decision = try decoded(retained)
+                } else {
+                    guard let base = payload["base"] as? JSON, let desired = payload["value"],
+                          let kind = payload["intent_kind"] as? String, ["explicit_set", "derived_patch"].contains(kind) else { throw SyncError.invalid }
+                    decision = ["algorithm": "supported_fields_v1", "intent_kind": kind, "classification": "interrupted",
+                                "base": base, "local": ["state": "unknown", "reason": "verification_failed"], "desired": desired]
+                }
+                result["merge_decision"] = decision
+                if let local = decision["local"] as? JSON { result["observed_before"] = local }
+            }
+        }
         guard let status = result["state"] as? String, ["applied", "satisfied", "skipped", "failed", "uncertain"].contains(status) else { throw SyncError.invalid }
         if let audit = result.removeValue(forKey: "observed_before") as? JSON { intent.observedBefore = try encoded(audit) }
         if let audit = result.removeValue(forKey: "verified_after") as? JSON { intent.verifiedAfter = try encoded(audit) }
