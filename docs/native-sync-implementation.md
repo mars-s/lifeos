@@ -42,3 +42,9 @@ The owner approved the installed app through its new explicit `--authorize-keych
 For a disposable task only, the native agent was stopped, a recoverable Trash operation was inserted into the production operation queue using owner administration, and the agent was restarted. The immutable receipt reported applied. A subsequent confirmed snapshot verified Things Trash membership. An actual MCP read returned sequence 41, last sync `2026-10-01T11:23:19Z`, and 61 records (the original 59 plus two disposable test tasks retained in recoverable Trash).
 
 This proves the production queue, native write, receipt and cloud snapshot path. It does not prove a dot-originated write or physical Mac sleep/wake and iPhone delivery. The connected MCP read still reports `connection_can_write=false`; explicit write consent on that connection remains unresolved. Tool refresh in Helium lists both queued edit and queued Trash tools. The outdated read-only plugin description has been updated.
+
+## Authenticated MCP write verified
+
+The repaired OAuth consent offers a fixed queued-write checkbox even for clients initially requesting reading. A separate continuation link starts GitHub navigation after the consent form completes. The owner approved the new grant. Production MCP reads now report `connection_can_write=true`.
+
+A recoverable deletion of a fresh disposable task was queued through the existing authenticated MCP connector while the native agent was stopped. The mirror showed the pending overlay without changing confirmed state. On restart, the native receipt reported applied and the subsequent confirmed snapshot verified Things Trash membership. Sequence 46, 62 records including three disposable test tasks, last sync `2026-10-01T11:39:40Z`. Native status is Synced. Physical sleep/wake, iPhone delivery and dot's conversational tool selection remain separately unverified.

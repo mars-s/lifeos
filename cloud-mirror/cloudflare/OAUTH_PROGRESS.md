@@ -53,3 +53,11 @@ The native queue and write-back path now works in production with an owner-admin
 Deployment `c82e506e-74d9-4e97-8815-373fab48106f` offers an explicit queued-write checkbox on read requests when writes are enabled. The provider approves only this fixed additional permission after bound owner consent; existing grants and refreshes stay unchanged. After consent, an HTTP 200 page links to GitHub rather than redirecting the original form through GitHub's entire navigation chain. This avoids the known Chromium form-action redirect issue without removing browser-session binding, Origin validation, PKCE or the owner check.
 
 TypeScript checking, seven read-only OAuth tests and eight native/OAuth tests passed. The new test verifies an initially read-only request can acquire `things:write` through the explicit checkbox. Helium Personal shows both permissions and the checked queued-write option. Owner consent and an authenticated production read showing write capability remain pending.
+
+## Queued-write connection verified
+
+The owner completed the repaired consent and returned to ChatGPT. An authenticated `read_things_mirror` call through the existing LifeOS Cloud Mirror Reader connection reported `connection_can_write=true`, with no remaining write-access action. Its refreshed connector exposes both queued edit tools.
+
+A fresh disposable task was confirmed in the mirror, then the native agent was stopped. `queue_things_trash` through this authenticated MCP connection returned accepted, queued, recoverable and not applied. A read while the agent remained stopped showed confirmed Trash membership false and effective pending membership true. After restarting the native agent, its immutable receipt reported applied and a later confirmed MCP snapshot showed Trash membership true. Sequence 46, last sync `2026-10-01T11:39:40Z` (9:39:40 pm Melbourne), 62 records. Three disposable verification tasks remain in recoverable Trash; the original 59 records were not modified by these tests. Native status is Synced.
+
+This verifies the connected MCP write grant and cloud queue through native Things write-back and confirmed cloud read-back. Physical sleep/wake, Things iPhone delivery and dot's conversational selection of these tools were not independently tested in this checkpoint.
