@@ -1,6 +1,7 @@
 import Foundation
 import CSQLite
 import Darwin
+import CryptoKit
 
 public typealias JSON = [String: Any]
 
@@ -36,6 +37,9 @@ public struct Intent: Codable, Equatable, Sendable {
     public let payload: Data
     public var phase: String
     public var result: Data?
+    public var appliedAfterSequence: Int? = nil
+    public var observedBefore: Data? = nil
+    public var verifiedAfter: Data? = nil
 }
 public struct JournalState: Codable, Sendable {
     public var sequence: Int = 0
@@ -45,7 +49,42 @@ public struct JournalState: Codable, Sendable {
     public var lastSync: Date?
     public var failures = 0
     public var retryAfter: Date?
+    public var cloudRevision = 0
+    public var cloudGeneration = 0
+    public var drainedCloudGeneration = 0
+    public var localGeneration = 1
+    public var uploadedLocalGeneration = 0
+    public var semanticHash: String?
+    public var pendingHash: String?
+    public var pendingLocalGeneration: Int?
+    public var confirmationNeeded = false
+    public var localEventID: UInt64 = 0
+    public var confirmedEventID: UInt64 = 0
+    public var pendingEventID: UInt64?
     public init() {}
+    private enum CodingKeys: String, CodingKey { case sequence, pendingUpload, intents, paused, lastSync, failures, retryAfter, cloudRevision, cloudGeneration, drainedCloudGeneration, localGeneration, uploadedLocalGeneration, semanticHash, pendingHash, pendingLocalGeneration, confirmationNeeded, localEventID, confirmedEventID, pendingEventID }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sequence = try c.decodeIfPresent(Int.self, forKey: .sequence) ?? 0
+        pendingUpload = try c.decodeIfPresent(Data.self, forKey: .pendingUpload)
+        intents = try c.decodeIfPresent([String: Intent].self, forKey: .intents) ?? [:]
+        paused = try c.decodeIfPresent(Bool.self, forKey: .paused) ?? true
+        lastSync = try c.decodeIfPresent(Date.self, forKey: .lastSync)
+        failures = try c.decodeIfPresent(Int.self, forKey: .failures) ?? 0
+        retryAfter = try c.decodeIfPresent(Date.self, forKey: .retryAfter)
+        cloudRevision = try c.decodeIfPresent(Int.self, forKey: .cloudRevision) ?? 0
+        cloudGeneration = try c.decodeIfPresent(Int.self, forKey: .cloudGeneration) ?? 0
+        drainedCloudGeneration = try c.decodeIfPresent(Int.self, forKey: .drainedCloudGeneration) ?? 0
+        localGeneration = try c.decodeIfPresent(Int.self, forKey: .localGeneration) ?? 1
+        uploadedLocalGeneration = try c.decodeIfPresent(Int.self, forKey: .uploadedLocalGeneration) ?? 0
+        semanticHash = try c.decodeIfPresent(String.self, forKey: .semanticHash)
+        pendingHash = try c.decodeIfPresent(String.self, forKey: .pendingHash)
+        pendingLocalGeneration = try c.decodeIfPresent(Int.self, forKey: .pendingLocalGeneration)
+        confirmationNeeded = try c.decodeIfPresent(Bool.self, forKey: .confirmationNeeded) ?? false
+        localEventID = try c.decodeIfPresent(UInt64.self, forKey: .localEventID) ?? 0
+        confirmedEventID = try c.decodeIfPresent(UInt64.self, forKey: .confirmedEventID) ?? 0
+        pendingEventID = try c.decodeIfPresent(UInt64.self, forKey: .pendingEventID)
+    }
 }
 
 @MainActor public final class Journal {
@@ -113,19 +152,42 @@ public struct JournalState: Codable, Sendable {
     public var onStatus: ((String) -> Void)?
     public private(set) var message = "Paused" { didSet { onStatus?(message) } }
     public private(set) var pendingCount = 0
+    public private(set) var inventoryReads = 0
+    public private(set) var pendingRequests = 0
+    public private(set) var snapshotsUploaded = 0
+    public private(set) var fetchedRevision = 0
     public init(journal: Journal, cloud: any CloudTransport, things: any ThingsAutomation) {
         self.journal = journal; self.cloud = cloud; self.things = things
     }
     public func pause(_ value: Bool) throws { try journal.update { $0.paused = value }; message = value ? "Paused" : "Ready" }
+    public func invalidate(local: Bool = false, revision: Int? = nil, eventID: UInt64? = nil) throws {
+        try journal.update {
+            if local { $0.localGeneration += 1 }
+            if let eventID { $0.localEventID = max($0.localEventID, eventID) }
+            if let revision { $0.cloudRevision = max($0.cloudRevision, revision); $0.cloudGeneration += 1 }
+        }
+    }
     private func acknowledge(_ intent: Intent) async throws {
         guard let data = intent.result else { throw SyncError.invalid }
-        _ = try await cloud.request("ack", body: ["id": intent.id, "claim": intent.claim, "result": decoded(data)])
+        var body: JSON = ["id": intent.id, "claim": intent.claim, "result": try decoded(data)]
+        if let fence = intent.appliedAfterSequence { body["applied_after_sequence"] = fence }
+        if let value = intent.observedBefore { body["observed_before"] = try decoded(value) }
+        if let value = intent.verifiedAfter { body["verified_after"] = try decoded(value) }
+        _ = try await cloud.request("ack", body: body)
         try journal.update { $0.intents.removeValue(forKey: intent.id) }
     }
     private func execute(_ saved: Intent) async throws {
         var intent = saved
         if intent.result != nil { try await acknowledge(intent); return }
-        if intent.phase == "writing" {
+        let payload = try decoded(intent.payload)
+        let interrupted = intent.phase == "writing"
+        let recoverable = payload["conflict_policy"] as? String == "cloud_wins" && payload["version"] as? Int == 2
+        if intent.phase == "writing" && recoverable {
+            let remote = try await cloud.request("operation", body: ["id": intent.id])
+            guard remote["state"] as? String == "executing", remote["claim"] as? String == intent.claim,
+                  let currentPayload = remote["payload"] as? JSON, try encoded(currentPayload) == intent.payload else { throw SyncError.interrupted }
+        }
+        if intent.phase == "writing" && !recoverable {
             intent.result = try encoded(["state": "uncertain", "reason": "interrupted_write"])
             intent.phase = "receipt"
             try journal.update { $0.intents[intent.id] = intent }
@@ -148,33 +210,49 @@ public struct JournalState: Codable, Sendable {
             intent.phase = "claimed"
             try journal.update { $0.intents[intent.id] = intent }
         }
-        guard intent.phase == "claimed" else { throw SyncError.invalid }
+        guard intent.phase == "claimed" || (intent.phase == "writing" && recoverable) else { throw SyncError.invalid }
         guard !journal.state.paused else { return }
         intent.phase = "writing"
+        if intent.appliedAfterSequence == nil { intent.appliedAfterSequence = journal.state.sequence }
         try journal.update { $0.intents[intent.id] = intent }
-        let result: JSON
-        do { result = try await things.apply(decoded(intent.payload)) }
+        var result: JSON
+        do {
+            var requestPayload = payload
+            if interrupted && recoverable { requestPayload["recovering"] = true }
+            result = try await things.apply(requestPayload)
+        }
         catch { result = ["state": "uncertain", "reason": "verification_failed"] }
         guard let status = result["state"] as? String, ["applied", "satisfied", "skipped", "failed", "uncertain"].contains(status) else { throw SyncError.invalid }
+        if let audit = result.removeValue(forKey: "observed_before") as? JSON { intent.observedBefore = try encoded(audit) }
+        if let audit = result.removeValue(forKey: "verified_after") as? JSON { intent.verifiedAfter = try encoded(audit) }
         intent.result = try encoded(result); intent.phase = "receipt"
-        try journal.update { $0.intents[intent.id] = intent }
+        try journal.update { $0.intents[intent.id] = intent; $0.localGeneration += 1; if recoverable && ["applied", "satisfied"].contains(status) { $0.confirmationNeeded = true } }
         try await acknowledge(intent)
     }
     private func upload() async throws {
         if journal.state.pendingUpload == nil {
             message = "Reading Things inventory"
+            inventoryReads += 1
+            let generation = journal.state.localGeneration, revision = journal.state.cloudRevision, eventID = journal.state.localEventID
             let inventory = try await things.inventory()
             guard let items = inventory["items"] as? [JSON], items.count <= 10000 else { throw SyncError.invalid }
             var manifest = inventory; manifest.removeValue(forKey: "items")
+            manifest.removeValue(forKey: "observed_at")
+            let hash = SHA256.hash(data: try encoded(["items": items, "manifest": manifest])).map { String(format: "%02x", $0) }.joined()
+            if hash == journal.state.semanticHash && !journal.state.confirmationNeeded {
+                try journal.update { $0.uploadedLocalGeneration = generation; $0.confirmedEventID = eventID }; return
+            }
+            manifest["seen_cloud_revision"] = revision
             manifest["observed_at"] = ISO8601DateFormatter().string(from: Date())
             let data = try encoded(["sequence": journal.state.sequence + 1, "items": items, "manifest": manifest])
             guard data.count <= 1024 * 1024 else { throw SyncError.invalid }
-            try journal.update { $0.sequence += 1; $0.pendingUpload = data }
+            try journal.update { $0.sequence += 1; $0.pendingUpload = data; $0.pendingHash = hash; $0.pendingLocalGeneration = generation; $0.pendingEventID = eventID }
         }
         guard let data = journal.state.pendingUpload else { throw SyncError.invalid }
         message = "Uploading cloud snapshot"
         _ = try await cloud.request("snapshot", body: decoded(data))
-        try journal.update { $0.pendingUpload = nil; $0.lastSync = Date() }
+        snapshotsUploaded += 1
+        try journal.update { $0.pendingUpload = nil; $0.lastSync = Date(); $0.semanticHash = $0.pendingHash; $0.pendingHash = nil; $0.uploadedLocalGeneration = $0.pendingLocalGeneration ?? $0.uploadedLocalGeneration; $0.pendingLocalGeneration = nil; $0.confirmedEventID = $0.pendingEventID ?? $0.confirmedEventID; $0.pendingEventID = nil }
     }
     public func cycle(force: Bool = false) async {
         guard !busy, !journal.state.paused else { return }
@@ -183,29 +261,39 @@ public struct JournalState: Codable, Sendable {
         do {
             message = "Reading cloud queue"
             for saved in journal.state.intents.values.sorted(by: { $0.id < $1.id }) { try await execute(saved) }
-            let remote = try await cloud.request("pending", body: nil)
+            let cloudGeneration = journal.state.cloudGeneration
+            pendingRequests += 1
+            var remote = try await cloud.request("pending", body: nil)
             guard let remoteSequence = remote["sequence"] as? Int,
                   remoteSequence <= journal.state.sequence,
                   journal.state.sequence - remoteSequence <= (journal.state.pendingUpload == nil ? 0 : 1) else { throw SyncError.migration }
             guard !journal.state.paused else { message = "Paused"; return }
-            try await upload()
-            let pending = try await cloud.request("pending", body: nil)
-            guard let operations = pending["operations"] as? [JSON] else { throw SyncError.invalid }
+            var visited = Set<String>(), blocked = false
+            while true {
+            guard let operations = remote["operations"] as? [JSON] else { throw SyncError.invalid }
+            try journal.update { $0.cloudRevision = max($0.cloudRevision, remote["revision"] as? Int ?? 0); $0.confirmationNeeded = $0.confirmationNeeded || remote["overlaysNeedConfirmation"] as? Bool == true }
             pendingCount = operations.count
+            var progressed = false
             for op in operations {
                 if journal.state.paused { break }
                 guard let id = op["id"] as? String, let payload = op["payload"] as? JSON else { throw SyncError.invalid }
-                if op["state"] as? String == "executing" { message = "An operation is owned by another journal"; continue }
+                if !visited.insert(id).inserted { blocked = true; continue }
+                if op["state"] as? String == "executing" { blocked = true; continue }
                 let intent = Intent(id: id, claim: UUID().uuidString, payload: try encoded(payload), phase: "prepared", result: nil)
                 try journal.update { $0.intents[id] = intent }
                 try await execute(intent)
+                progressed = true
             }
-            if !operations.isEmpty { try await upload() }
-            let remaining = try await cloud.request("pending", body: nil)
-            guard let waiting = remaining["operations"] as? [JSON] else { throw SyncError.invalid }
-            pendingCount = waiting.count
-            try journal.update { $0.failures = 0; $0.retryAfter = nil }
-            message = journal.state.paused ? "Paused" : waiting.contains(where: { $0["state"] as? String == "executing" }) ? "An operation needs journal recovery" : "Synced"
+            if journal.state.paused || operations.isEmpty || !progressed { break }
+            pendingRequests += 1
+            remote = try await cloud.request("pending", body: nil)
+            }
+            guard !journal.state.paused else { message = "Paused"; return }
+            fetchedRevision = remote["revision"] as? Int ?? 0
+            if journal.state.pendingUpload != nil { try await upload() }
+            if journal.state.localGeneration > journal.state.uploadedLocalGeneration || journal.state.confirmationNeeded { try await upload() }
+            try journal.update { $0.failures = 0; $0.retryAfter = nil; $0.drainedCloudGeneration = cloudGeneration; $0.confirmationNeeded = false }
+            message = blocked ? "An operation needs journal recovery" : "Synced"
         } catch {
             message = (error as? LocalizedError)?.errorDescription ?? "Sync paused for retry; journal retained"
             do { try journal.update { $0.failures = min($0.failures + 1, 8); $0.retryAfter = Date().addingTimeInterval(min(3600, pow(2, Double($0.failures)) * 15) + Double.random(in: 0...10)) } }

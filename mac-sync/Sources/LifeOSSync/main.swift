@@ -12,24 +12,49 @@ final class Agent: NSObject, NSApplicationDelegate {
     let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/LifeOS/NativeSync")
     var engine: SyncEngine?
     var item: NSStatusItem?
-    var timer: Timer?
+    var retry: Task<Void, Never>?
+    var midnight: Task<Void, Never>?
+    let events = CloudEvents()
+    let watcher = ThingsChangeWatcher()
+    var calendarObservers: [NSObjectProtocol] = []
     var wakeObserver: NSObjectProtocol?
     let network = NWPathMonitor()
+    var online = false
     var setupMessage = "Secure setup required"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item?.button?.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "LifeOS Sync")
         loadEngine(); rebuildMenu()
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.sync() }
+        watcher.onChange = { [weak self] eventID in self?.invalidate(local: true, eventID: eventID) }
+        watcher.onStatus = { [weak self] in self?.writeStatus(); self?.rebuildMenu() }
+        watcher.start(since: engine?.journal.state.confirmedEventID ?? 0)
+        events.onStatus = { [weak self] _ in self?.writeStatus(); self?.rebuildMenu() }
+        events.onRevision = { [weak self] revision in
+            guard let self, let engine = self.engine else { return 0 }
+            do { try engine.invalidate(revision: revision) } catch { return 0 }
+            // A paused or busy owner retains durable reconciliation work before delivery ack.
+            if engine.busy || engine.journal.state.paused { return engine.journal.state.cloudRevision }
+            await self.sync(force: true)
+            return engine.fetchedRevision
         }
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification,
                                                                           object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in await self?.sync(force: true) }
+            Task { @MainActor in self?.events.reconnect(); self?.watcher.start(since: self?.engine?.journal.state.confirmedEventID ?? 0); self?.invalidate(local: true) }
         }
+        calendarObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] notification in
+            let things = (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier == "com.culturedcode.ThingsMac"
+            if things { Task { @MainActor in self?.invalidate(local: true) } }
+        })
+        for name in [NSNotification.Name.NSSystemTimeZoneDidChange, NSNotification.Name.NSCalendarDayChanged, NSNotification.Name.NSSystemClockDidChange] {
+            calendarObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.invalidate(local: true); self?.scheduleMidnight() }
+            })
+        }
+        scheduleMidnight()
         network.pathUpdateHandler = { [weak self] path in
-            if path.status == .satisfied { Task { @MainActor in await self?.sync(force: true) } }
+            let online = path.status == .satisfied
+            Task { @MainActor in self?.online = online; self?.events.setOnline(online); if online { self?.invalidate(local: true) } else { self?.retry?.cancel() } }
         }
         network.start(queue: DispatchQueue(label: "LifeOSNetwork"))
         Task { await sync(force: true) }
@@ -42,20 +67,43 @@ final class Agent: NSObject, NSApplicationDelegate {
             engine = SyncEngine(journal: journal, cloud: HTTPSCloud(), things: PublicThings(appPath: config.appPath))
             engine?.onStatus = { [weak self] status in
                 guard let self else { return }
-                let summary: JSON = ["status": status, "updated_at": ISO8601DateFormatter().string(from: Date())]
-                try? encoded(summary).write(to: self.directory.appendingPathComponent("status.json"), options: .atomic)
+                _ = status
+                self.writeStatus()
             }
         } catch { setupMessage = (error as? LocalizedError)?.errorDescription ?? "Secure setup required" }
     }
     func sync(force: Bool = false) async {
         guard let engine else { return }
-        if !force, let last = engine.journal.state.lastSync, Date().timeIntervalSince(last) < 300,
-           engine.journal.state.intents.isEmpty { return }
+        guard online else { return }
+        if engine.busy { return }
         await engine.cycle(force: force); rebuildMenu()
+        writeStatus()
+        retry?.cancel(); retry = nil
+        if let date = engine.journal.state.retryAfter, !engine.journal.state.paused {
+            retry = Task { do { try await Task.sleep(for: .seconds(max(0, date.timeIntervalSinceNow))); await sync() } catch { } }
+        } else if !engine.journal.state.paused && (engine.journal.state.localGeneration > engine.journal.state.uploadedLocalGeneration || engine.journal.state.cloudGeneration > engine.journal.state.drainedCloudGeneration) {
+            Task { await sync(force: true) }
+        }
+    }
+    func invalidate(local: Bool, eventID: UInt64? = nil) {
+        do { try engine?.invalidate(local: local, eventID: eventID) } catch { setupMessage = "Journal write failed" }
+        Task { await sync(force: true) }
+    }
+    func scheduleMidnight() {
+        midnight?.cancel()
+        guard let date = Calendar.current.nextDate(after: Date(), matching: DateComponents(hour: 0), matchingPolicy: .nextTime) else { return }
+        midnight = Task { do { try await Task.sleep(for: .seconds(date.timeIntervalSinceNow)); invalidate(local: true); scheduleMidnight() } catch { } }
+    }
+    func writeStatus() {
+        guard let engine else { return }
+        let summary: JSON = ["status": engine.message, "updated_at": ISO8601DateFormatter().string(from: Date()), "inventoryReads": engine.inventoryReads, "pendingRequests": engine.pendingRequests, "snapshotsUploaded": engine.snapshotsUploaded, "notificationRevision": engine.journal.state.cloudRevision, "connection": events.status, "watcher": watcher.status]
+        try? encoded(summary).write(to: directory.appendingPathComponent("status.json"), options: .atomic)
     }
     func rebuildMenu() {
         let menu = NSMenu()
         menu.addItem(withTitle: engine?.message ?? setupMessage, action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: events.status, action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: watcher.status, action: nil, keyEquivalent: "")
         if engine != nil, setupMessage != "Secure setup required" { menu.addItem(withTitle: setupMessage, action: nil, keyEquivalent: "") }
         if let engine {
             let date = engine.journal.state.lastSync.map { $0.formatted(date: .omitted, time: .standard) } ?? "Never"
@@ -82,12 +130,13 @@ final class Agent: NSObject, NSApplicationDelegate {
         catch { setupMessage = "Journal write failed" }
         rebuildMenu()
     }
-    @objc func syncNow() { Task { await sync(force: true) } }
-    @objc func reload() { if engine == nil { loadEngine() }; rebuildMenu() }
+    @objc func syncNow() { invalidate(local: true) }
+    @objc func reload() { if engine == nil { loadEngine() }; events.reconnect(); invalidate(local: true); rebuildMenu() }
     @objc func authorizeCredential() {
         do {
             _ = try Credential.read(interactive: true)
             setupMessage = "Keychain access approved"
+            events.reconnect()
             Task { await sync(force: true) }
         } catch { setupMessage = "Keychain access was not approved" }
         rebuildMenu()

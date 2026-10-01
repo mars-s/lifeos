@@ -7,8 +7,12 @@ import CSQLite
     var title = "Fixture"
     var writes = 0
     var failInventory = false
+    var reads = 0
+    var duringRead: (() throws -> Void)?
     var afterWrite: (() throws -> Void)?
     func inventory() async throws -> JSON {
+        reads += 1
+        try duringRead?()
         if failInventory { throw SyncError.automation }
         return ["items": [["id": "task", "kind": "todo", "fields": ["title": ["state": "value", "value": title]]]],
                 "zone": "Australia/Melbourne", "scopes": ["todo", "project", "area", "tag"],
@@ -17,7 +21,7 @@ import CSQLite
     }
     func apply(_ payload: JSON) async throws -> JSON {
         if title == payload["value"] as? String { return ["state": "satisfied"] }
-        guard let base = payload["base"] as? JSON, title == base["value"] as? String else { return ["state": "skipped", "reason": "things_changed"] }
+        guard let base = payload["base"] as? JSON, payload["conflict_policy"] as? String == "cloud_wins" || title == base["value"] as? String else { return ["state": "skipped", "reason": "things_changed"] }
         writes += 1; title = payload["value"] as! String
         try afterWrite?()
         return ["state": "applied"]
@@ -41,11 +45,15 @@ import CSQLite
     var loseAck = false
     var loseUpload = false
     var acknowledgements = 0
+    var ackBodies: [Data] = []
     var uploads: [Data] = []
     var supersedeBeforeClaim = false
+    var events: [String] = []
+    var confirmationNeeded = false
     func request(_ path: String, body: JSON?) async throws -> JSON {
+        events.append(path)
         switch path {
-        case "pending": return ["sequence": sequence, "operations": operations.filter { ["queued", "executing"].contains($0["state"] as? String ?? "") }]
+        case "pending": return ["sequence": sequence, "revision": operations.count, "overlaysNeedConfirmation": confirmationNeeded, "operations": Array(operations.filter { ["queued", "executing"].contains($0["state"] as? String ?? "") }.sorted { ($0["state"] as? String == "queued" ? 0 : 1) < ($1["state"] as? String == "queued" ? 0 : 1) }.prefix(20))]
         case "snapshot":
             let bytes = try encoded(body!); uploads.append(bytes)
             sequence = body!["sequence"] as! Int
@@ -58,6 +66,7 @@ import CSQLite
             return operations[index]
         case "operation": return operations.first { $0["id"] as? String == body!["id"] as? String }!
         case "ack":
+            ackBodies.append(try encoded(body!))
             acknowledgements += 1
             let index = operations.firstIndex { $0["id"] as? String == body!["id"] as? String }!
             operations[index]["result"] = body!["result"]
@@ -171,4 +180,86 @@ import CSQLite
     #expect(journal.state.paused == true)
     #expect(FileManager.default.fileExists(atPath: backup.path))
     #expect(throws: (any Error).self) { try journal.importLegacy(from: old, backup: backup) }
+}
+
+@Test @MainActor func queueDrainsMultiplePagesBeforeInventoryAndEscapesForeignClaim() async throws {
+    let (root, _, things, cloud, engine) = try fixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    cloud.queue("foreign"); cloud.operations[0]["state"] = "executing"
+    for index in 0..<45 { cloud.queue("op\(index)", base: index == 0 ? "Fixture" : "Cloud", desired: "Cloud") }
+    await engine.cycle(force: true)
+    #expect(cloud.operations.filter { $0["state"] as? String == "queued" }.isEmpty)
+    #expect(things.reads == 1)
+    #expect(cloud.events.lastIndex(of: "ack")! < cloud.events.firstIndex(of: "snapshot")!)
+    #expect(engine.message.contains("recovery"))
+}
+
+@Test @MainActor func pausedAndBusyEventsRemainDurableAndUnchangedInventoryDeduplicates() async throws {
+    let (root, journal, things, cloud, engine) = try fixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try engine.pause(true)
+    try engine.invalidate(local: true, revision: 12)
+    await engine.cycle(force: true)
+    #expect(journal.state.localGeneration == 2)
+    #expect(journal.state.cloudRevision == 12)
+    #expect(things.reads == 0)
+    try engine.pause(false)
+    things.duringRead = { try engine.invalidate(local: true, revision: 13) }
+    await engine.cycle(force: true)
+    #expect(journal.state.localGeneration > journal.state.uploadedLocalGeneration)
+    #expect(journal.state.cloudGeneration > journal.state.drainedCloudGeneration)
+    things.duringRead = nil
+    await engine.cycle(force: true)
+    #expect(cloud.uploads.count == 1)
+    #expect(journal.state.localGeneration == journal.state.uploadedLocalGeneration)
+    cloud.confirmationNeeded = true
+    await engine.cycle(force: true)
+    #expect(cloud.uploads.count == 2)
+    #expect((try decoded(cloud.uploads[1])["manifest"] as? JSON)?["seen_cloud_revision"] as? Int == 13)
+}
+
+@Test func oldJournalFieldsDecodeWithSafeDefaults() throws {
+    let state = try JSONDecoder().decode(JournalState.self, from: Data("{\"sequence\":29,\"paused\":false,\"intents\":{},\"failures\":0}".utf8))
+    #expect(state.sequence == 29)
+    #expect(state.localGeneration == 1)
+    #expect(state.cloudRevision == 0)
+    #expect(!state.confirmationNeeded)
+}
+
+@Test @MainActor func interruptedVersionedSetterPreservesOriginalFenceAndReceiptRetry() async throws {
+    let (root, journal, things, cloud, engine) = try fixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    cloud.queue()
+    var payload = cloud.operations[0]["payload"] as! JSON
+    payload["version"] = 2; payload["conflict_policy"] = "cloud_wins"
+    cloud.operations[0]["payload"] = payload
+    cloud.operations[0]["claim"] = "original"; cloud.operations[0]["state"] = "executing"
+    var intent = Intent(id: "op", claim: "original", payload: try encoded(payload), phase: "writing", result: nil)
+    intent.appliedAfterSequence = 5
+    try journal.update { $0.sequence = 8; $0.intents["op"] = intent }
+    cloud.sequence = 8; cloud.loseAck = true; things.title = "Local"
+    await engine.cycle(force: true)
+    #expect(things.writes == 1)
+    #expect(journal.state.intents["op"]?.appliedAfterSequence == 5)
+    await engine.cycle(force: true)
+    #expect(things.writes == 1)
+    #expect(cloud.ackBodies.count == 2)
+    #expect(cloud.ackBodies[0] == cloud.ackBodies[1])
+    #expect(try decoded(cloud.ackBodies[1])["applied_after_sequence"] as? Int == 5)
+}
+
+@Test @MainActor func queuedWorkPrecedesOldUploadRetryAndCursorWaitsForAcceptance() async throws {
+    let (root, journal, _, cloud, engine) = try fixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try engine.invalidate(local: true, eventID: 42)
+    cloud.loseUpload = true
+    await engine.cycle(force: true)
+    #expect(journal.state.confirmedEventID == 0)
+    #expect(journal.state.pendingEventID == 42)
+    let exact = journal.state.pendingUpload
+    cloud.queue(); cloud.events = []
+    await engine.cycle(force: true)
+    #expect(cloud.events.firstIndex(of: "ack")! < cloud.events.firstIndex(of: "snapshot")!)
+    #expect(cloud.uploads[1] == exact)
+    #expect(journal.state.confirmedEventID == 42)
 }

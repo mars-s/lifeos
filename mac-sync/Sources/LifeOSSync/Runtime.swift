@@ -68,7 +68,8 @@ final class HTTPSCloud: CloudTransport {
         request.httpMethod = body == nil ? "GET" : "POST"
         request.setValue(try Credential.read(), forHTTPHeaderField: "X-LifeOS-Agent-Key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("LifeOSNativeSync/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("LifeOSNativeSync/2.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("2", forHTTPHeaderField: "X-LifeOS-Protocol")
         if let body { request.httpBody = try encoded(body) }
         // Stream responses and abort above the known queue/snapshot response budget.
         let (bytes, response) = try await session.bytes(for: request)
