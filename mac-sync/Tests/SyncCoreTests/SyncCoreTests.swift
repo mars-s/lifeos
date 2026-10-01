@@ -140,6 +140,12 @@ import CSQLite
     #expect(things.writes == 0)
     #expect(cloud.operations[0]["state"] as? String == "uncertain")
     #expect(journal.state.intents.isEmpty)
+    #expect(journal.state.uncertainOperationIDs == ["op"])
+    #expect(engine.message.contains("uncertain"))
+    await engine.cycle(force: true)
+    #expect(engine.message.contains("uncertain"))
+    #expect(cloud.acknowledgements == 1)
+    #expect(things.writes == 0)
 }
 @Test @MainActor func snapshotRetryUsesIdenticalDurablePayload() async throws {
     let (root, journal, things, cloud, engine) = try fixture()
@@ -232,6 +238,7 @@ import CSQLite
     #expect(state.localGeneration == 1)
     #expect(state.cloudRevision == 0)
     #expect(!state.confirmationNeeded)
+    #expect(state.uncertainOperationIDs.isEmpty)
 }
 
 @Test @MainActor func interruptedVersionedSetterPreservesOriginalFenceAndReceiptRetry() async throws {

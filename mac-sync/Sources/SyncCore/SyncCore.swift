@@ -61,8 +61,9 @@ public struct JournalState: Codable, Sendable {
     public var localEventID: UInt64 = 0
     public var confirmedEventID: UInt64 = 0
     public var pendingEventID: UInt64?
+    public var uncertainOperationIDs: Set<String> = []
     public init() {}
-    private enum CodingKeys: String, CodingKey { case sequence, pendingUpload, intents, paused, lastSync, failures, retryAfter, cloudRevision, cloudGeneration, drainedCloudGeneration, localGeneration, uploadedLocalGeneration, semanticHash, pendingHash, pendingLocalGeneration, confirmationNeeded, localEventID, confirmedEventID, pendingEventID }
+    private enum CodingKeys: String, CodingKey { case sequence, pendingUpload, intents, paused, lastSync, failures, retryAfter, cloudRevision, cloudGeneration, drainedCloudGeneration, localGeneration, uploadedLocalGeneration, semanticHash, pendingHash, pendingLocalGeneration, confirmationNeeded, localEventID, confirmedEventID, pendingEventID, uncertainOperationIDs }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         sequence = try c.decodeIfPresent(Int.self, forKey: .sequence) ?? 0
@@ -84,6 +85,7 @@ public struct JournalState: Codable, Sendable {
         localEventID = try c.decodeIfPresent(UInt64.self, forKey: .localEventID) ?? 0
         confirmedEventID = try c.decodeIfPresent(UInt64.self, forKey: .confirmedEventID) ?? 0
         pendingEventID = try c.decodeIfPresent(UInt64.self, forKey: .pendingEventID)
+        uncertainOperationIDs = try c.decodeIfPresent(Set<String>.self, forKey: .uncertainOperationIDs) ?? []
     }
 }
 
@@ -178,7 +180,11 @@ public struct JournalState: Codable, Sendable {
         if let value = intent.observedBefore { body["observed_before"] = try decoded(value) }
         if let value = intent.verifiedAfter { body["verified_after"] = try decoded(value) }
         _ = try await cloud.request("ack", body: body)
-        try journal.update { $0.intents.removeValue(forKey: intent.id) }
+        let uncertain = try decoded(data)["state"] as? String == "uncertain"
+        try journal.update {
+            if uncertain { $0.uncertainOperationIDs.insert(intent.id) }
+            $0.intents.removeValue(forKey: intent.id)
+        }
     }
     private func execute(_ saved: Intent) async throws {
         var intent = saved
@@ -306,7 +312,7 @@ public struct JournalState: Codable, Sendable {
             if journal.state.pendingUpload != nil { try await upload() }
             if journal.state.localGeneration > journal.state.uploadedLocalGeneration || journal.state.confirmationNeeded { try await upload() }
             try journal.update { $0.failures = 0; $0.retryAfter = nil; $0.drainedCloudGeneration = cloudGeneration; $0.confirmationNeeded = false }
-            message = blocked ? "An operation needs journal recovery" : "Synced"
+            message = blocked ? "An operation needs journal recovery" : journal.state.uncertainOperationIDs.isEmpty ? "Synced" : "\(journal.state.uncertainOperationIDs.count) uncertain operation(s) need review"
         } catch {
             message = (error as? LocalizedError)?.errorDescription ?? "Sync paused for retry; journal retained"
             do { try journal.update { $0.failures = min($0.failures + 1, 8); $0.retryAfter = Date().addingTimeInterval(min(3600, pow(2, Double($0.failures)) * 15) + Double.random(in: 0...10)) } }
