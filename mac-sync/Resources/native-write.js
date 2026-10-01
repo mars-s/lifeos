@@ -16,7 +16,7 @@ function run() {
   try {
     const inTrash=app.lists.byId('TMTrashListSource').toDos().some(t=>t.id()===p.target);
     if(trash&&inTrash){current=true;return receipt('satisfied',null,true,'same_value');}
-    if(trash&&cloud&&p.recovering===true){current=false;return receipt('uncertain','interrupted_delete',false);}
+    if(trash&&(cloud||smart)&&p.recovering===true){current=false;return receipt('uncertain','interrupted_delete',false,smart?'interrupted':undefined);}
     if(inTrash)return smart?receipt('skipped','target_unavailable',undefined,'unavailable'):JSON.stringify({state:'skipped',reason:'target_unavailable'});
     obj=(p.kind==='todo'?app.toDos:app.projects).byId(p.target);
     if(obj.id()!==p.target)return smart?receipt('skipped','target_unavailable',undefined,'unavailable'):JSON.stringify({state:'skipped',reason:'target_unavailable'});

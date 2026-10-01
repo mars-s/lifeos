@@ -71,6 +71,7 @@ test('smart ambiguous recovery never repeats a setter even when current equals t
  const result=apply({policy:'smart_merge_v1',recovering:true});
  assert.equal(result.writes,0);assert.equal(result.result.state,'uncertain');assert.equal(result.result.reason,'interrupted_write');
  const same=apply({policy:'smart_merge_v1',recovering:true,current:'Cloud'});assert.equal(same.writes,0);assert.equal(same.result.state,'satisfied');
+ const absentTrash=apply({policy:'smart_merge_v1',field:'in_trash_list',base:false,desired:true,recovering:true,missing:true});assert.equal(absentTrash.writes,0);assert.equal(absentTrash.result.reason,'interrupted_delete');assert.equal(absentTrash.result.state,'uncertain');
 });
 test('smart Trash compares supported semantic fields and preserves the observed alternatives',()=>{
  const baseFields={title:{state:'value',value:'Original'},status:{state:'value',value:'Original'}};
