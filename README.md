@@ -2,7 +2,7 @@
 
 This repository preserves both the original local LifeOS implementation and the deployed Cloudflare companion. The companion is in [cloud-mirror](cloud-mirror/README.md); its active OAuth connection is documented in [DOT_CONNECTION.md](cloud-mirror/cloudflare/DOT_CONNECTION.md). Historical Site and Railway experiments are retained there as reference, with Cloudflare Workers + D1 as the active deployment.
 
-The next proposed step is [queued cloud writes and a native Mac sync agent](docs/cloud-write-sync-plan.md). It is a design, not an enabled feature. Dot's current cloud connection is read-only. Repository creation did not relocate the running services or change their credentials. See [the preservation record](docs/repository-preservation.md).
+Queued cloud writes and the [native Swift Mac sync agent](mac-sync/README.md) are implemented on the native-cloud-sync branch, with synthetic recovery and authentication tests. Live write activation still needs the secure owner setup and a new scoped dot consent. The current production read connection and original helper remain active. See [the design](docs/cloud-write-sync-plan.md) and [the preservation record](docs/repository-preservation.md).
 
 LifeOS is a local-first coordination layer for Things 3 and Apple Calendar. It lets an MCP client read planning context, prepare a visible proposal, bind approval to the exact reviewed revision, and then apply verified changes.
 

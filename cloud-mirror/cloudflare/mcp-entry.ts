@@ -2,7 +2,8 @@ import OAuthProvider,{OAuthError,authorizationErrorRedirect,type OAuthHelpers,ty
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {WebStandardStreamableHTTPServerTransport} from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import {z} from 'zod';
-import mirror from './worker';
+import mirror,{writesEnabled} from './worker';
+import {NativeQueue} from './native-queue';
 import {MirrorStore} from '../site/lib/mirror-store';
 import {BulkD1} from './d1-bulk';
 
@@ -15,6 +16,7 @@ type OAuthEnv=Env & {
 const origin='https://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev';
 const resource=origin+'/mcp';
 const scope='things:read';
+const writeScope='things:write';
 type Identity={owner:string;github_id:string;role:'reader'};
 const json=(body:unknown,status:number)=>Response.json(body,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 const escape=(value:string)=>value.replace(/[&<>"']/g,c=>`&#${c.charCodeAt(0)};`);
@@ -32,7 +34,7 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
     if(url.pathname==='/authorize'&&request.method==='GET') {
       stage='client_authorization';
       const req=await oauth.parseAuthRequest(request);
-      if(req.scope.some(s=>s!==scope&&s!=='offline_access'))return json({error:'Only read-only Things access is available.'},400);
+      if(req.scope.some(s=>![scope,writeScope,'offline_access'].includes(s))||req.scope.includes(writeScope)&&!writesEnabled(env))return json({error:'This access is not activated.'},400);
       stage='consent_start';
       const facts=await oauth.describeConsent(req),consent=await oauth.beginConsent(req);
       const headers=consent.headers;headers.set('Content-Type','text/html; charset=utf-8');
@@ -40,7 +42,8 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       // The validated client redirect is also needed when the owner declines.
       const clientOrigin=new URL(req.redirectUri).origin;
       headers.set('Content-Security-Policy',`default-src 'none'; form-action 'self' https://github.com ${clientOrigin}; base-uri 'none'; frame-ancestors 'none'`);
-      return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><title>LifeOS read access</title><h1>Allow cloud mirror reading?</h1><p>${escape(facts.clientName)} requests read-only access to cached Things tasks, projects, areas and tags, including notes. Changes and approvals remain disabled.</p><p>Tokens return to ${escape(facts.redirectHost)}.${facts.redirectIsLoopback?' This is a local app; verify which app requested access.':''}</p><p>Permission: things:read. Offline access lets the client refresh its sign-in.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><button name="decision" value="allow">Allow with GitHub</button><button name="decision" value="deny">Deny</button></form></html>`,{headers});
+      const writing=req.scope.includes(writeScope);
+      return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><title>LifeOS access</title><h1>Allow ${writing?'reading and queued edits':'cloud mirror reading'}?</h1><p>${escape(facts.clientName)} requests access to cached Things tasks, projects, areas and tags, including notes.${writing?' It may queue title changes and task completion. Your Mac applies them when awake. Things wins if the edited field changed; skipped edits remain in the journal.':' Changes remain disabled for this grant.'}</p><p>Tokens return to ${escape(facts.redirectHost)}.${facts.redirectIsLoopback?' This is a local app; verify which app requested access.':''}</p><p>Permissions: things:read${writing?', things:write':''}. Offline access lets the client refresh its sign-in.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><button name="decision" value="allow">Allow with GitHub</button><button name="decision" value="deny">Deny</button></form></html>`,{headers});
     }
     if(url.pathname==='/authorize'&&request.method==='POST') {
       stage='consent_session';
@@ -49,7 +52,8 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       if(form.get('decision')==='deny') {const denied=await oauth.denyConsent(request,handle);return new Response(null,{status:302,headers:denied.headers});}
       if(form.get('decision')!=='allow')return json({error:'Consent required.'},400);
       // Scope and request are server-selected/recovered, never accepted from the form.
-      const approved=await oauth.approveConsent(request,handle,{scope:[scope,'offline_access']});
+      const approved=await oauth.approveConsent(request,handle);
+      if(approved.request.scope.includes(writeScope)&&!writesEnabled(env))return json({error:'Write activation pending.'},403);
       const verifier=crypto.randomUUID()+crypto.randomUUID();
       stage='github_redirect';
       const upstream=await oauth.beginUpstream(approved.request,{data:{verifier},headers:approved.headers});
@@ -75,7 +79,8 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       const user=await identity.json() as {id?:number};
       if(!Number.isSafeInteger(user.id)||String(user.id)!==env.LIFEOS_GITHUB_OWNER_ID)return deny();
       stage='grant_completion';
-      const done=await oauth.completeAuthorization({request:resumed.request,userId:String(user.id),metadata:{role:'reader'},scope:[scope,'offline_access'],props:{owner:env.LIFEOS_OWNER_ID,github_id:String(user.id),role:'reader'} satisfies Identity});
+      if(resumed.request.scope.includes(writeScope)&&!writesEnabled(env))return deny();
+      const done=await oauth.completeAuthorization({request:resumed.request,userId:String(user.id),metadata:{role:'reader'},scope:resumed.request.scope,props:{owner:env.LIFEOS_OWNER_ID,github_id:String(user.id),role:'reader'} satisfies Identity});
       resumed.headers.set('Location',done.redirectTo);return new Response(null,{status:302,headers:resumed.headers});
     }
     return json({error:'OAuth route not found.'},404);
@@ -105,16 +110,28 @@ async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Re
   const source=request.headers.get('origin');
   if(source&&![origin,'https://chatgpt.com','https://chat.openai.com'].includes(source))return json({error:'Origin denied.'},403);
   const server=new McpServer({name:'LifeOS Cloud Mirror',version:'0.2.0'});
+  const db=new BulkD1(env.DB),queue=new NativeQueue(db,env.LIFEOS_OWNER_ID);
   server.registerTool('read_things_mirror',{description:'Read the last confirmed Things snapshot with sync age, timezone and a separate pending overlay. This cache is not live ThingsCloud. Follow next_cursor until null; restart pagination if sequence changes. Unsupported, absent and unknown fields remain explicit.',inputSchema:{cursor:z.number().int().min(0).max(10000).default(0)},annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async({cursor})=>{
-    const state=await new MirrorStore(new BulkD1(env.DB),env.LIFEOS_OWNER_ID).state(cursor);
+    const state=await new MirrorStore(db,env.LIFEOS_OWNER_ID).state(cursor);
+    if(writesEnabled(env)) {
+      const operations=await queue.recent(),pending=await queue.pending();
+      Object.assign(state,{conflict_policy:'things_wins',native_operations:operations});
+      state.pending_overlay.push(...pending.map(o=>({id:o.id,target:o.payload.target,fields:{[o.payload.field]:o.payload.value},state:o.state})));
+    }
     return {content:[{type:'text',text:JSON.stringify(state)}],structuredContent:state};
   });
+  if(writesEnabled(env)&&c.auth.scope.includes(writeScope)) {
+    server.registerTool('queue_things_edit',{description:'Durably queue one explicit owner-requested title change or task completion. Use a stable operation_id for retries and the field revision from read_things_mirror. Accepted means pending, not applied. Things wins on same-field conflicts. No script, arbitrary fields, delete or bulk edit.',inputSchema:{operation_id:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),target:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),field:z.enum(['title','status']),value:z.string().max(4000),base_revision:z.number().int().positive()},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async({operation_id,...input})=>{
+      try{const operation=await queue.enqueue({id:operation_id,...input});const result={operation,accepted:operation.state==='queued',applied:false,conflict_policy:'things_wins'};return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result};}
+      catch{return {content:[{type:'text',text:'Edit could not be queued. Refresh the target and use only title changes or completed status. An operation ID must never be reused for different content.'}],isError:true};}
+    });
+  }
   const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true,maxRequestBodySize:65536});
   await server.connect(transport);
   try {const response=await transport.handleRequest(request);response.headers.set('Cache-Control','no-store');return response;}
   finally {await server.close();}
 }
-const provider=new OAuthProvider<OAuthEnv>({apiRoute:'/mcp',apiHandler:{fetch:mcp},defaultHandler:{fetch:auth},authorizeEndpoint:'/authorize',tokenEndpoint:'/oauth/token',clientRegistrationEndpoint:'/oauth/register',clientIdMetadataDocumentEnabled:false,scopesSupported:[scope,'offline_access'],requiredScopes:[scope],resourceMetadata:{resource,authorization_servers:[origin],resource_name:'LifeOS read-only cloud mirror'},accessTokenTTL:3600,refreshTokenTTL:2592000,clientRegistrationTTL:7776000,onError:()=>{},tokenExchangeCallback(options){if(!owner(options.props,options.env)||options.scope.some(s=>s!==scope&&s!=='offline_access'))throw new OAuthError('invalid_grant',{description:'Owner read grant required.'});}});
+const provider=new OAuthProvider<OAuthEnv>({apiRoute:'/mcp',apiHandler:{fetch:mcp},defaultHandler:{fetch:auth},authorizeEndpoint:'/authorize',tokenEndpoint:'/oauth/token',clientRegistrationEndpoint:'/oauth/register',clientIdMetadataDocumentEnabled:false,scopesSupported:[scope,writeScope,'offline_access'],requiredScopes:[scope],resourceMetadata:{resource,authorization_servers:[origin],resource_name:'LifeOS cloud mirror'},accessTokenTTL:3600,refreshTokenTTL:2592000,clientRegistrationTTL:7776000,onError:()=>{},tokenExchangeCallback(options){if(!owner(options.props,options.env)||options.scope.some(s=>![scope,writeScope,'offline_access'].includes(s))||options.scope.includes(writeScope)&&!writesEnabled(options.env))throw new OAuthError('invalid_grant',{description:'Owner grant required.'});}});
 export default {async fetch(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Response> {
   const path=new URL(request.url).pathname;
   if(path==='/health'||path==='/state'||path.startsWith('/api/'))return mirror.fetch(request,env);
