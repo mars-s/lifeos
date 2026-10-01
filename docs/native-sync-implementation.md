@@ -34,3 +34,11 @@ The server now advertises read/write scopes for initial authorization, includes 
 The complete cloud queue to native receipt round trip is still unverified. The updated ad-hoc build requires owner Keychain trust. A live process sample showed the previous build waiting inside `SecItemCopyMatching`. Background access now explicitly disables legacy Keychain interaction as well as biometric interaction, returns a clear status promptly, and exposes an owner-operated authorization menu action. Its private status file contains only a fixed diagnostic message and timestamp. The existing plugin's read/write OAuth consent was prepared in Helium but not approved by the agent. Owner consent and Keychain trust are the remaining activation steps.
 
 Actual queued phone edit while the Mac is asleep, native execution after wake, Mac read-back receipt and Things iPhone visibility remain unverified until this secure activation. No perfect cross-device conflict-free or exactly-once guarantee is claimed. The original local Python MCP adapter remains installed, so prompts from that separate legacy reader may still need a later migration.
+
+## Keychain approval and live queue verification
+
+The owner approved the installed app through its new explicit `--authorize-keychain` command. Both the interactive read and an immediate silent read succeeded. The background app then reported Synced and uploaded fresh snapshots without a credential prompt.
+
+For a disposable task only, the native agent was stopped, a recoverable Trash operation was inserted into the production operation queue using owner administration, and the agent was restarted. The immutable receipt reported applied. A subsequent confirmed snapshot verified Things Trash membership. An actual MCP read returned sequence 41, last sync `2026-10-01T11:23:19Z`, and 61 records (the original 59 plus two disposable test tasks retained in recoverable Trash).
+
+This proves the production queue, native write, receipt and cloud snapshot path. It does not prove a dot-originated write or physical Mac sleep/wake and iPhone delivery. The connected MCP read still reports `connection_can_write=false`; explicit write consent on that connection remains unresolved. Tool refresh in Helium lists both queued edit and queued Trash tools. The outdated read-only plugin description has been updated.
