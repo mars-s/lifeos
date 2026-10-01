@@ -67,7 +67,7 @@ final class CloudEvents {
                     status = "Connected"; failures = 0
                     let firstMessage = catchup; catchup = false
                     if let confirmed = await onRevision?(revision, firstMessage), confirmed >= revision {
-                        try await connection.send(.data(try encoded(["version": 1, "ack": confirmed])))
+                        try await connection.send(NativeEventProtocol.acknowledgement(revision: confirmed))
                     }
                 }
             } catch {
