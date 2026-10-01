@@ -18,7 +18,7 @@
     "LIFEOS_GITHUB_OWNER_ID": "71009876",
     "LIFEOS_WRITES_ENABLED": "true",
     "LIFEOS_CLOUD_WINS_ENABLED": "true",
-    "LIFEOS_SMART_SYNC_ENABLED": "false"
+    "LIFEOS_SMART_SYNC_ENABLED": "true"
   },
   "durable_objects": {"bindings": [{"name": "OWNER_SYNC", "class_name": "OwnerSync"}]},
   "migrations": [{"tag": "owner-sync-v1", "new_sqlite_classes": ["OwnerSync"]}],
