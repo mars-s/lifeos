@@ -25,8 +25,7 @@ function run() {
   }catch(_){return smart?receipt('failed','automation_denied',undefined,'unavailable'):JSON.stringify({state:'failed',reason:'automation_denied'});}
   if(smart){
     if(p.recovering===true)return receipt(current===p.value?'satisfied':'uncertain',current===p.value?null:trash?'interrupted_delete':'interrupted_write',current,'interrupted');
-    if(trash&&!p.base_fields)throw Error('unsupported typed Trash basis');
-    const sameVector=trash&&['title','status'].every(key=>p.base_fields[key]&&p.base_fields[key].state==='value'&&p.base_fields[key].value===observedFields[key].value);
+    const sameVector=trash&&p.base_fields&&['title','status'].every(key=>p.base_fields[key]&&p.base_fields[key].state==='value'&&p.base_fields[key].value===observedFields[key].value);
     const classification=current===p.value?'same_value':p.intent_kind==='derived_patch'&&p.value===p.base.value?'no_change':trash?(sameVector&&!p.recorded_divergence?'cloud_only':'delete_edit_cloud_fallback'):current===p.base.value&&!p.recorded_divergence?'cloud_only':'cloud_fallback';
     if(p.prepare_only===true)return receipt('satisfied',null,undefined,classification);
     if(!p.prepared_decision||p.prepared_decision.algorithm!=='supported_fields_v1'||p.prepared_decision.local.state!=='value'||p.prepared_decision.local.value!==current)return receipt('uncertain','verification_failed',current,'interrupted');

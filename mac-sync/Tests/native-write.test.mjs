@@ -79,4 +79,5 @@ test('smart Trash compares supported semantic fields and preserves the observed 
  const conflict=apply({...request,current:'Local'});assert.equal(conflict.result.merge_decision.classification,'delete_edit_cloud_fallback');
  assert.equal(conflict.result.merge_decision.observed_fields.title.value,'Local');assert.equal(conflict.writes,0);
  assert.equal(apply({...request,diverged:true}).result.merge_decision.classification,'delete_edit_cloud_fallback');
+ assert.equal(apply({...request,baseFields:undefined}).result.merge_decision.classification,'delete_edit_cloud_fallback');
 });

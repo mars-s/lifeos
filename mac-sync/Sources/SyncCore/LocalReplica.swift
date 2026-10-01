@@ -40,6 +40,17 @@ import CSQLite
     }
     public func clearCommands() throws { try sql("UPDATE meta SET value=0 WHERE key='commands'") }
     public func resetBootstrap() throws { try sql("DELETE FROM bootstrap_items") }
+    private func itemID(_ item: JSON) throws -> String {
+        guard let id = item["id"] as? String, id.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil,
+              let kind = item["kind"] as? String, ["todo", "project", "area", "tag"].contains(kind),
+              let deleted = item["deleted"] as? Int, [0, 1].contains(deleted), let fields = item["fields"] as? JSON else { throw SyncError.invalid }
+        for value in fields.values {
+            guard let cell = value as? JSON, let state = cell["state"] as? String,
+                  ["value", "absent", "unknown", "unsupported"].contains(state),
+                  state == "value" ? cell["value"] != nil : cell["value"] == nil else { throw SyncError.invalid }
+        }
+        return id
+    }
     public func bootstrap(_ page: JSON, first: Bool) throws {
         guard page["version"] as? Int == 3, let cursor = page["cursor"] as? Int, cursor >= 0,
               let sequence = page["sequence"] as? Int, sequence >= 0,
@@ -49,10 +60,10 @@ import CSQLite
             if first { try sql("DELETE FROM bootstrap_items; INSERT OR REPLACE INTO meta VALUES('bootstrap_cursor',\(cursor)),('bootstrap_sequence',\(sequence)),('bootstrap_operation',\(operation)),('bootstrap_count',0)") }
             guard try integer("bootstrap_cursor") == cursor, try integer("bootstrap_sequence") == sequence, try integer("bootstrap_operation") == operation,
                   try integer("bootstrap_count") + items.count <= 10000 else { throw SyncError.invalid }
-            for item in items { guard let id = item["id"] as? String else { throw SyncError.invalid }; try store(item, table: "bootstrap_items", key: id) }
+            for item in items { try store(item, table: "bootstrap_items", key: itemID(item)) }
             try sql("UPDATE meta SET value=value+\(items.count) WHERE key='bootstrap_count'")
             if !more {
-                try sql("DELETE FROM items; INSERT INTO items SELECT * FROM bootstrap_items; DELETE FROM bootstrap_items; DELETE FROM events; UPDATE meta SET value=\(cursor) WHERE key='cursor'; UPDATE meta SET value=1 WHERE key IN ('ready','commands')")
+                try sql("DELETE FROM items; INSERT INTO items SELECT * FROM bootstrap_items; DELETE FROM bootstrap_items; DELETE FROM events; DELETE FROM projections; UPDATE meta SET value=\(cursor) WHERE key='cursor'; UPDATE meta SET value=1 WHERE key IN ('ready','commands')")
             }
         }
     }
@@ -72,9 +83,8 @@ import CSQLite
                 guard let kind = change["kind"] as? String, let id = change["id"] as? String else { throw SyncError.invalid }
                 try store(payload, table: "projections", key: kind + ":" + id)
                 if change["kind"] as? String == "item" {
-                    guard let item = payload["item"] as? JSON, let id = item["id"] as? String,
-                          let deleted = item["deleted"] as? Int, [0, 1].contains(deleted) else { throw SyncError.invalid }
-                    try store(item, table: "items", key: id)
+                    guard let item = payload["item"] as? JSON else { throw SyncError.invalid }
+                    try store(item, table: "items", key: itemID(item))
                 }
                 if payload["command_changed"] as? Bool == true { try sql("UPDATE meta SET value=1 WHERE key='commands'") }
                 current = revision
