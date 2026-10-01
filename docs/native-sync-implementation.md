@@ -21,4 +21,10 @@ No production Worker deployment, new credential provisioning, live Things mutati
 
 The owner must rotate the previously exposed secret in the existing GitHub app, then personally run `python3 mac-sync/setup_native_sync.py` from this repository. Its hidden prompts and normal native permissions must stay with the owner. Dot needs a new `things:write` consent and its tool list refreshed through supported connection settings. The setup does not create another OAuth app or access ThingsCloud credentials.
 
+## October 1 activation verification
+
+The installed native app uploaded a fresh 59-record snapshot at sequence 35, with no pending upload or sync failure. Things automation permission and start at login are enabled. The prior journal's pending sequence 34 was delivered and verified before migration; its backup was retained. The original Python mirror and local Python MCP remain stopped. Cloud writes are enabled, but dot write consent and a live queued-edit round trip still need verification.
+
+The first installed reader rejected compiled AppleScript's raw Things dictionary class codes. The reader now accepts the verified `tstk`, `tslt` and `tspt` codes as well as their term names. Regression tests cover repeated list entries and reject conflicting or unknown classes. All 11 Swift tests passed, and the corrected installed reader completed its live inventory and upload.
+
 Actual queued phone edit while the Mac is asleep, native execution after wake, Mac read-back receipt and Things iPhone visibility remain unverified until this secure activation. No perfect cross-device conflict-free or exactly-once guarantee is claimed. The original local Python MCP adapter remains installed, so prompts from that separate legacy reader may still need a later migration.

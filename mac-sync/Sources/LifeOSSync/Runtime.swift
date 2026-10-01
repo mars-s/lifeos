@@ -109,14 +109,7 @@ final class PublicThings: ThingsAutomation {
     }
     private func classify() async throws -> [String: String] {
         let bytes = try await AutomationProcess.run([resource("things_classify", "scpt"), appPath])
-        guard let rows = try JSONSerialization.jsonObject(with: bytes) as? [[String]], rows.count <= 50000 else { throw SyncError.automation }
-        var result: [String: String] = [:]
-        for row in rows {
-            guard row.count == 2, let kind = ["to do": "todo", "selected to do": "todo", "project": "project"][row[1]],
-                  !row[0].isEmpty, result[row[0]] == nil || result[row[0]] == kind else { throw SyncError.automation }
-            result[row[0]] = kind
-        }
-        return result
+        return try thingsClassifications(bytes)
     }
     func inventory() async throws -> JSON {
         if !NSWorkspace.shared.runningApplications.contains(where: { $0.bundleURL?.path == appPath }) {
