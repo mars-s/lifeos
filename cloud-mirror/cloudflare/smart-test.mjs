@@ -156,6 +156,27 @@ try{
    await snapshot(currentItems.filter(row=>row.id!=='task-6'));
    assert.equal((await enqueue('missing-trash','task-6',true,{field:'in_trash_list'})).status,409);
   });
+  await t.test('removed or replaced desired heads retain receipt reconciliation without clearing successors',async()=>{
+   const complete=await queued('complete-before-trash','task-7','completed',{field:'status'});await claim(complete.id);
+   const completed=await ok('/api/native/ack',receipt(complete,'open'));
+   const trash=await queued('trash-after-complete','task-7',true,{field:'in_trash_list'});await claim(trash.id);
+   const trashed=await ok('/api/native/ack',receipt(trash,false));
+   assert.equal(await db.prepare("SELECT operation_id FROM native_desired_fields WHERE owner='smart-owner' AND target='task-7' AND field='status'").first(),null,'Trash removes the completion head before its proof is uploaded');
+   const old=await queued('applied-before-successor','task-8','Applied title');await claim(old.id);
+   const applied=await ok('/api/native/ack',receipt(old));
+   const successor=await queued('successor-before-proof','task-8','New desired title');
+   const observed=currentItems.map(row=>row.id==='task-7'?item(row.id,'Base','completed',true):row.id==='task-8'?item(row.id,'Applied title'):row);
+   await snapshot(observed,[completed.receipt_confirmation,trashed.receipt_confirmation,applied.receipt_confirmation],successor.ordinal);
+   const rows=(await db.prepare("SELECT operation_id,disposition,sequence FROM native_reconciliations WHERE owner='smart-owner' AND operation_id IN (?,?,?) ORDER BY operation_id").bind(complete.id,trash.id,old.id).all()).results;
+   assert.deepEqual(rows.map(row=>[row.operation_id,row.disposition]),[[old.id,'confirmed'],[complete.id,'post_write_review'],[trash.id,'confirmed']]);
+   assert.ok(rows.every(row=>row.sequence===sequence));
+   assert.deepEqual((await operation(complete.id)).result,{state:'applied'});assert.deepEqual((await operation(trash.id)).result,{state:'applied'});
+   const head=await db.prepare("SELECT operation_id,ordinal FROM native_desired_fields WHERE owner='smart-owner' AND target='task-8' AND field='title'").first();assert.deepEqual(head,{operation_id:successor.id,ordinal:successor.ordinal});
+   const feed=await drainChanges();assert.ok(feed.events.some(event=>event.kind==='review'&&event.id===complete.id&&event.payload.disposition==='post_write_review'));
+   await snapshot(observed,[completed.receipt_confirmation,trashed.receipt_confirmation,applied.receipt_confirmation],successor.ordinal);
+   assert.deepEqual((await db.prepare("SELECT operation_id,disposition,sequence FROM native_reconciliations WHERE owner='smart-owner' AND operation_id IN (?,?,?) ORDER BY operation_id").bind(complete.id,trash.id,old.id).all()).results,rows,'Replay preserves the first immutable reconciliation');
+   assert.ok((await overlays()).some(row=>row.id===successor.id),'Old proofs cannot clear the newer title head');
+  });
   await t.test('pre-invocation supersession and interrupted setter audits cross the real ack boundary',async()=>{
    const old=await queued('skip-head','task-40');await claim(old.id);
    await queued('skip-successor','task-40','Newer');
