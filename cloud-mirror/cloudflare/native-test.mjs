@@ -19,15 +19,17 @@ async function native(path,body,key=agent,extra={}) {return mf.dispatchFetch(ori
 const lists=['TMInboxListSource','TMTodayListSource','TMCalendarListSource','TMNextListSource','TMSomedayListSource','TMLogbookListSource','TMTrashListSource'];
 const item=(id,title='Fixture title')=>({id,kind:'todo',fields:{title:{state:'value',value:title},status:{state:'value',value:'open'},in_trash_list:{state:'value',value:false}}});
 async function snapshot(sequence,items){return native('snapshot',{sequence,items,manifest:{observed_at:new Date().toISOString(),zone:'Australia/Melbourne',scopes:['todo','project','area','tag'],coverage:'public-top-level-and-all-lists-v2',coverage_evidence:{consistent_passes:2,classified_records:items.length,list_ids:lists}}});}
-async function connect(scope){
+async function connect(scope,includeWrites=false){
  const cookies=new Map();
  async function req(path,body,headers={}){const r=await mf.dispatchFetch(origin+path,{method:body?'POST':'GET',redirect:'manual',headers:{Cookie:[...cookies].map(([k,v])=>k+'='+v).join('; '),...(body?{'Content-Type':'application/x-www-form-urlencoded'}:{}),...headers},body});for(const c of r.headers.getSetCookie()){const pair=c.split(';')[0],p=pair.indexOf('=');cookies.set(pair.slice(0,p),pair.slice(p+1));}return r;}
  const reg=await req('/oauth/register',JSON.stringify({client_name:'Synthetic native test',redirect_uris:['https://chatgpt.com/connector/oauth/callback'],token_endpoint_auth_method:'none',grant_types:['authorization_code','refresh_token'],response_types:['code']}),{'Content-Type':'application/json'});
  const client=(await reg.json()).client_id,verifier='SYNTHETIC-fixture-verifier-at-least-forty-three-characters';
  const page=await req('/authorize?'+new URLSearchParams({response_type:'code',client_id:client,redirect_uri:'https://chatgpt.com/connector/oauth/callback',scope,state:'fixture',resource,code_challenge: createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256'}));assert.equal(page.status,200);const html=await page.text();
  if(scope.includes('things:write'))assert.match(html,/Things wins/);
- const upstream=await req('/authorize',new URLSearchParams({handle:html.match(/name="handle" value="([^"]+)"/)[1],decision:'allow'}),{Origin:origin});assert.equal(upstream.status,302);
- const callback=await req('/callback?'+new URLSearchParams({code:'fixture-code',state:new URL(upstream.headers.get('location')).searchParams.get('state')}));
+ if(includeWrites)assert.match(html,/name="queued_writes"/);
+ const upstream=await req('/authorize',new URLSearchParams({handle:html.match(/name="handle" value="([^"]+)"/)[1],decision:'allow',...(includeWrites?{queued_writes:'allow'}:{})}),{Origin:origin});assert.equal(upstream.status,200);
+ const continuation=await upstream.text(),github=new URL(continuation.match(/href="([^"]+)"/)[1].replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n))));assert.equal(github.origin,'https://github.com');
+ const callback=await req('/callback?'+new URLSearchParams({code:'fixture-code',state:github.searchParams.get('state')}));
  const code=new URL(callback.headers.get('location')).searchParams.get('code');
  const token=await req('/oauth/token',new URLSearchParams({grant_type:'authorization_code',client_id:client,code,redirect_uri:'https://chatgpt.com/connector/oauth/callback',code_verifier:verifier,resource}));assert.equal(token.status,200);const access=await token.json();
  const sdk=new Client({name:'Native fixture',version:'1'});await sdk.connect(new StreamableHTTPClientTransport(new URL(resource),{requestInit:{headers:{Authorization:'Bearer '+access.access_token}},fetch:(url,init)=>mf.dispatchFetch(url,init)}));
@@ -45,6 +47,14 @@ try {
   });
   const read=await connect('things:read offline_access'),write=await connect('things:read things:write offline_access');
   try {
+   await t.test('owner can explicitly add queued writes when a client initially requests reading',async()=>{
+    const offered=await connect('things:read offline_access',true);
+    try {
+     assert.ok(offered.access.scope.split(' ').includes('things:write'));
+     const page=JSON.parse((await offered.sdk.callTool({name:'read_things_mirror',arguments:{}})).content[0].text);
+     assert.equal(page.capabilities.connection_can_write,true);
+    }finally{await offered.sdk.close();}
+   });
    await t.test('read grants remain read-only after activation and cannot expand on refresh',async()=>{
     const tools=(await read.sdk.listTools()).tools;
     assert.deepEqual(tools.map(t=>t.name),['read_things_mirror','queue_things_trash','queue_things_edit']);

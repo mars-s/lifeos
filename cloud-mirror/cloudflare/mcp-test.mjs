@@ -34,8 +34,11 @@ async function consent(extra={}) {
 const handle=html=>html.match(/name="handle" value="([^"]+)"/)[1];
 async function start() {
   const {r,html}=await consent();assert.equal(r.status,200);
-  const next=await request('/authorize',{method:'POST',body:new URLSearchParams({handle:handle(html),decision:'allow'}),headers:{Origin:origin}});assert.equal(next.status,302);
-  const target=new URL(next.headers.get('location'));assert.equal(target.origin,'https://github.com');assert.equal(target.searchParams.get('scope'),'');assert.equal(target.searchParams.get('code_challenge_method'),'S256');
+  const next=await request('/authorize',{method:'POST',body:new URLSearchParams({handle:handle(html),decision:'allow'}),headers:{Origin:origin}});assert.equal(next.status,200);
+  assert.equal(next.headers.get('location'),null);
+  assert.match(next.headers.get('content-security-policy'),/form-action 'none'/);
+  const continuation=await next.text();assert.match(continuation,/Continue to GitHub/);
+  const target=new URL(continuation.match(/href="([^"]+)"/)[1].replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n))));assert.equal(target.origin,'https://github.com');assert.equal(target.searchParams.get('scope'),'');assert.equal(target.searchParams.get('code_challenge_method'),'S256');
   return '/callback?'+new URLSearchParams({code:'SYNTHETIC-code',state:target.searchParams.get('state')});
 }
 try {

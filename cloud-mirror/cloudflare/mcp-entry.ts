@@ -44,8 +44,9 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       // The validated client redirect is also needed when the owner declines.
       const clientOrigin=new URL(req.redirectUri).origin;
       headers.set('Content-Security-Policy',`default-src 'none'; form-action 'self' https://github.com ${clientOrigin}; base-uri 'none'; frame-ancestors 'none'`);
-      const writing=req.scope.includes(writeScope);
-      return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><title>LifeOS access</title><h1>Allow ${writing?'reading and queued edits':'cloud mirror reading'}?</h1><p>${escape(facts.clientName)} requests access to cached Things tasks, projects, areas and tags, including notes.${writing?' It may queue title changes, task completion and moving to-dos to recoverable Things Trash. Your Mac applies them when awake. Things wins if the edited field changed; skipped edits remain in the journal.':' Changes remain disabled for this grant.'}</p><p>Tokens return to ${escape(facts.redirectHost)}.${facts.redirectIsLoopback?' This is a local app; verify which app requested access.':''}</p><p>Permissions: things:read${writing?', things:write':''}. Offline access lets the client refresh its sign-in.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><button name="decision" value="allow">Allow with GitHub</button><button name="decision" value="deny">Deny</button></form></html>`,{headers});
+      const writing=req.scope.includes(writeScope)||writesEnabled(env);
+      const writeChoice=writesEnabled(env)&&!req.scope.includes(writeScope)?'<p><label><input type="checkbox" name="queued_writes" value="allow" checked> Include queued edits (things:write)</label>. Uncheck for read-only access.</p>':'';
+      return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><title>LifeOS access</title><h1>Allow ${writing?'reading and queued edits':'cloud mirror reading'}?</h1><p>${escape(facts.clientName)} requests access to cached Things tasks, projects, areas and tags, including notes.${writing?' It may queue title changes, task completion and moving to-dos to recoverable Things Trash. Your Mac applies them when awake. Things wins if the edited field changed; skipped edits remain in the journal.':' Changes remain disabled for this grant.'}</p><p>Tokens return to ${escape(facts.redirectHost)}.${facts.redirectIsLoopback?' This is a local app; verify which app requested access.':''}</p><p>Permissions: things:read${writing?', things:write':''}. Offline access lets the client refresh its sign-in.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}">${writeChoice}<button name="decision" value="allow">Allow with GitHub</button><button name="decision" value="deny">Deny</button></form></html>`,{headers});
     }
     if(url.pathname==='/authorize'&&request.method==='POST') {
       stage='consent_session';
@@ -53,15 +54,22 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       const form=await request.formData(),handle=String(form.get('handle')??'');
       if(form.get('decision')==='deny') {const denied=await oauth.denyConsent(request,handle);return new Response(null,{status:302,headers:denied.headers});}
       if(form.get('decision')!=='allow')return json({error:'Consent required.'},400);
-      // Scope and request are server-selected/recovered, never accepted from the form.
-      const approved=await oauth.approveConsent(request,handle);
+      // Only the fixed optional write permission can be added by owner consent.
+      // Client identity, redirect and PKCE remain recovered from the bound transaction.
+      const approved=await oauth.approveConsent(request,handle,
+        form.get('queued_writes')==='allow'&&writesEnabled(env)?{scope:[scope,writeScope,'offline_access']}:{});
       if(approved.request.scope.includes(writeScope)&&!writesEnabled(env))return json({error:'Write activation pending.'},403);
       const verifier=crypto.randomUUID()+crypto.randomUUID();
       stage='github_redirect';
       const upstream=await oauth.beginUpstream(approved.request,{data:{verifier},headers:approved.headers});
       const target=new URL('https://github.com/login/oauth/authorize');
       target.search=new URLSearchParams({client_id:env.GITHUB_CLIENT_ID!,redirect_uri:origin+'/callback',scope:'',state:upstream.state,code_challenge:await challenge(verifier),code_challenge_method:'S256',allow_signup:'false'}).toString();
-      upstream.headers.set('Location',target.href);return new Response(null,{status:302,headers:upstream.headers});
+      // Finish the form navigation before starting GitHub's redirect chain.
+      // Chromium can apply form-action to every destination in that chain.
+      upstream.headers.set('Content-Type','text/html; charset=utf-8');
+      upstream.headers.set('Referrer-Policy','no-referrer');
+      upstream.headers.set('Content-Security-Policy',"default-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
+      return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Continue LifeOS sign-in</title><h1>Continue LifeOS sign-in</h1><p>Your consent was recorded. Confirm your GitHub account to finish connecting LifeOS.</p><p><a href="${escape(target.href)}">Continue to GitHub</a></p>`,{headers:upstream.headers});
     }
     if(url.pathname==='/callback'&&request.method==='GET') {
       stage='callback_session';
