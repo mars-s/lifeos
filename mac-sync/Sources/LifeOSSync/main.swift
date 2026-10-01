@@ -104,6 +104,14 @@ final class Agent: NSObject, NSApplicationDelegate {
 }
 
 let args = CommandLine.arguments
+if args.contains("--authorize-keychain") {
+    do {
+        _ = try Credential.read(interactive: true)
+        // Verify persistent approval without opening a second dialog.
+        _ = try Credential.read()
+    } catch { exit(1) }
+    exit(0)
+}
 if args.contains("--store-key") {
     do {
         let data = FileHandle.standardInput.readDataToEndOfFile()

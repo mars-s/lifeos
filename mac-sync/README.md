@@ -41,6 +41,8 @@ Reconnect the existing **LifeOS Cloud Mirror Reader** plugin with `things:read t
 
 After an ad-hoc app update, Keychain may require trust for the new build. Routine access fails quietly and reports its status instead of opening a dialog or blocking the menu. Select **Authorize Keychain access once** yourself and approve the specific installed app through macOS. Use Always Allow if you want this build trusted for unattended retrieval. Denial retains the journal and stops syncing. Locally ad-hoc signed updates can need renewed trust; a stable Developer ID signing identity is recommended for regular distribution.
 
+If the menu bar cannot be reached, run `/Applications/LifeOS Sync.app/Contents/MacOS/LifeOSSync --authorize-keychain` with the application path quoted. This explicit command opens the normal Keychain approval and then checks a quiet read. It prints no credential and exits unsuccessfully if unattended access is still unavailable. Restart the menu-bar app after this command completes.
+
 The secure setup intentionally refuses to replace an already-installed app or reset an existing native journal. If setup stops after installation, inspect the named stage, preserve the app and both journals, and finish the interrupted stage. Do not rerun provisioning blindly or delete journals. A native journal loss must stop execution. A pending legacy upload should be drained by the original helper before trying journal migration again.
 
 ## Live verification still required
