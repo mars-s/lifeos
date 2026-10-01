@@ -3,7 +3,7 @@ import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {WebStandardStreamableHTTPServerTransport} from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import {z} from 'zod';
 import mirror,{writesEnabled} from './worker';
-import {NativeQueue} from './native-queue';
+import {NativeQueue,supportedVector} from './native-queue';
 import {ownerSync} from './owner-sync';
 export {OwnerSync} from './owner-sync';
 import {MirrorStore,canonical,type Cell} from '../site/lib/mirror-store';
@@ -146,7 +146,7 @@ async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Re
         for(const [source,items] of [['confirmed',state.confirmed],['desired',effective]] as const)for(const item of items)for(const [field,cell] of Object.entries(item.fields) as [string,Cell][]){
           const head=source==='desired'?pending.find(o=>o.payload.target===item.id&&o.payload.field===field):undefined;
           const effectiveTarget=source==='desired'&&pending.some(o=>o.payload.target===item.id);
-          const vector=Object.fromEntries(['title','status','in_trash_list'].filter(k=>item.fields[k]).map(k=>{const {basis_token,...value}=item.fields[k] as Cell&{basis_token?:string};return [k,value];}));
+          const vector=supportedVector(item.fields);
           const basis=bases.find(b=>b.target===item.id&&b.field===field&&(effectiveTarget?b.source==='effective'&&b.ordinal===(head?.ordinal??0)&&canonical(JSON.parse(b.target_fields))===canonical(vector):b.source==='confirmed'&&b.revision===cell.revision)&&JSON.parse(b.cell).value===cell.value);
           if(basis)item.fields[field]={...cell,...{basis_token:basis.token}};
         }

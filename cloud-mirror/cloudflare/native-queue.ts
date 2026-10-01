@@ -12,7 +12,16 @@ export type NativeOperation={id:string;state:string;claim:string|null;ordinal:nu
 type Row=Omit<NativeOperation,'payload'|'result'>&{payload:string;result:string|null};
 const decode=(r:Row):NativeOperation=>({...r,payload:JSON.parse(r.payload),result:r.result?JSON.parse(r.result):null});
 const now=()=>new Date().toISOString();
-function boundedOperations<T extends NativeOperation>(rows:T[],limit=200*1024){const kept:T[]=[];let bytes=512;for(const row of rows){const n=new TextEncoder().encode(canonical(row)).length;if(bytes+n>limit)break;kept.push(row);bytes+=n;}return kept;}
+function boundedOperations<T extends NativeOperation>(rows:T[],limit=200*1024){const kept:T[]=[];let bytes=512;for(const row of rows){const n=new TextEncoder().encode(canonical(row)).length;if(bytes+n>limit){if(!kept.length)throw new DemoError('Operation exceeds transport budget. Refresh required.');break;}kept.push(row);bytes+=n;}return kept;}
+export function supportedVector(raw:Record<string,Cell>){
+  const vector:Record<string,Cell>={};
+  for(const field of ['title','status','in_trash_list']){
+    const cell=raw[field];if(!cell)continue;
+    if(cell.state==='value'&&(typeof cell.value!==(field==='in_trash_list'?'boolean':'string')||typeof cell.value==='string'&&cell.value.length>4000))throw new DemoError('Observed supported field exceeds edit budget. Refresh required.');
+    vector[field]={state:cell.state,...cell.state==='value'?{value:cell.value}:{},...cell.revision!==undefined?{revision:cell.revision}:{}};
+  }
+  return vector;
+}
 function validID(id:unknown){if(typeof id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(id))throw new DemoError('Invalid operation or target ID.');}
 export class NativeQueue {
   constructor(private db:Pick<D1Database,'prepare'|'batch'>,private owner:string) {}
@@ -45,10 +54,13 @@ export class NativeQueue {
       const currentVector=Object.fromEntries(['title','status','in_trash_list'].map(k=>[k,cells[k]??null]));
       if(Date.parse(saved.created_at)<Date.now()-90*86400000&&!saved.pinned&&!(saved.source==='confirmed'&&canonical(JSON.parse(saved.target_fields))===canonical(currentVector)))throw new DemoError('Observed base expired. Refresh without discarding the requested edit.');
       if(saved.source==='confirmed'&&saved.revision===cell.revision&&canonical(JSON.parse(saved.cell).value)!==canonical(cell.value))throw new DemoError('Field revision history is inconsistent. Refresh required.');
-      base=JSON.parse(saved.cell);basis={token:saved.token,source:saved.source,sequence:saved.sequence,revision:saved.revision,ordinal:saved.ordinal,target_fields:JSON.parse(saved.target_fields)};
+      base=JSON.parse(saved.cell);
+      if(base.state!=='value'||typeof base.value!==(input.field==='in_trash_list'?'boolean':'string')||typeof base.value==='string'&&base.value.length>4000)throw new DemoError('Observed base exceeds edit budget. Refresh required.');
+      basis={token:saved.token,source:saved.source,sequence:saved.sequence,revision:saved.revision,ordinal:saved.ordinal,target_fields:supportedVector(JSON.parse(saved.target_fields))};
     }
     const baseFields=basis&&input.basis_token?Object.fromEntries(['title','status'].filter(k=>basis!.target_fields[k]).map(k=>{const c=basis!.target_fields[k];return [k,{state:c.state,...c.state==='value'?{value:c.value}:{}}];})):undefined;
     const payload:NativeOperation['payload']={target:input.target,kind:row.kind,field:input.field,value:input.value,base,conflict_policy:policy,...policy==='cloud_wins'?{version:2,base_revision:input.base_revision}:policy==='smart_merge_v1'?{version:3,base_revision:input.base_revision,basis,intent_kind:input.intent_kind??'explicit_set',fallback:'cloud',recorded_divergence:cell.revision!==basis!.revision,...input.field==='in_trash_list'&&baseFields?{base_fields:baseFields}:{}}: {}};
+    if(new TextEncoder().encode(canonical(payload)).length>96*1024)throw new DemoError('Observed operation exceeds edit transport budget. Refresh required.');
     return {input,hash,payload,date:now()};
   }
   async commitEnqueue(prepared:PreparedEnqueue){
@@ -76,7 +88,7 @@ export class NativeQueue {
     return (await this.stmt('SELECT token,target,field,revision,ordinal,source,cell,sequence,target_fields FROM native_bases WHERE owner=? AND target IN(SELECT value FROM json_each(?)) ORDER BY sequence DESC',this.owner,canonical(targets)).all<{token:string;target:string;field:string;revision:number;ordinal:number;source:string;cell:string;sequence:number;target_fields:string}>()).results;
   }
   async effectiveBases(items:Array<{id:string;fields:Record<string,Cell>}>,heads:NativeOperation[],sequence:number){
-    const rows=[];for(const item of items){if(!heads.some(o=>o.payload.target===item.id))continue;const vector=Object.fromEntries(['title','status','in_trash_list'].filter(k=>item.fields[k]).map(k=>[k,item.fields[k]]));for(const field of ['title','status','in_trash_list']){const cell=item.fields[field];if(cell?.state!=='value'||!cell.revision)continue;const head=heads.find(o=>o.payload.target===item.id&&o.payload.field===field);rows.push({token:Array.from(crypto.getRandomValues(new Uint8Array(24)),b=>b.toString(16).padStart(2,'0')).join(''),target:item.id,field,revision:cell.revision,sequence,ordinal:head?.ordinal??0,cell:canonical({state:'value',value:cell.value}),vector:canonical(vector)});}}
+    const rows=[];for(const item of items){if(!heads.some(o=>o.payload.target===item.id))continue;const vector=supportedVector(item.fields);for(const field of ['title','status','in_trash_list']){const cell=item.fields[field];if(cell?.state!=='value'||!cell.revision)continue;const head=heads.find(o=>o.payload.target===item.id&&o.payload.field===field);rows.push({token:Array.from(crypto.getRandomValues(new Uint8Array(24)),b=>b.toString(16).padStart(2,'0')).join(''),target:item.id,field,revision:cell.revision,sequence,ordinal:head?.ordinal??0,cell:canonical({state:'value',value:cell.value}),vector:canonical(vector)});}}
     if(!rows.length)return;
     await this.stmt(`INSERT OR IGNORE INTO native_bases(token,owner,target,field,revision,sequence,source,ordinal,cell,target_fields,created_at) SELECT json_extract(value,'$.token'),?,json_extract(value,'$.target'),json_extract(value,'$.field'),json_extract(value,'$.revision'),json_extract(value,'$.sequence'),'effective',json_extract(value,'$.ordinal'),json_extract(value,'$.cell'),json_extract(value,'$.vector'),? FROM json_each(?)`,this.owner,now(),canonical(rows)).run();
   }

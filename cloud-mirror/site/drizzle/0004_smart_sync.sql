@@ -104,7 +104,7 @@ CREATE TRIGGER IF NOT EXISTS smart_desired_insert AFTER INSERT ON native_desired
 BEGIN
  INSERT INTO native_changes(owner,kind,id,payload) VALUES(NEW.owner,'desired',NEW.operation_id,json_object('target',NEW.target,'field',NEW.field,'operation_id',NEW.operation_id,'ordinal',NEW.ordinal,'value',json(NEW.value)));
  INSERT OR IGNORE INTO native_bases(token,owner,target,field,revision,sequence,source,ordinal,cell,target_fields,created_at)
- SELECT lower(hex(randomblob(24))),NEW.owner,NEW.target,NEW.field,COALESCE(json_extract(i.fields,'$.'||NEW.field||'.revision'),1),COALESCE((SELECT sequence FROM mirror_meta WHERE owner=NEW.owner),0),'desired',NEW.ordinal,json_object('state','value','value',json(NEW.value)),i.fields,strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM mirror_items i WHERE i.owner=NEW.owner AND i.id=NEW.target;
+ SELECT lower(hex(randomblob(24))),NEW.owner,NEW.target,NEW.field,COALESCE(json_extract(i.fields,'$.'||NEW.field||'.revision'),1),COALESCE((SELECT sequence FROM mirror_meta WHERE owner=NEW.owner),0),'desired',NEW.ordinal,json_object('state','value','value',json(NEW.value)),json_object('title',json_extract(i.fields,'$.title'),'status',json_extract(i.fields,'$.status'),'in_trash_list',json_extract(i.fields,'$.in_trash_list')),strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM mirror_items i WHERE i.owner=NEW.owner AND i.id=NEW.target;
 END;
 --> statement-breakpoint
 CREATE TRIGGER IF NOT EXISTS smart_desired_update AFTER UPDATE ON native_desired_fields
@@ -112,7 +112,7 @@ WHEN OLD.operation_id<>NEW.operation_id
 BEGIN
  INSERT INTO native_changes(owner,kind,id,payload) VALUES(NEW.owner,'desired',NEW.operation_id,json_object('target',NEW.target,'field',NEW.field,'operation_id',NEW.operation_id,'ordinal',NEW.ordinal,'value',json(NEW.value)));
  INSERT OR IGNORE INTO native_bases(token,owner,target,field,revision,sequence,source,ordinal,cell,target_fields,created_at)
- SELECT lower(hex(randomblob(24))),NEW.owner,NEW.target,NEW.field,COALESCE(json_extract(i.fields,'$.'||NEW.field||'.revision'),1),COALESCE((SELECT sequence FROM mirror_meta WHERE owner=NEW.owner),0),'desired',NEW.ordinal,json_object('state','value','value',json(NEW.value)),i.fields,strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM mirror_items i WHERE i.owner=NEW.owner AND i.id=NEW.target;
+ SELECT lower(hex(randomblob(24))),NEW.owner,NEW.target,NEW.field,COALESCE(json_extract(i.fields,'$.'||NEW.field||'.revision'),1),COALESCE((SELECT sequence FROM mirror_meta WHERE owner=NEW.owner),0),'desired',NEW.ordinal,json_object('state','value','value',json(NEW.value)),json_object('title',json_extract(i.fields,'$.title'),'status',json_extract(i.fields,'$.status'),'in_trash_list',json_extract(i.fields,'$.in_trash_list')),strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM mirror_items i WHERE i.owner=NEW.owner AND i.id=NEW.target;
 END;
 --> statement-breakpoint
 CREATE TRIGGER IF NOT EXISTS smart_desired_delete AFTER DELETE ON native_desired_fields
