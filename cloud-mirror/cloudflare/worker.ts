@@ -1,11 +1,12 @@
 import {MirrorStore,fingerprint} from '../site/lib/mirror-store';
 import {NativeQueue} from './native-queue';
+import {ownerSync} from './owner-sync';
 import {mirrorAPI} from '../site/lib/mirror-api';
 import {BulkD1} from './d1-bulk';
 import {timingSafeEqual} from 'node:crypto';
 // Wrangler generates the nonsecret bindings; secret bindings are optional until
 // the user-mediated provisioning step completes.
-declare global {interface Env {LIFEOS_SYNC_KEY_SHA256?:string;LIFEOS_READ_KEY_SHA256?:string;LIFEOS_AGENT_KEY_SHA256?:string;LIFEOS_WRITES_ENABLED?:string}}
+declare global {interface Env {LIFEOS_SYNC_KEY_SHA256?:string;LIFEOS_READ_KEY_SHA256?:string;LIFEOS_AGENT_KEY_SHA256?:string}}
 export const writesEnabled=(env:Env)=>env.LIFEOS_WRITES_ENABLED==='true'&&!!env.LIFEOS_AGENT_KEY_SHA256;
 
 const lists=['TMInboxListSource','TMTodayListSource','TMCalendarListSource','TMNextListSource','TMSomedayListSource','TMLogbookListSource','TMTrashListSource'];
@@ -40,13 +41,17 @@ export default {
         if(!await matches(request.headers.get('x-lifeos-agent-key')??'',env.LIFEOS_AGENT_KEY_SHA256))return reply({error:'Native agent authentication required.'},401);
         if(request.headers.has('origin'))return reply({error:'Native routes do not accept browser requests.'},403);
         const queue=new NativeQueue(db,env.LIFEOS_OWNER_ID),action=url.pathname.split('/').pop();
-        if(action==='pending'&&request.method==='GET')return reply({sequence:(await store.meta())?.sequence??0,operations:await queue.pending()});
+        if(action==='events'&&request.method==='GET'){
+          if(url.search||request.headers.get('upgrade')?.toLowerCase()!=='websocket')return reply({error:'Native WebSocket required.'},400);
+          return ownerSync(env).fetch(request);
+        }
+        if(action==='pending'&&request.method==='GET')return reply({sequence:(await store.meta())?.sequence??0,revision:await queue.revision(),operations:await queue.pending(),overlaysNeedConfirmation:await queue.overlaysNeedConfirmation()});
         if(request.method!=='POST'||!['snapshot','claim','ack','operation'].includes(action??''))return reply({error:'Native route not found.'},404);
         if(!request.headers.get('content-type')?.includes('application/json'))return reply({error:'JSON required.'},415);
         const input=JSON.parse(new TextDecoder().decode(await body(request,1024*1024)));
-        if(action==='operation')return reply(await queue.get(input.id));
+        if(action==='operation')return reply(await queue.operationStatus(input.id));
         if(action==='claim')return reply(await queue.claim(input.id,input.claim));
-        if(action==='ack')return reply(await queue.ack(input.id,input.claim,input.result));
+        if(action==='ack')return reply(await queue.ack(input.id,input.claim,input.result,input.applied_after_sequence!==undefined?{applied_after_sequence:input.applied_after_sequence,...input.observed_before!==undefined?{observed_before:input.observed_before}:{},...input.verified_after!==undefined?{verified_after:input.verified_after}:{}}:undefined));
         if(!Array.isArray(input.items)||input.items.length>10000||Object.keys(input).sort().join(',')!=='items,manifest,sequence')return reply({error:'Complete inventory required.'},409);
         coverage(input.manifest);
         if(input.items.filter((i:{kind:string})=>['todo','project'].includes(i.kind)).length!==input.manifest.coverage_evidence.classified_records)return reply({error:'Classification count mismatch.'},409);

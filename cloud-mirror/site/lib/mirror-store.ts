@@ -13,7 +13,7 @@ export async function fingerprint(v:unknown) {return Array.from(new Uint8Array(a
 function decoded(row:Record<string,unknown>):MirrorOperation {return {...row,content:JSON.parse(String(row.content)),result:row.result?JSON.parse(String(row.result)):null} as MirrorOperation;}
 function fail(message:string):never {throw new DemoError(message);}
 function validID(id:unknown):asserts id is string {if(typeof id!=="string"||!id||id.length>128)fail("Invalid ID.");}
-type Manifest={observed_at:string;zone:string;scopes:string[];count:number;page_hashes:string[];coverage:string};
+type Manifest={observed_at:string;zone:string;scopes:string[];count:number;page_hashes:string[];coverage:string;seen_cloud_revision?:number};
 export class MirrorStore {
   constructor(private db:Pick<D1Database,"prepare"|"batch">,private owner:string) {if(!owner)throw new DemoError("Owner context required.",401);}
   stmt(sql:string,...args:unknown[]) {return this.db.prepare(sql).bind(...args);}
@@ -24,6 +24,7 @@ export class MirrorStore {
   }
   async begin(input:{sequence:number;manifest:Manifest}) {
     const {sequence,manifest:m}=input;
+    if(m?.seen_cloud_revision!==undefined&&(!Number.isSafeInteger(m.seen_cloud_revision)||m.seen_cloud_revision<0))fail('Invalid cloud revision.');
     if(!Number.isSafeInteger(sequence)||sequence<1||!m||!Number.isInteger(m.count)||m.count<0||m.count>10000||!Array.isArray(m.page_hashes)||m.page_hashes.length<1||m.page_hashes.length>100||m.page_hashes.some(h=>!/^[a-f0-9]{64}$/.test(h))||!Array.isArray(m.scopes)||!m.scopes.length||new Set(m.scopes).size!==m.scopes.length||m.scopes.some(s=>!kinds.has(s)))fail("Invalid complete inventory manifest.");
     if(!/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(m.observed_at)||!Number.isFinite(Date.parse(m.observed_at))||Date.parse(m.observed_at)>Date.now()+30000)fail("Invalid observation timestamp.");
     try{new Intl.DateTimeFormat("en",{timeZone:m.zone});}catch{fail("IANA timezone required.");}
@@ -69,6 +70,7 @@ export class MirrorStore {
     for(const item of priorItems.values())if(m.scopes.includes(item.kind))updates.push(this.stmt("UPDATE mirror_items SET deleted=1,observed_at=? WHERE owner=? AND id=? AND COALESCE((SELECT sequence FROM mirror_meta WHERE owner=?),0)=?",m.observed_at,this.owner,item.id,this.owner,prior?.sequence??0));
     updates.push(this.stmt("INSERT INTO mirror_meta VALUES(?,?,?,?,?,?) ON CONFLICT(owner) DO UPDATE SET sequence=excluded.sequence,manifest_hash=excluded.manifest_hash,observed_at=excluded.observed_at,received_at=excluded.received_at,zone=excluded.zone WHERE mirror_meta.sequence=? AND mirror_meta.sequence<excluded.sequence",this.owner,sequence,upload.manifest_hash,m.observed_at,at(),m.zone,prior?.sequence??0));
     updates.push(this.stmt("UPDATE mirror_uploads SET committed=1 WHERE owner=? AND sequence=? AND EXISTS(SELECT 1 FROM mirror_meta WHERE owner=? AND sequence=? AND manifest_hash=?)",this.owner,sequence,this.owner,sequence,upload.manifest_hash));
+    if(m.seen_cloud_revision!==undefined)updates.push(this.stmt(`DELETE FROM native_desired_fields WHERE owner=? AND ordinal<=? AND EXISTS(SELECT 1 FROM native_operations o JOIN native_receipt_audit a ON a.owner=o.owner AND a.operation_id=o.id JOIN mirror_items i ON i.owner=o.owner AND i.id=native_desired_fields.target WHERE o.owner=native_desired_fields.owner AND o.id=native_desired_fields.operation_id AND o.state IN ('applied','satisfied') AND ?>json_extract(a.metadata,'$.applied_after_sequence') AND i.deleted=0 AND json_extract(i.fields,'$.'||native_desired_fields.field||'.state')='value' AND json_extract(i.fields,'$.'||native_desired_fields.field||'.value')=json_extract(native_desired_fields.value,'$')) AND EXISTS(SELECT 1 FROM mirror_meta WHERE owner=? AND sequence=? AND manifest_hash=?)`,this.owner,m.seen_cloud_revision,sequence,this.owner,sequence,upload.manifest_hash));
     await this.db.batch(updates);
     if(!(await this.upload(sequence)).committed)fail("Inventory raced another upload; refresh.");return {duplicate:false};
   }

@@ -6,7 +6,7 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-await build({entryPoints:['worker.ts'],outfile:'.test-worker.mjs',bundle:true,platform:'node',format:'esm'});
+await build({entryPoints:['worker.ts'],outfile:'.test-worker.mjs',bundle:true,platform:'node',format:'esm',external:['cloudflare:workers']});
 await build({entryPoints:['d1-bulk.ts','../site/tests/entry.ts'],outdir:'.test-build',outbase:'..',bundle:true,platform:'node',format:'esm'});
 const {fingerprint,MirrorStore}=await import('./.test-build/site/tests/entry.js');
 const {BulkD1}=await import('./.test-build/cloudflare/d1-bulk.js');

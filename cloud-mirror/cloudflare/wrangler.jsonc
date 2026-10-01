@@ -16,8 +16,11 @@
     "LIFEOS_OWNER_ID": "avi-lifeos-owner",
     "LIFEOS_ADAPTER_ID": "avi-mac-things-readonly",
     "LIFEOS_GITHUB_OWNER_ID": "71009876",
-    "LIFEOS_WRITES_ENABLED": "true"
+    "LIFEOS_WRITES_ENABLED": "true",
+    "LIFEOS_CLOUD_WINS_ENABLED": "false"
   },
+  "durable_objects": {"bindings": [{"name": "OWNER_SYNC", "class_name": "OwnerSync"}]},
+  "migrations": [{"tag": "owner-sync-v1", "new_sqlite_classes": ["OwnerSync"]}],
   "d1_databases": [
     {
       "binding": "DB",
