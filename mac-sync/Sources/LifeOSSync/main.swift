@@ -73,7 +73,7 @@ final class Agent: NSObject, NSApplicationDelegate {
             let config = try JSONDecoder().decode(AgentConfig.self, from: Data(contentsOf: directory.appendingPathComponent("config.json")))
             guard FileManager.default.fileExists(atPath: config.appPath) else { throw SyncError.configuration }
             let journal = try Journal(url: directory.appendingPathComponent("journal.json"))
-            engine = SyncEngine(journal: journal, cloud: HTTPSCloud(), things: PublicThings(appPath: config.appPath))
+            engine = SyncEngine(journal: journal, cloud: HTTPSCloud(), things: BulkPublicThings(appPath: config.appPath))
             engine?.onStatus = { [weak self] status in
                 guard let self else { return }
                 _ = status
@@ -162,6 +162,15 @@ final class Agent: NSObject, NSApplicationDelegate {
 }
 
 let args = CommandLine.arguments
+if let position = args.firstIndex(of: "--bulk-inventory") {
+    do {
+        guard args.count == position + 2,
+              let resource = Bundle.main.url(forResource: "things_bulk", withExtension: "scpt") else { throw SyncError.configuration }
+        let inventory = try BulkThingsInventory.read(scriptURL: resource, appPath: args[position + 1])
+        try FileHandle.standardOutput.write(contentsOf: encoded(inventory))
+    } catch { exit(1) }
+    exit(0)
+}
 if args.contains("--authorize-keychain") {
     do {
         _ = try Credential.read(interactive: true)
