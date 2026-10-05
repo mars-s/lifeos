@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">LifeOS orbit mark</title>
+  <desc id="desc">Overlapping charcoal and green elliptical paths on a warm ivory rounded square.</desc>
+  <rect width="256" height="256" rx="56" fill="#F3F1E8"/>
+  <g fill="none" stroke-width="12">
+    <ellipse cx="128" cy="128" rx="91" ry="38" transform="rotate(-48 128 128)" stroke="#20231F"/>
+    <ellipse cx="128" cy="128" rx="91" ry="38" transform="rotate(48 128 128)" stroke="#20231F"/>
+    <ellipse cx="128" cy="128" rx="91" ry="38" transform="rotate(-12 128 128)" stroke="#C4E86B"/>
+  </g>
+  <circle cx="211" cy="75" r="9" fill="#20231F"/>
+</svg>

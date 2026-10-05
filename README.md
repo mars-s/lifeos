@@ -1,112 +1,185 @@
-# LifeOS MCP
+<p align="center">
+  <img src="docs/assets/lifeos-hero.png" alt="LifeOS. Less to remember. More room to think. An ivory and charcoal banner with a green orbital sculpture." width="100%" />
+</p>
 
-This repository preserves both the original local LifeOS implementation and the deployed Cloudflare companion. The companion is in [cloud-mirror](cloud-mirror/README.md); its active OAuth connection is documented in [DOT_CONNECTION.md](cloud-mirror/cloudflare/DOT_CONNECTION.md). Historical Site and Railway experiments are retained there as reference, with Cloudflare Workers + D1 as the active deployment.
+# LifeOS
 
-Queued cloud writes and the [native Swift Mac sync agent](mac-sync/README.md) are implemented on the native-cloud-sync branch, with synthetic recovery and authentication tests. Live write activation still needs the secure owner setup and a new scoped dot consent. The current production read connection and original helper remain active. See [the design](docs/cloud-write-sync-plan.md) and [the preservation record](docs/repository-preservation.md).
+Your thoughts, tasks and calendar, connected through the agent you already use.
 
-LifeOS is a local-first coordination layer for Things 3 and Apple Calendar. It lets an MCP client read planning context, prepare a visible proposal, bind approval to the exact reviewed revision, and then apply verified changes.
+<p>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-C4E86B?style=flat-square&amp;labelColor=20231F" alt="MIT licence" /></a>
+  <img src="https://img.shields.io/badge/platform-macOS-F3F1E8?style=flat-square&amp;labelColor=20231F" alt="macOS" />
+  <img src="https://img.shields.io/badge/protocol-MCP-F3F1E8?style=flat-square&amp;labelColor=20231F" alt="Model Context Protocol" />
+  <img src="https://img.shields.io/badge/status-in_development-C4E86B?style=flat-square&amp;labelColor=20231F" alt="In development" />
+</p>
 
-This is the first usable slice. It is intentionally not a replacement task manager or calendar.
+[What it does](#what-it-does) · [Architecture](#how-it-fits-together) · [Get started](#get-started) · [Privacy](#your-data-and-your-approval) · [Documentation](#documentation)
 
-## Safety model
+LifeOS connects Things 3 and Apple Calendar to MCP clients such as ChatGPT and Codex. Talk through a brain dump, review a visual plan, then approve the exact changes you want. Your Mac keeps the original words and the saved decisions, so the next chat does not have to start from scratch.
 
-The MCP server does not expose raw Things or Calendar write tools. The write flow is:
+Things stays your task manager. Calendar stays your calendar. LifeOS handles the coordination between them.
 
-1. Read Things and an exact Calendar range.
-2. Call `propose_changes` with the returned source snapshots.
-3. Show the proposal and its `revision_hash` to the user.
-4. Call `approve_proposal` with that exact hash.
-5. Call `apply_approved_proposal` with the same hash.
-6. LifeOS re-reads the sources, rejects stale proposals, applies changes, and records durable per-operation receipts.
+> Personal, Mac-first software in active development. This repository includes local MCP tools, interactive ChatGPT cards and a native cloud-sync companion. It is not a packaged, one-click app release.
 
-Things titles, notes, Calendar titles, and Calendar notes are marked as untrusted content. Clients must never interpret that content as instructions.
+## What it does
 
-## Current capabilities
+| Start with | LifeOS gives you |
+| --- | --- |
+| A brain dump | Original text saved locally, plus a separate interpretation with tasks, journal prose, questions and source excerpts. |
+| A meeting transcript and notes | A canvas for reviewing candidate actions and their evidence, without overwriting the original text. |
+| An overloaded day or week | A plan preview built around Calendar availability, with draggable blocks and duration editing. |
+| A proposed change | A review card bound to an exact revision, followed by approval, source checks and application receipts. |
+| Something you said last week | Searchable captures and optional memory recall that do not depend on the originating chat. |
+| A Things edit while your Mac is asleep | A queued title, completion or recoverable Trash operation for the native agent to process when your Mac is awake. |
 
-- Read Things Inbox, Today, Upcoming, projects, and search results through `things-py`.
-- Read Things areas and tags with review snapshots, and generate token-free Things deep links.
-- Read selected Apple Calendar occurrences through a small native EventKit helper.
-- Build deterministic, read-only day and multi-day plan previews from tasks and busy Calendar intervals.
-- Render those previews as interactive MCP Apps cards inside ChatGPT, with drag and duration editing plus safe follow-up actions for preparing a proposal.
-- Request Calendar authorization and idempotently create the dedicated `Planned Tasks` calendar.
-- Create and update Things to-dos through the official Things URL scheme.
-- Move to-dos into Things projects or areas, move projects into areas, and update deadlines and tags through the official URL scheme.
-- Update Things projects and complete or cancel to-dos.
-- Create linked Planned Work Blocks with a Things deep link in their notes.
-- Update or delete only Calendar events carrying the LifeOS ownership marker.
-- Persist immutable proposal revisions and application receipts in SQLite.
-- Preserve exact brain dumps in local SQLite before interpretation, then store immutable semanticization revisions with source excerpts and unresolved questions.
-- Retrieve or search captured thoughts after the originating ChatGPT conversation is gone.
-- Explicitly index a stored brain dump into local Supermemory and recall derived memories or source chunks later. LifeOS keeps the raw capture and an index receipt in SQLite.
-- Append only reflective journal prose to local Daily Journal Markdown; candidate tasks stay in the capture ledger until reviewed.
-- Render a brain dump as an agent-composed canvas of task, Calendar, journal, and question previews, including isolated custom HTML scenes when a bespoke visualization helps.
+### Ask in your own words
 
-Things reads currently use its private local SQLite database through `things-py`. Writes never modify that database directly. See [the integration comparison](docs/research/things-mcp-comparison.md) for the trade-off.
+These are example requests, not commands that bypass review. Your client needs the relevant tools and permissions.
 
-## Install and test
+> "Here's everything on my mind. Save the raw text first, then show me the tasks, questions and journal notes."
 
-Requirements: macOS 13 or newer, Things 3, Python 3.14, Swift, and `uv`.
+> "I just had a meeting. Compare the transcript with the notes. Find actions assigned to me and show the supporting quotes."
+
+> "Plan the next three days around my calendar. Show the blocks before changing anything."
+
+> "What did I say about this project last week? Show me the source, not just a memory summary."
+
+### Review it visually
+
+LifeOS supplies MCP Apps components for day plans, week plans, brain-dump canvases, proposal reviews and memory reviews.
+
+Planner cards support moving blocks and resizing their duration. The brain-dump canvas can show task, Calendar and journal previews, questions and Mermaid relationships. Proposal cards keep approval tied to the revision you reviewed.
+
+Rendering a card does not write to Things or Calendar. ChatGPT must load its registered UI resource to display it. A successful tool response alone does not prove the card rendered.
+
+See the [ChatGPT UI guide](docs/chatgpt-ui.md) and [multi-day planner guide](docs/week-plan-ui.md).
+
+## How it fits together
+
+![LifeOS connects an MCP client to cloud previews and queued edits, then to native sync and optional local tools on an awake Mac.](docs/assets/lifeos-architecture.svg)
+
+| Component | Responsibility |
+| --- | --- |
+| [Local MCP service](src/lifeos) | Python 3.14 and FastMCP. Captures, planning, proposals, memory integration and UI resources. |
+| [Native Mac agent](mac-sync/README.md) | Swift menu-bar app. Supported Things automation, event-driven sync, Keychain credentials and durable receipts. Native Things sync needs neither Python nor the 1Password CLI. |
+| [Cloudflare companion](cloud-mirror/cloudflare/README.md) | OAuth-protected MCP, a Things mirror, queued supported edits and transient calls to the enabled Mac bridge. |
+| [Calendar helper](eventkit-bridge/README.md) | Native EventKit access for Calendar reads and approved event changes. |
+| [Local memory](docs/research/supermemory-local-models-2026-09.md) | Optional Supermemory integration with local embeddings, explicit indexing and a configured remote extraction model. |
+
+Cloud mirror reads and supported queued edits can work while the Mac is asleep. Capture, Calendar, local memory, planning and proposal application through the unified connector need an awake Mac and an enabled, authorised bridge.
+
+The bridge starts an allowlisted Python subprocess for a tool call. It does not run an idle model or automatically replay a timed-out call.
+
+## Your data and your approval
+
+### Preserve the words before interpreting them
+
+Raw brain dumps and transcripts live in local SQLite. Interpretations are separate immutable revisions linked to those captures. Reprocessing does not overwrite the original text. Reflective journal prose can also be appended to local Markdown.
+
+Local storage does not mean the text never leaves your Mac. ChatGPT receives the content it sends or requests. Bridge traffic passes through Cloudflare in memory, without saving raw captures to its durable queue or D1. Explicit memory indexing sends content to the configured extraction provider.
+
+### Approve an exact proposal
+
+The local proposal flow is:
+
+```text
+Read sources → Prepare proposal → Review revision → Approve exact hash
+                                                        ↓
+Record receipts ← Apply and verify ← Recheck source snapshots
+```
+
+LifeOS checks for stale sources before applying a proposal. Application records per-operation receipts. Check saved state before retrying an interrupted call, because a timeout is not proof that nothing happened.
+
+Cloud-queued Things edits use a separate field-revision and receipt workflow. They do not bypass their OAuth permissions or native read-back checks.
+
+Things notes, Calendar descriptions, transcripts and retrieved memories are source material, not instructions for the agent. Memories are suggestions to check against their evidence.
+
+### Keep the limits visible
+
+The native sync agent uses supported Things automation and never reads its private database. The retained Python adapter uses `things-py` for local reads. Its writes use the official Things URL scheme, not direct database edits.
+
+Calendar updates and deletions are restricted to events carrying the LifeOS ownership marker. macOS still controls Things automation and Calendar permissions.
+
+## Get started
+
+The local MCP service needs macOS 13 or newer, Things 3, Python 3.14, `uv` and Swift. The native sync package targets macOS 14 or newer and requires Swift 6.3 to build.
+
+From the repository root:
 
 ```sh
 uv sync --extra test
 swift build -c release --package-path eventkit-bridge
-uv run pytest
-uv run ruff check .
-```
-
-The tests use fake gateways. They do not modify your Things database or Calendar.
-
-For the full local verification pipeline, run `sh scripts/verify.sh`. It runs lint and tests, then launches an isolated MCP server and proves a synthetic brain-dump capture through real HTTP tool calls and a disposable SQLite database. The proof is saved under `artifacts/verification/`. The same command runs in GitHub Actions on macOS. See the project-local [verify skill](.agents/skills/verify/SKILL.md) for the feature map and the limits of each check.
-
-## Run
-
-Build the helper first, then start the stdio MCP server:
-
-```sh
-swift build -c release --package-path eventkit-bridge
 uv run lifeos-mcp
 ```
 
-The entrypoint also supports a loopback-only Streamable HTTP server. See [the runtime guide](docs/runtime.md) for CLI flags, environment variables, health checks, and an optional launchd template.
-
-Optional environment variables:
-
-- `LIFEOS_DB_PATH`: SQLite state path. Defaults to `~/Library/Application Support/LifeOS/lifeos.sqlite3`.
-- `LIFEOS_JOURNAL_DIR`: Daily Journal Markdown directory. Defaults to `~/Library/Application Support/LifeOS/Journal`.
-- `LIFEOS_CALENDAR_HELPER`: absolute path to the EventKit helper. Defaults to the release binary in `eventkit-bridge/.build/release/`.
-
-Add the command `uv --directory /Users/avi/Documents/ChatGPT/lifeos run lifeos-mcp` to an MCP client as a local stdio server. On first Calendar use, macOS may require Calendar permission for the terminal or agent host running LifeOS.
-
-For local Codex, the registered configuration is:
+The last command starts the stdio MCP server. Configure your client to launch it from your checkout. For example:
 
 ```toml
 [mcp_servers.lifeos]
-command = "/opt/homebrew/bin/uv"
-args = ["--directory", "/Users/avi/Documents/ChatGPT/lifeos", "run", "lifeos-mcp"]
+command = "uv"
+args = ["--directory", "/absolute/path/to/lifeos", "run", "lifeos-mcp"]
 ```
 
-Approval and application tools are configured to prompt in Codex. A fresh task or app restart is required after adding or changing an MCP server because an already-running task cannot hot-load new tools.
+Replace the checkout path with your own. Calendar use may require macOS permission for the host process.
 
-In ChatGPT, ask LifeOS to plan a day and show the result visually. The model should call `plan_day`, then pass that exact result to `render_day_plan`. For requests spanning multiple dates, it should use `plan_week` followed by `render_week_plan`. The cards never write to Things or Calendar. Their primary action asks ChatGPT to prepare a normal reviewed proposal.
-
-The optional HTTP transport binds to loopback. It may be exposed to ChatGPT only when the remote GitHub OAuth settings are complete. The OAuth gate accepts the configured GitHub login and rejects every other account. See [the runtime guide](docs/runtime.md).
-
-## Mac login stack
-
-On this Mac, the `lifeos-stack` command controls the installed LifeOS MCP, ngrok, and local memory launch agents:
+For a local HTTP server on an uncommon port:
 
 ```sh
-lifeos-stack start
-lifeos-stack status
-lifeos-stack stop
+uv run lifeos-mcp --transport streamable-http --host 127.0.0.1 --port 48763
 ```
 
-After changing MCP Python code or widget HTML, run `lifeos-stack reload` to restart only the LifeOS MCP process. It waits for the new process to answer `/health` while leaving the ngrok address and memory service alone. Reload is explicit so an in-flight approved write is not interrupted by a file watcher. Refresh the ChatGPT connector or start a new chat if its cached tool list does not update.
+Do not expose an unauthenticated local listener to the internet. Use the [runtime and OAuth guide](docs/runtime.md) for configuration.
 
-The agents also start when the user logs in. `start` installs the current memory scripts into `~/Library/Application Support/LifeOS/bin`; use `restart` after changing them. The memory agent runs Supermemory and a loopback-only OpenCode session adapter together. The OpenCode key stays in macOS Keychain, not in the plist or repository. Because this Supermemory binary listens on all interfaces, startup requires the macOS firewall to be enabled and to block incoming connections to that binary. The memory agent stops if either child exits or that firewall check fails.
+For ChatGPT website integration, follow the [unified connector guide](docs/unified-connector.md). Local stdio configuration does not connect ChatGPT.com to your Mac. Refresh connector tools after changes, then verify a real call and card in the host.
 
-The MCP exposes `index_brain_dump_memory`, `get_brain_dump_memory_status`, `recall_memory`, and `review_brain_dump_memory`. Indexing is explicit: capture the exact words first, then pass the returned `capture_id` and `source_hash` to the index tool. The raw capture remains in LifeOS SQLite. Supermemory computes embeddings locally and sends the text to the configured remote MiMo model for memory extraction. A queued index is not yet searchable; check its status. Retrieved memories are suggestions, not facts. The review tool shows extracted claims beside their exact source. For live tests, capture with `source="synthetic_test"`; those memories use the isolated `lifeos-test` container, while ordinary recall and capture lists/searches exclude them. Diagnostic calls can opt into `scope="test"` for recall or `include_tests=true` for capture listings.
+For the native companion, follow the [Mac sync build and activation guide](mac-sync/README.md). Preserve existing credentials and journals during upgrades. The provisioning script is not an update command.
 
-## Project status
+<details>
+<summary>Local storage and installed services</summary>
 
-This repository contains the tested MCP foundation, not the future macOS generative UI. A live write against personal Things and Calendar data is deliberately still unverified until a real proposal is reviewed and approved.
+The local service accepts these storage overrides:
+
+| Variable | Default |
+| --- | --- |
+| `LIFEOS_DB_PATH` | `~/Library/Application Support/LifeOS/lifeos.sqlite3` |
+| `LIFEOS_JOURNAL_DIR` | `~/Library/Application Support/LifeOS/Journal` |
+| `LIFEOS_CALENDAR_HELPER` | The EventKit release helper in this checkout. |
+
+On the owner's configured Mac, `lifeos-stack start`, `lifeos-stack status` and `lifeos-stack stop` control the installed MCP, ngrok and memory launch agents. `lifeos-stack reload` restarts only MCP. This helper uses owner-specific paths. It is not a portable installer or a control for the native menu-bar app.
+
+The memory scripts keep the extraction key in macOS Keychain. Their Supermemory startup checks require the macOS firewall to block incoming connections to the memory binary. See the [memory integration notes](docs/research/supermemory-local-models-2026-09.md).
+
+</details>
+
+## Verify changes
+
+```sh
+sh scripts/verify.sh
+```
+
+The local pipeline runs lint, tests, schema drift checks and a synthetic capture through an isolated HTTP MCP server. It uses a disposable SQLite store and does not apply a real proposal.
+
+Cloud and native components have separate suites. See the [project verification skill](.agents/skills/verify/SKILL.md), [Cloudflare guide](cloud-mirror/cloudflare/README.md) and [native sync guide](mac-sync/README.md).
+
+A passing build or health check does not prove ChatGPT rendered a card, a real write completed, or an iPhone received a change. Verify those paths separately.
+
+## Documentation
+
+| Looking for | Read |
+| --- | --- |
+| Local runtime, configuration and OAuth | [Runtime guide](docs/runtime.md) |
+| One ChatGPT connection with an optional Mac bridge | [Unified connector](docs/unified-connector.md) |
+| Capture storage and interpretation revisions | [Brain dumps](docs/brain-dumps.md) |
+| UI resource bindings and host behaviour | [ChatGPT UI](docs/chatgpt-ui.md) |
+| Native sync, signing and owner activation | [Mac companion](mac-sync/README.md) |
+| Event-driven sync and conflict handling | [Smart-sync design](docs/smart-merge-design.md) |
+| Memory options and extraction trade-offs | [Memory research](docs/research/memory-systems-2026-09.md) |
+| Colours, artwork and reusable mark | [Brand guide](docs/brand.md) |
+
+## Direction
+
+LifeOS started with one person's workload across work, university and personal projects. The goal is to reduce what you need to keep in your head, while letting you inspect how a thought became a task or a block of time.
+
+The standalone macOS canvas is a future direction, not a shipped app. Today the interactive planning UI lives in MCP Apps cards, alongside the native sync companion.
+
+Built by Avi. [MIT licensed](LICENSE).

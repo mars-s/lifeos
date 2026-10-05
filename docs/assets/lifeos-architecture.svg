@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="490" viewBox="0 0 1120 490" role="img" aria-labelledby="title desc">
+  <title id="title">LifeOS architecture</title>
+  <desc id="desc">An MCP client connects to Cloudflare for previews, a Things mirror and queued edits. Cloudflare connects to an awake Mac for native Things sync and optional local tools. Local tools handle captures, memory, proposals and Calendar. A client can also use the local MCP service directly over stdio.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#68705F"/></marker>
+  </defs>
+  <rect width="1120" height="490" rx="24" fill="#F3F1E8"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" fill="#20231F">
+    <text x="38" y="44" font-size="14" letter-spacing="3">ONE CONVERSATION. CONNECTED CONTEXT.</text>
+    <rect x="38" y="103" width="230" height="142" rx="16" fill="#20231F"/>
+    <text x="60" y="139" font-size="14" fill="#C4E86B">YOUR AGENT</text>
+    <text x="60" y="180" font-size="24" fill="#F3F1E8">ChatGPT or Codex</text>
+    <text x="60" y="213" font-size="15" fill="#D3D8CC">MCP tool calls and cards</text>
+    <rect x="350" y="103" width="288" height="142" rx="16" fill="#E5E8DD" stroke="#CBD1C0"/>
+    <text x="372" y="139" font-size="14" fill="#505A45">CLOUDFLARE</text>
+    <text x="372" y="180" font-size="23">Mirror and previews</text>
+    <text x="372" y="213" font-size="15">OAuth, queued supported edits</text>
+    <rect x="714" y="78" width="368" height="322" rx="20" fill="none" stroke="#A4AF93" stroke-dasharray="5 5"/>
+    <text x="736" y="108" font-size="14" letter-spacing="2">YOUR MAC, AWAKE</text>
+    <rect x="736" y="126" width="324" height="105" rx="12" fill="#C4E86B"/>
+    <text x="756" y="160" font-size="22">Native Things sync</text>
+    <text x="756" y="191" font-size="15">Swift, public automation, receipts</text>
+    <text x="756" y="215" font-size="14">No Python needed for native sync</text>
+    <rect x="736" y="259" width="324" height="120" rx="12" fill="#FFFFFF" stroke="#CBD1C0"/>
+    <text x="756" y="293" font-size="22">Optional local tools</text>
+    <text x="756" y="322" font-size="15">Captures, memory and proposals</text>
+    <text x="756" y="347" font-size="15">Python MCP and EventKit Calendar</text>
+    <path d="M 280 174 H 336" stroke="#68705F" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+    <path d="M 650 174 H 722" stroke="#68705F" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+    <path d="M 638 218 H 675 V 320 H 722" stroke="#68705F" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+    <path d="M 153 257 V 355 H 701 V 345 H 722" stroke="#68705F" stroke-width="2" fill="none" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
+    <rect x="278" y="339" width="290" height="30" rx="8" fill="#F3F1E8"/>
+    <text x="295" y="360" font-size="14">Or connect locally through stdio MCP</text>
+    <text x="38" y="434" font-size="16">Raw captures stay stored on your Mac. Requested text still passes through the client and bridge.</text>
+    <text x="38" y="459" font-size="14" fill="#505A45">Cloud mirror reads and queued edits do not require the Mac to be awake at request time.</text>
+  </g>
+</svg>
