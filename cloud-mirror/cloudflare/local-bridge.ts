@@ -1,7 +1,7 @@
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
 import {ownerSync} from './owner-sync';
-import {localScope, localToolNeedsWrite, localToolSpecs as contracts} from './bridge-contract';
+import {localScope, localToolNeedsWrite, localToolSpecs as contracts, noteToolScopes} from './bridge-contract';
 
 const tools = contracts.map(tool => ({...tool, schema: z.fromJSONSchema(
   tool.inputSchema as Parameters<typeof z.fromJSONSchema>[0]
@@ -9,12 +9,15 @@ const tools = contracts.map(tool => ({...tool, schema: z.fromJSONSchema(
 
 export function registerLocalBridge(server: McpServer, env: Env, scopes: string[], origin: string) {
   for (const tool of tools) {
-    const required = ['things:read', localScope, ...(localToolNeedsWrite(tool.name) ? ['things:write'] : [])];
+    const notes = noteToolScopes(tool.name);
+    // A grant without the notes scopes never sees the note tools at all.
+    if (!notes.every(scope => scopes.includes(scope))) continue;
+    const required = ['things:read', localScope, ...notes, ...(localToolNeedsWrite(tool.name) ? ['things:write'] : [])];
     const resourceUri = tool.name === 'review_brain_dump_memory' ? 'ui://lifeos/cloud-memory-review-v1.html'
       : tool.name === 'render_proposal_review' ? 'ui://lifeos/cloud-proposal-review-v1.html' : undefined;
     const visibility = (tool as {meta?: {ui?: {visibility?: string[]}}}).meta?.ui?.visibility;
     server.registerTool(tool.name, {
-      description: `${tool.description} Runs on your awake Mac. Raw captures remain in local storage. A timeout is not proof that a write failed.`,
+      description: `${tool.description} Runs on your awake Mac.${notes.length ? ' Notes stay in Bana on the Mac; this service passes them through in memory only.' : ' Raw captures remain in local storage.'} A timeout is not proof that a write failed.`,
       inputSchema: tool.schema,
       annotations: tool.annotations,
       _meta: {securitySchemes: [{type: 'oauth2', scopes: required}],

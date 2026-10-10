@@ -12,7 +12,10 @@ await build({entryPoints:['mcp-entry.ts'],outfile:'.test-mcp.mjs',bundle:true,pl
 const origin='https://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev',resource=origin+'/mcp';
 const dir=await mkdtemp(join(tmpdir(),'lifeos-mcp-fixture-'));
 const hash=s=>createHash('sha256').update(s).digest('hex');
-const localNames=JSON.parse(await readFile('local-tool-contracts.json','utf8')).map(tool=>tool.name);
+const allLocalNames=JSON.parse(await readFile('local-tool-contracts.json','utf8')).map(tool=>tool.name);
+// Note tools are listed only for grants with the notes scopes.
+const isNoteTool=name=>/^notes_|^promote_notes_/.test(name);
+const localNames=allLocalNames.filter(name=>!isNoteTool(name)),noteNames=allLocalNames.filter(isNoteTool);
 let userId=42,upstreamScope='',upstreamCalls=0;
 const mf=new Miniflare({...convertV4MiniflareOptions({modules:true,script:await readFile('.test-mcp.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],kvNamespaces:['OAUTH_KV'],d1Databases:{DB:'fixture'},bindings:{LIFEOS_OWNER_ID:'fixture-owner',LIFEOS_ADAPTER_ID:'fixture-mac',LIFEOS_GITHUB_OWNER_ID:'42',GITHUB_CLIENT_ID:'SYNTHETIC-client',GITHUB_CLIENT_SECRET:'SYNTHETIC-secret',LIFEOS_SYNC_KEY_SHA256:hash('SYNTHETIC-sync-fixture-only-at-least-32-characters'),LIFEOS_READ_KEY_SHA256:hash('SYNTHETIC-read-fixture-only-at-least-32-characters')},outboundService:async req=>{
   upstreamCalls++;const url=new URL(req.url);
@@ -87,7 +90,8 @@ try {
    assert.match(sdk.getInstructions(),/use create_requested_task directly/);
    assert.match(sdk.getInstructions(),/do not prepare a proposal or ask for a second LifeOS approval/);
    assert.match(sdk.getInstructions(),/Never bypass platform permissions/);
-   const tools=await sdk.listTools();assert.deepEqual(tools.tools.map(t=>t.name),['render_day_plan','render_week_plan','render_brain_dump_canvas',...localNames,'get_lifeos_capabilities','read_things_mirror']);assert.equal(tools.tools.find(tool=>tool.name==='read_things_mirror').annotations.readOnlyHint,true);
+   const tools=await sdk.listTools();assert.deepEqual(tools.tools.map(t=>t.name),['render_day_plan','render_week_plan','render_brain_dump_canvas',...localNames,'get_lifeos_capabilities','read_things_mirror']);
+   assert.equal(noteNames.length,9);assert.ok(tools.tools.every(t=>!isNoteTool(t.name)));assert.equal(tools.tools.find(tool=>tool.name==='read_things_mirror').annotations.readOnlyHint,true);
    const capabilities=(await sdk.callTool({name:'get_lifeos_capabilities',arguments:{}})).structuredContent;
    assert.equal(capabilities.local_tools_available,false);
    assert.equal(capabilities.connection_can_write,false);

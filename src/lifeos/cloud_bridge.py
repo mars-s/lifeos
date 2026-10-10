@@ -25,6 +25,9 @@ LOCAL_TOOLS = frozenset({
     "propose_changes", "get_proposal", "render_proposal_review",
     "approve_proposal", "reject_proposal", "apply_approved_proposal", "create_requested_task",
     "read_requested_task", "update_requested_task", "trash_requested_task",
+    # Bana notes. The Worker lists these only for grants with the notes / notes:write scopes.
+    "notes_search", "notes_read", "notes_today", "notes_add", "notes_tag", "notes_set_field",
+    "notes_move", "notes_link_task", "promote_notes_to_things",
 })
 MAX_BYTES = 256 * 1024
 

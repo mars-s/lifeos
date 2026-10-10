@@ -1,6 +1,7 @@
 import {build} from 'esbuild';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
-import {readFile,mkdtemp,rm} from 'node:fs/promises';
+import {readFile,mkdtemp,rm,readdir} from 'node:fs/promises';
+import {DatabaseSync} from 'node:sqlite';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {test} from 'node:test';
@@ -14,13 +15,28 @@ const dir=await mkdtemp(join(tmpdir(),'native-sync-fixture-'));
 const origin='https://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev',resource=origin+'/mcp';
 const agent='SYNTHETIC-native-agent-at-least-32-characters',sync='SYNTHETIC-old-upload-at-least-32-characters';
 const hash=s=>createHash('sha256').update(s).digest('hex');
-const localNames=JSON.parse(await readFile('local-tool-contracts.json','utf8')).map(tool=>tool.name);
+const allLocalNames=JSON.parse(await readFile('local-tool-contracts.json','utf8')).map(tool=>tool.name);
+// Note tools are listed only for grants with the notes scopes.
+const isNoteTool=name=>/^notes_|^promote_notes_/.test(name);
+const localNames=allLocalNames.filter(name=>!isNoteTool(name)),noteNames=allLocalNames.filter(isNoteTool);
 const mf=new Miniflare({...convertV4MiniflareOptions({modules:true,script:await readFile('.test-native.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],durableObjects:{OWNER_SYNC:{className:'OwnerSync',useSQLite:true}},kvNamespaces:['OAUTH_KV'],d1Databases:{DB:'native'},bindings:{LIFEOS_OWNER_ID:'fixture-owner',LIFEOS_ADAPTER_ID:'fixture-mac',LIFEOS_GITHUB_OWNER_ID:'42',GITHUB_CLIENT_ID:'SYNTHETIC-client',GITHUB_CLIENT_SECRET:'SYNTHETIC-secret',LIFEOS_AGENT_KEY_SHA256:hash(agent),LIFEOS_SYNC_KEY_SHA256:hash(sync),LIFEOS_WRITES_ENABLED:'true'},outboundService:async req=>new URL(req.url).hostname==='api.github.com'?Response.json({id:42}):Response.json({access_token:'SYNTHETIC-upstream',token_type:'bearer',scope:''})}),resourcePersistencePath:dir});
 async function native(path,body,key=agent,extra={}) {return mf.dispatchFetch(origin+'/api/native/'+path,{method:body?'POST':'GET',headers:{'X-LifeOS-Agent-Key':key,'Content-Type':'application/json',...extra},body:body?JSON.stringify(body):undefined});}
 const lists=['TMInboxListSource','TMTodayListSource','TMCalendarListSource','TMNextListSource','TMSomedayListSource','TMLogbookListSource','TMTrashListSource'];
 const item=(id,title='Fixture title')=>({id,kind:'todo',fields:{title:{state:'value',value:title},status:{state:'value',value:'open'},in_trash_list:{state:'value',value:false}}});
 async function snapshot(sequence,items){return native('snapshot',{sequence,items,manifest:{observed_at:new Date().toISOString(),zone:'Australia/Melbourne',scopes:['todo','project','area','tag'],coverage:'public-top-level-and-all-lists-v2',coverage_evidence:{consistent_passes:2,classified_records:items.length,list_ids:lists}}});}
-async function connect(scope,includeWrites=false,includeLocal=false){
+// Every table of every SQLite file Miniflare persisted (D1, KV and Durable Object storage),
+// plus all raw bytes, so a test can prove a call stored nothing anywhere.
+async function storage(){
+ const tables={},bytes=[];
+ for(const entry of await readdir(dir,{recursive:true,withFileTypes:true})){
+  if(!entry.isFile())continue;const path=join(entry.parentPath,entry.name),data=await readFile(path);bytes.push(data);
+  if(!data.subarray(0,15).equals(Buffer.from('SQLite format 3')))continue;
+  const db=new DatabaseSync(path,{readOnly:true});
+  try{for(const {name} of db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all())tables[path+':'+name]=db.prepare(`SELECT * FROM "${name}"`).all();}finally{db.close();}
+ }
+ return {tables:JSON.stringify(tables),text:Buffer.concat(bytes).toString('latin1')};
+}
+async function connect(scope,includeWrites=false,includeLocal=false,extra={}){
  const cookies=new Map();
  async function req(path,body,headers={}){const r=await mf.dispatchFetch(origin+path,{method:body?'POST':'GET',redirect:'manual',headers:{Cookie:[...cookies].map(([k,v])=>k+'='+v).join('; '),...(body?{'Content-Type':'application/x-www-form-urlencoded'}:{}),...headers},body});for(const c of r.headers.getSetCookie()){const pair=c.split(';')[0],p=pair.indexOf('=');cookies.set(pair.slice(0,p),pair.slice(p+1));}return r;}
  const reg=await req('/oauth/register',JSON.stringify({client_name:'Synthetic native test',redirect_uris:['https://chatgpt.com/connector/oauth/callback'],token_endpoint_auth_method:'none',grant_types:['authorization_code','refresh_token'],response_types:['code']}),{'Content-Type':'application/json'});
@@ -28,7 +44,7 @@ async function connect(scope,includeWrites=false,includeLocal=false){
  const page=await req('/authorize?'+new URLSearchParams({response_type:'code',client_id:client,redirect_uri:'https://chatgpt.com/connector/oauth/callback',scope,state:'fixture',resource,code_challenge: createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256'}));assert.equal(page.status,200);const html=await page.text();
  if(scope.includes('things:write'))assert.match(html,/Things wins/);
  if(includeWrites)assert.match(html,/name="queued_writes"/);
- const upstream=await req('/authorize',new URLSearchParams({handle:html.match(/name="handle" value="([^"]+)"/)[1],decision:'allow',...(includeWrites?{queued_writes:'allow'}:{}),...(includeLocal?{local_tools:'allow'}:{})}),{Origin:origin});assert.equal(upstream.status,200);
+ const upstream=await req('/authorize',new URLSearchParams({handle:html.match(/name="handle" value="([^"]+)"/)[1],decision:'allow',...(includeWrites?{queued_writes:'allow'}:{}),...(includeLocal?{local_tools:'allow'}:{}),...extra}),{Origin:origin});assert.equal(upstream.status,200);
  const continuation=await upstream.text(),github=new URL(continuation.match(/href="([^"]+)"/)[1].replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n))));assert.equal(github.origin,'https://github.com');
  const callback=await req('/callback?'+new URLSearchParams({code:'fixture-code',state:github.searchParams.get('state')}));
  const code=new URL(callback.headers.get('location')).searchParams.get('code');
@@ -108,6 +124,32 @@ try {
      for(const table of ['native_operations','native_changes','mirror_items']){
       const rows=(await db.prepare(`SELECT * FROM ${table}`).all()).results;assert.ok(!JSON.stringify(rows).includes(raw));
      }
+     // Notes: only grants with the notes scopes see note tools, and a note call stores nothing.
+     assert.ok((await local.sdk.listTools()).tools.every(t=>!isNoteTool(t.name)));
+     const reader=await connect('things:read offline_access',false,true,{notes:'allow'});
+     const writer=await connect('things:read offline_access',false,true,{notes:'allow',notes_write:'allow'});
+     try {
+      assert.ok(reader.access.scope.split(' ').includes('notes'));assert.ok(!reader.access.scope.split(' ').includes('notes:write'));
+      assert.ok(writer.access.scope.split(' ').includes('notes:write'));
+      const readable=(await reader.sdk.listTools()).tools.map(t=>t.name).filter(isNoteTool);
+      assert.deepEqual(readable.sort(),['notes_read','notes_search','notes_today']);
+      assert.deepEqual((await writer.sdk.listTools()).tools.map(t=>t.name).filter(isNoteTool).sort(),[...noteNames].sort());
+      assert.equal((await reader.sdk.callTool({name:'notes_add',arguments:{request_id:'x',name:'x',by:'chatgpt'}})).isError,true);assert.equal(messages.length,0);
+      const secret='SYNTHETIC-NOTE-TEXT-NEVER-STORED',before=await storage();
+      // The snapshot really covers D1 (native_operations), DO storage (intents) and KV (entries).
+      for(const table of [/:native_operations"/,/:intents"/,/:_mf_entries"/])assert.match(before.tables,table);
+      const searching=reader.sdk.callTool({name:'notes_search',arguments:{query:secret}});
+      const asked=await take();assert.equal(asked.tool,'notes_search');assert.deepEqual(asked.arguments,{query:secret,limit:20});
+      socket.send(JSON.stringify({version:3,type:'local_tool_result',id:asked.id,result:{content:[{type:'text',text:secret}],structuredContent:{results:[{id:7,line:secret}],count:1,content_is_untrusted:true},isError:false}}));
+      assert.equal((await searching).structuredContent.results[0].line,secret);
+      const adding=writer.sdk.callTool({name:'notes_add',arguments:{request_id:'synthetic-note',name:secret,by:'chatgpt'}});
+      const added=await take();assert.equal(added.tool,'notes_add');
+      socket.send(JSON.stringify({version:3,type:'local_tool_result',id:added.id,result:{content:[{type:'text',text:'saved'}],structuredContent:{saved:true,node_id:'8'},isError:false}}));
+      assert.equal((await adding).structuredContent.saved,true);
+      const after=await storage();
+      assert.equal(after.tables,before.tables,'D1, KV and Durable Object tables are unchanged');
+      assert.ok(!after.text.includes(secret),'note text is not in any persisted file');
+     } finally {await reader.sdk.close();await writer.sdk.close();}
      const lost=local.sdk.callTool({name:'get_brain_dump',arguments:{capture_id:'fixture-local'}});await take();socket.close(1000,'synthetic disconnect');
      const unknown=await lost;assert.equal(unknown.isError,true);assert.match(unknown.content[0].text,/outcome may be unknown/);
     }finally{await local.sdk.close();}
