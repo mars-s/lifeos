@@ -120,7 +120,8 @@ def test_notes_add_twice_with_one_request_id_makes_one_node(bana, tmp_path):
     assert [hit["id"] for hit in gateway.search("Buy bean seeds")] == [int(first["node_id"])]
     node = service.notes_read(first["node_id"])["node"]
     assert node["tags"] == ["task"]
-    assert node["fields"]["By"] == "chatgpt" and node["fields"]["Request ID"] == "add-1"
+    # Bana records the author itself, from the X-Bana-Agent header.
+    assert node["by"] == "chatgpt" and node["fields"]["Request ID"] == "add-1"
     with pytest.raises(IdempotencyConflict):
         service.notes_add(request_id="add-1", name="Something else", by="chatgpt")
     # An invented supertag is refused; LifeOS never makes tags for an agent.
@@ -226,7 +227,7 @@ def test_capture_then_interpret_twice(bana, tmp_path):
     evidence = [
         item["fields"]["Evidence"]
         for node in interpretations for item in node.get("children", [])
-        if "Evidence" in item.get("fields", {})
+        if item.get("fields", {}).get("Evidence")  # template fields can be empty
     ]
     assert len(evidence) == 4 and all(quote in RAW for quote in evidence)
     kinds = {tag for item in interpretations[0]["children"] for tag in item.get("tags", [])}
@@ -337,3 +338,18 @@ def test_editing_the_note_after_approval_makes_apply_stale(bana, tmp_path):
     assert result["state"] == "stale"
     assert things.created == []
     assert "in-things" not in service.notes_read(node)["node"].get("tags", [])
+
+
+@needs_bana
+def test_agent_notebook_template_is_installed_once(bana, tmp_path):
+    gateway, home = bana
+    first = service_for(tmp_path, gateway)
+    first.notes_add(request_id="t1", name="One", by="claude")
+    # A fresh gateway (a new LifeOS process) finds the supertags and does not install again.
+    (tmp_path / "other").mkdir()
+    second = service_for(tmp_path / "other", BanaGateway(home))
+    two = second.notes_add(request_id="t2", name="Two", by="codex")["node_id"]
+    assert {"capture", "suggested-action", "in-things", "ask-agent"} <= gateway.tags()
+    pages = [hit for hit in gateway.search("Agent notebook") if hit["line"].startswith("Agent notebook")]
+    assert len(pages) == 1
+    assert gateway.inspect(two)["by"] == "codex"

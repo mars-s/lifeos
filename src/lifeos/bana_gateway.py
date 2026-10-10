@@ -21,7 +21,10 @@ from .models import canonical_json
 
 # Tier 0 (read) and the write commands the note tools and proposals use. Nothing else.
 READ_COMMANDS = frozenset({"graph.search", "graph.inspect", "graph.tags", "export.markdown", "nav.day"})
-WRITE_COMMANDS = frozenset({"node.add", "node.setDescription", "node.move", "tag.add", "field.add", "field.set"})
+WRITE_COMMANDS = frozenset({
+    "node.add", "node.setDescription", "node.move", "tag.add", "field.add", "field.set",
+    "template.install",  # only the Agent notebook template, see run()
+})
 ALLOWED_COMMANDS = READ_COMMANDS | WRITE_COMMANDS
 # Never: listed so a test can prove none of them is reachable, not to filter at run time.
 NEVER_COMMANDS = frozenset({
@@ -32,11 +35,12 @@ NEVER_PREFIXES = ("file.", "settings.", "workspace.", "commandNode.", "trash.", 
 assert not ALLOWED_COMMANDS & NEVER_COMMANDS
 assert not any(command.startswith(NEVER_PREFIXES) for command in ALLOWED_COMMANDS)
 
-# Supertags LifeOS writes. tag.add makes a missing one, so these exist after first use even
-# before the Bana template is installed.
+# Bana's "Agent notebook" template defines these supertags and their fields. LifeOS installs it
+# once, before its first write, if any of them is missing (installing again adds a page).
+TEMPLATE = "Agent notebook"
 LIFEOS_TAGS = frozenset({
     "capture", "interpretation", "suggested-action", "question", "meeting", "thing", "event",
-    "proposal", "task", "in-things",
+    "proposal", "in-things", "ask-agent",
 })
 
 
@@ -45,7 +49,11 @@ class BanaUnavailable(RuntimeError):
 
 
 class BanaError(RuntimeError):
-    """Bana answered but the command failed."""
+    """Bana answered but the command failed (a locked node says "not available: ...")."""
+
+
+class BanaRefused(BanaError):
+    """Bana's own agent rules refused the command (its text starts with "refused:")."""
 
 
 def node_hash(tree: Mapping[str, Any]) -> str:
@@ -64,6 +72,7 @@ class BanaGateway:
     def __init__(self, home: str | Path | None = None, *, timeout: float = 15.0) -> None:
         self._home = Path(home or os.environ.get("BANA_HOME") or Path.home() / "Bana")
         self._timeout = timeout
+        self._template_ready = False
 
     def _endpoint(self) -> tuple[int, str]:
         try:
@@ -76,9 +85,12 @@ class BanaGateway:
             raise BanaUnavailable("Bana's local token is missing.")
         return port, token
 
-    def run(self, command: str, params: Mapping[str, Any] | None = None) -> Any:
+    def run(self, command: str, params: Mapping[str, Any] | None = None, *, agent: str = "lifeos") -> Any:
+        """agent: who Bana records as the author of a write (X-Bana-Agent)."""
         if command not in ALLOWED_COMMANDS:
             raise PermissionError(f"LifeOS does not run the Bana command {command!r}")
+        if command == "template.install" and (params or {}).get("name") != TEMPLATE:
+            raise PermissionError("LifeOS installs only the Agent notebook template")
         port, token = self._endpoint()
         body = {
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -86,7 +98,10 @@ class BanaGateway:
         }
         request = urllib.request.Request(
             f"http://127.0.0.1:{port}/mcp", data=json.dumps(body).encode(), method="POST",
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                "X-Bana-Agent": agent,
+            },
         )
         try:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
@@ -101,7 +116,7 @@ class BanaGateway:
         result = reply.get("result", {})
         if result.get("isError"):
             text = "".join(item.get("text", "") for item in result.get("content", []))
-            raise BanaError(text or "Bana command failed")
+            raise (BanaRefused if text.startswith("refused:") else BanaError)(text or "Bana command failed")
         content = result.get("structuredContent", {})
         return content["result"] if set(content) == {"result"} else content
 
@@ -138,26 +153,33 @@ class BanaGateway:
         return {str(tag["name"]) for tag in self.run("graph.tags")}
 
     # Writes (tier 1 and 2). Callers decide whether a write needs a proposal.
+    def ensure_template(self) -> None:
+        if not self._template_ready:
+            if not self.tags() >= LIFEOS_TAGS:
+                self.run("template.install", {"name": TEMPLATE})
+            self._template_ready = True
+
     def add(
         self, *, name: str, parent: str | int, tags: tuple[str, ...] = (),
         fields: Mapping[str, str] | None = None, description: str | None = None,
+        agent: str = "lifeos",
     ) -> int:
-        node = int(self.run("node.add", {"name": name, "parent": parent})["id"])
+        node = int(self.run("node.add", {"name": name, "parent": parent}, agent=agent)["id"])
         if description:
-            self.run("node.setDescription", {"node": node, "text": description})
+            self.run("node.setDescription", {"node": node, "text": description}, agent=agent)
         for tag in tags:
-            self.tag(node, tag)
+            self.tag(node, tag, agent=agent)
         for field, value in (fields or {}).items():
-            self.set_field(node, field, value)
+            self.set_field(node, field, value, agent=agent)
         return node
 
-    def tag(self, node_id: str | int, tag: str) -> None:
-        self.run("tag.add", {"node": int(node_id), "tag": tag})
+    def tag(self, node_id: str | int, tag: str, *, agent: str = "lifeos") -> None:
+        self.run("tag.add", {"node": int(node_id), "tag": tag}, agent=agent)
 
-    def set_field(self, node_id: str | int, field: str, value: str) -> None:
+    def set_field(self, node_id: str | int, field: str, value: str, *, agent: str = "lifeos") -> None:
         # field.add makes the field on the node if it has none; field.set writes the value.
-        self.run("field.add", {"node": int(node_id), "field": field})
-        self.run("field.set", {"node": int(node_id), "field": field, "value": str(value), "keep": True})
+        self.run("field.add", {"node": int(node_id), "field": field}, agent=agent)
+        self.run("field.set", {"node": int(node_id), "field": field, "value": str(value), "keep": True}, agent=agent)
 
-    def move(self, node_id: str | int, parent: str | int) -> None:
-        self.run("node.move", {"node": int(node_id), "parent": int(parent)})
+    def move(self, node_id: str | int, parent: str | int, *, agent: str = "lifeos") -> None:
+        self.run("node.move", {"node": int(node_id), "parent": int(parent)}, agent=agent)

@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import asdict, is_dataclass
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from enum import Enum
 from hashlib import sha256
 from typing import Any
@@ -109,7 +109,7 @@ class LifeOSService:
             "description": capture["raw_text"],
             "fields": {
                 "Capture ID": capture["capture_id"], "Source hash": capture["source_hash"],
-                "By": "lifeos", "Request ID": f"capture-{capture['capture_id']}",
+                "Request ID": f"capture-{capture['capture_id']}",
             },
         })
         try:
@@ -146,12 +146,16 @@ class LifeOSService:
         """One new node per interpretation (old ones are never rewritten), children per item."""
         parent = self._capture_node(capture)
         by = str(revision["interpreted_by"])
-        common = {"Capture ID": capture["capture_id"], "Source hash": capture["source_hash"], "By": by}
+        common = {"Capture ID": capture["capture_id"], "Source hash": capture["source_hash"]}
         changes = [BanaChange("add", None, {
             "name": meeting_title or f"Interpretation {revision['revision_number']} by {by}",
-            "parent": parent,
+            "parent": parent, "by": by,
             "tags": ["interpretation", *(["meeting"] if meeting_title else [])],
-            "fields": {**common, "Request ID": f"interp-{revision['revision_hash'][:40]}"},
+            "fields": {
+                **common, "Revision hash": revision["revision_hash"],
+                "Request ID": f"interp-{revision['revision_hash'][:40]}",
+                **({"Date": capture["captured_at"][:10]} if meeting_title else {}),
+            },
             **({"description": revision["summary"]} if revision.get("summary") else {}),
         })]
         tag_for = {"task": "suggested-action", "project": "suggested-action", "question": "question"}
@@ -165,21 +169,21 @@ class LifeOSService:
             if item.get("source_excerpt"):
                 fields["Evidence"] = item["source_excerpt"]
             changes.append(BanaChange("add", None, {
-                "name": item["title"], "parent_change_index": 0,
+                "name": item["title"], "parent_change_index": 0, "by": by,
                 "tags": [tag_for[item["kind"]]] if item["kind"] in tag_for else [],
                 "fields": fields,
                 **({"description": "\n".join(d for d in details if d)} if any(details) else {}),
             }))
         for question in revision["unresolved"]:
             changes.append(BanaChange("add", None, {
-                "name": question, "parent_change_index": 0, "tags": ["question"], "fields": common,
+                "name": question, "parent_change_index": 0, "by": by, "tags": ["question"], "fields": common,
             }))
         if revision.get("journal_entry"):
             changes.append(BanaChange("add", None, {
                 "name": f"Journal {capture['captured_at'][11:16]}",
                 "parent": capture["captured_at"][:10],
                 "description": revision["journal_entry"],
-                "fields": common,
+                "fields": common, "by": by,
             }))
         result = self._direct_notes(f"interp-{revision['revision_hash'][:40]}", (), tuple(changes))
         nodes = [str(receipt["node"]) for receipt in result["receipts"] if receipt]
@@ -1120,7 +1124,8 @@ class LifeOSService:
         tags = [self._existing_tag(tag)] if tag else []
         fields: dict[str, Any] = {
             "name": name, "parent": parent, "tags": tags,
-            "fields": {"By": by, "Request ID": request_id},
+            "fields": {"Request ID": request_id},
+            "by": by,
         }
         if description:
             fields["description"] = description
@@ -1224,8 +1229,10 @@ class LifeOSService:
 
     def _apply_bana(self, proposal_id: str, revision_hash: str, change: BanaChange) -> dict[str, Any]:
         bana = self._notes()
+        bana.ensure_template()
         fields = dict(change.fields)
         by = fields.pop("by", None)
+        agent = str(by or "lifeos")
         if change.operation == "add":
             parent = fields.get("parent", "today")
             if "parent_change_index" in fields:  # a node made earlier in this same proposal
@@ -1236,7 +1243,7 @@ class LifeOSService:
             node = bana.add(
                 name=str(fields["name"]), parent=parent,
                 tags=tuple(fields.get("tags", ())), fields=fields.get("fields"),
-                description=fields.get("description"),
+                description=fields.get("description"), agent=agent,
             )
             tree = bana.inspect(node)
             if tree.get("name") != fields["name"] or not set(fields.get("tags", ())) <= set(tree.get("tags", [])):
@@ -1245,12 +1252,12 @@ class LifeOSService:
         node = _node_id(str(change.node_id))
         expected: dict[str, Any] = {}
         if change.operation == "tag":
-            bana.tag(node, str(fields["tag"]))
+            bana.tag(node, str(fields["tag"]), agent=agent)
         elif change.operation == "set_field":
-            bana.set_field(node, str(fields["field"]), str(fields["value"]))
+            bana.set_field(node, str(fields["field"]), str(fields["value"]), agent=agent)
             expected[str(fields["field"])] = str(fields["value"])
         elif change.operation == "move":
-            bana.move(node, _node_id(str(fields["parent"])))
+            bana.move(node, _node_id(str(fields["parent"])), agent=agent)
         elif change.operation == "link_task":
             things_id = fields.get("things_id")
             if things_id is None:
@@ -1262,9 +1269,10 @@ class LifeOSService:
             if not things_id:
                 raise ApplyError("the Things to-do to link has no id")
             expected = {"Things ID": str(things_id), "Things link": f"things:///show?id={things_id}"}
-            for field, value in {**expected, "Synced at": datetime.now(UTC).isoformat()}.items():
-                bana.set_field(node, field, value)
-            bana.tag(node, "in-things")
+            # Synced at is a date field in the Agent notebook template.
+            for field, value in {**expected, "Synced at": date.today().isoformat()}.items():
+                bana.set_field(node, field, value, agent=agent)
+            bana.tag(node, "in-things", agent=agent)
         tree = bana.inspect(node)
         ok = all(tree.get("fields", {}).get(key) == value for key, value in expected.items())
         if change.operation in {"tag", "link_task"}:
