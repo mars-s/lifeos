@@ -1,6 +1,6 @@
 """`lifeos`: commands that must not depend on an MCP host.
 
-`lifeos export-journal [--date D]` writes a Bana day page to LIFEOS_JOURNAL_DIR (launchd runs it).
+`lifeos export-journal [--date D]` writes an Anytype journal day to LIFEOS_JOURNAL_DIR (launchd runs it).
 
 `lifeos approve|reject <proposal_id> <revision_hash>` is the fallback when a host does not
 render the review card. It needs an interactive terminal and the first 8 characters of the
@@ -23,7 +23,7 @@ def _summary(revision) -> str:
     for domain, changes in (
         ("Things", revision.things_changes),
         ("Calendar", revision.calendar_changes),
-        ("Bana", getattr(revision, "bana_changes", ())),
+        ("Anytype", revision.note_changes),
     ):
         for change in changes:
             lines.append(f"  {domain}: {json.dumps(change.to_dict(), ensure_ascii=False)}")
@@ -42,20 +42,21 @@ def main(
         command = commands.add_parser(name, help=f"{name} one exact proposal revision")
         command.add_argument("proposal_id")
         command.add_argument("revision_hash")
-    export = commands.add_parser("export-journal", help="write a Bana day page to the journal folder")
+    export = commands.add_parser("export-journal", help="write an Anytype journal day to the journal folder")
     export.add_argument("--date", help="YYYY-MM-DD (default: today)")
     args = parser.parse_args(argv)
     config = parse_runtime_config([])
 
     if args.command == "export-journal":
-        from .bana_gateway import BanaGateway
+        from .anytype_gateway import build_gateway
         from .brain_dump_store import BrainDumpStore
         from .service import LifeOSService
 
-        # Only Bana and the journal folder: no Things or Calendar access is needed.
+        # Only Anytype and the journal folder: no Things or Calendar access is needed.
         service = LifeOSService(
             ProposalStore(config.database_path), None, None,
-            BrainDumpStore(config.database_path, config.journal_dir), bana=BanaGateway(),
+            BrainDumpStore(config.database_path, config.journal_dir),
+            anytype=build_gateway(config.database_path),
         )
         print(json.dumps(service.export_journal(args.date)))
         return 0

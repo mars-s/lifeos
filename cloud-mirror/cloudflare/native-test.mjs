@@ -99,7 +99,7 @@ try {
      const operationCount=await db.prepare('SELECT COUNT(*) AS n FROM native_operations').first('n');
      const call=local.sdk.callTool({name:'capture_brain_dump',arguments:{raw_text:raw,idempotency_key:'synthetic-local-key'}});
      const message=await take();assert.equal(message.tool,'capture_brain_dump');assert.equal(message.arguments.raw_text,raw);
-     // lifeos:local without notes:write: the Mac is told not to write the capture into Bana.
+     // lifeos:local without notes:write: the Mac is told not to write the capture into Anytype.
      assert.deepEqual(message.arguments._lifeos_grant,{notes_write:false});
      assert.equal((await local.sdk.callTool({name:'get_brain_dump',arguments:{capture_id:'another'}})).isError,true);
      socket.send(JSON.stringify({version:3,type:'local_tool_result',id:message.id,result:{content:[{type:'text',text:'Captured locally'}],structuredContent:{capture_id:'fixture-local',source_hash:'fixture-hash'},isError:false}}));
@@ -142,7 +142,7 @@ try {
       assert.ok(reader.access.scope.split(' ').includes('notes'));assert.ok(!reader.access.scope.split(' ').includes('notes:write'));
       assert.ok(writer.access.scope.split(' ').includes('notes:write'));
       const readable=(await reader.sdk.listTools()).tools.map(t=>t.name).filter(isNoteTool);
-      assert.deepEqual(readable.sort(),['notes_read','notes_search','notes_today']);
+      assert.deepEqual(readable.sort(),['notes_list_types','notes_read','notes_search','notes_today']);
       assert.deepEqual((await writer.sdk.listTools()).tools.map(t=>t.name).filter(isNoteTool).sort(),[...noteNames].sort());
       assert.equal((await reader.sdk.callTool({name:'notes_add',arguments:{request_id:'x',name:'x',by:'chatgpt'}})).isError,true);assert.equal(messages.length,0);
       const secret='SYNTHETIC-NOTE-TEXT-NEVER-STORED',before=await storage();

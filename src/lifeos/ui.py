@@ -76,7 +76,7 @@ class WeekPlanWidgetOutput(BaseModel):
 class ProposalSourceSnapshotView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    system: Literal["things", "calendar_range", "bana"]
+    system: Literal["things", "calendar_range", "anytype"]
     record_id: str = Field(min_length=1)
     version: str | None = None
     data: dict[str, object] = Field(default_factory=dict)
@@ -101,11 +101,11 @@ class ProposalCalendarChangeView(BaseModel):
     destructive: bool = False
 
 
-class ProposalBanaChangeView(BaseModel):
+class ProposalNoteChangeView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    operation: Literal["add", "tag", "set_field", "move", "link_task"]
-    node_id: str | None = None
+    operation: Literal["add", "journal", "tag", "set_field", "move", "link_task"]
+    object_id: str | None = None
     fields: dict[str, object] = Field(default_factory=dict)
 
 
@@ -133,7 +133,7 @@ class ProposalReviewOutput(BaseModel):
     created_at: str
     approved_revision_hash: str | None = None
     failure_detail: str | None = None
-    bana_changes: list[ProposalBanaChangeView] = Field(default_factory=list)
+    note_changes: list[ProposalNoteChangeView] = Field(default_factory=list)
 
 
 class CanvasItemView(BaseModel):

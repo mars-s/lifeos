@@ -14,6 +14,7 @@ public enum LocalToolContract {
         "list_calendars",
         "notes_add",
         "notes_link_task",
+        "notes_list_types",
         "notes_move",
         "notes_read",
         "notes_search",

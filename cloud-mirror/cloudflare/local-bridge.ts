@@ -17,7 +17,7 @@ export function registerLocalBridge(server: McpServer, env: Env, scopes: string[
       : tool.name === 'render_proposal_review' ? 'ui://lifeos/cloud-proposal-review-v1.html' : undefined;
     const visibility = (tool as {meta?: {ui?: {visibility?: string[]}}}).meta?.ui?.visibility;
     server.registerTool(tool.name, {
-      description: `${tool.description} Runs on your awake Mac.${notes.length ? ' Notes stay in Bana on the Mac; this service passes them through in memory only.' : ' Raw captures remain in local storage.'} A timeout is not proof that a write failed.`,
+      description: `${tool.description} Runs on your awake Mac.${notes.length ? ' Notes stay in Anytype on the Mac; this service passes them through in memory only.' : ' Raw captures remain in local storage.'} A timeout is not proof that a write failed.`,
       inputSchema: tool.schema,
       annotations: tool.annotations,
       _meta: {securitySchemes: [{type: 'oauth2', scopes: required}],
@@ -32,7 +32,7 @@ export function registerLocalBridge(server: McpServer, env: Env, scopes: string[
           _meta: {'mcp/www_authenticate': [`Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", scope="${required.join(' ')}"`]},
         };
       }
-      // The Mac writes to Bana only when this grant has notes:write (captures, interpretations,
+      // The Mac writes to Anytype only when this grant has notes:write (captures, interpretations,
       // journal prose and promotions included). Set here so a client value never wins.
       const grant = {notes_write: scopes.includes(notesWriteScope)};
       return await ownerSync(env).callLocalTool(tool.name, {...args as Record<string, unknown>, _lifeos_grant: grant}) as {

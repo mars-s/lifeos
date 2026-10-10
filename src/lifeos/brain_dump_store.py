@@ -133,11 +133,11 @@ class BrainDumpStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS brain_dump_memory_source_lookup ON brain_dump_memory_sources(memory_id)"
             )
-            # Journal prose written while Bana was closed, waiting for its day page. The
-            # request_id makes the later Bana write happen exactly once.
+            # Journal prose written while Anytype was closed, waiting for its journal day. The
+            # request_id makes the later Anytype write happen exactly once.
             connection.execute(
                 """
-                CREATE TABLE IF NOT EXISTS bana_journal_outbox (
+                CREATE TABLE IF NOT EXISTS journal_outbox (
                     request_id TEXT PRIMARY KEY,
                     fields_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
@@ -148,20 +148,20 @@ class BrainDumpStore:
     def queue_journal(self, request_id: str, fields: Mapping[str, Any]) -> None:
         with self._transaction() as connection:
             connection.execute(
-                "INSERT OR IGNORE INTO bana_journal_outbox VALUES (?, ?, ?)",
+                "INSERT OR IGNORE INTO journal_outbox VALUES (?, ?, ?)",
                 (request_id, canonical_json(fields), self._now()),
             )
 
     def queued_journal(self) -> list[tuple[str, dict[str, Any]]]:
         with self._lock:
             rows = self._connection.execute(
-                "SELECT request_id, fields_json FROM bana_journal_outbox ORDER BY created_at, request_id"
+                "SELECT request_id, fields_json FROM journal_outbox ORDER BY created_at, request_id"
             ).fetchall()
         return [(row["request_id"], json.loads(row["fields_json"])) for row in rows]
 
     def drop_journal(self, request_id: str) -> None:
         with self._transaction() as connection:
-            connection.execute("DELETE FROM bana_journal_outbox WHERE request_id = ?", (request_id,))
+            connection.execute("DELETE FROM journal_outbox WHERE request_id = ?", (request_id,))
 
     def _migrate_repeated_capture_support(self) -> None:
         """Remove the early source-hash uniqueness rule while preserving captures."""
@@ -314,7 +314,7 @@ class BrainDumpStore:
         schema_version: str = "1",
         write_journal: bool = True,
     ) -> dict[str, Any]:
-        """write_journal=False when the prose goes to the Bana day page instead (its home)."""
+        """write_journal=False when the prose goes to the Anytype journal day instead (its home)."""
         capture = self._require_capture(capture_id)
         if source_hash != capture["source_hash"]:
             raise BrainDumpConflict("source_hash does not match the stored raw capture")

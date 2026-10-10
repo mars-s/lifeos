@@ -13,8 +13,8 @@ from pathlib import Path
 from threading import RLock
 
 from .models import (
-    BanaChange,
     CalendarChange,
+    NoteChange,
     ProposalRevision,
     ProposalState,
     SourceSnapshot,
@@ -97,9 +97,13 @@ class ProposalStore:
                 """
             )
             columns = {row[1] for row in connection.execute("PRAGMA table_info(proposal_revisions)")}
-            if "bana_changes_json" not in columns:
+            if "bana_changes_json" in columns:  # the unreleased Bana branch's name for it
                 connection.execute(
-                    "ALTER TABLE proposal_revisions ADD COLUMN bana_changes_json TEXT NOT NULL DEFAULT '[]'"
+                    "ALTER TABLE proposal_revisions RENAME COLUMN bana_changes_json TO note_changes_json"
+                )
+            elif "note_changes_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE proposal_revisions ADD COLUMN note_changes_json TEXT NOT NULL DEFAULT '[]'"
                 )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS proposal_revisions_current ON proposal_revisions(proposal_id, revision_number DESC)"
@@ -183,8 +187,8 @@ class ProposalStore:
             created_at=row["created_at"],
             approved_revision_hash=row["approved_revision_hash"],
             failure_detail=row["failure_detail"],
-            bana_changes=tuple(
-                BanaChange.from_dict(item) for item in json.loads(row["bana_changes_json"])
+            note_changes=tuple(
+                NoteChange.from_dict(item) for item in json.loads(row["note_changes_json"])
             ),
         )
 
@@ -196,14 +200,14 @@ class ProposalStore:
         source_snapshots: Sequence[SourceSnapshot],
         things_changes: Sequence[ThingsChange] = (),
         calendar_changes: Sequence[CalendarChange] = (),
-        bana_changes: Sequence[BanaChange] = (),
+        note_changes: Sequence[NoteChange] = (),
     ) -> ProposalRevision:
         """Create revision one, or safely return the identical prior request."""
 
         if not proposal_id or not idempotency_key:
             raise ValueError("proposal_id and idempotency_key are required")
         desired_hash = revision_hash(
-            proposal_id, 1, source_snapshots, things_changes, calendar_changes, bana_changes
+            proposal_id, 1, source_snapshots, things_changes, calendar_changes, note_changes
         )
         with self._transaction() as connection:
             existing = connection.execute(
@@ -233,7 +237,7 @@ class ProposalStore:
                 things_changes,
                 calendar_changes,
                 now,
-                bana_changes,
+                note_changes,
             )
             return self._fetch_revision(connection, proposal_id, desired_hash)
 
@@ -244,7 +248,7 @@ class ProposalStore:
         source_snapshots: Sequence[SourceSnapshot],
         things_changes: Sequence[ThingsChange] = (),
         calendar_changes: Sequence[CalendarChange] = (),
-        bana_changes: Sequence[BanaChange] = (),
+        note_changes: Sequence[NoteChange] = (),
     ) -> ProposalRevision:
         """Append a new immutable draft after a non-applying revision."""
 
@@ -254,7 +258,7 @@ class ProposalStore:
                 raise InvalidTransition("cannot revise while a proposal is applying")
             number = current.revision_number + 1
             digest = revision_hash(
-                proposal_id, number, source_snapshots, things_changes, calendar_changes, bana_changes
+                proposal_id, number, source_snapshots, things_changes, calendar_changes, note_changes
             )
             now = self._now()
             self._insert_revision(
@@ -266,7 +270,7 @@ class ProposalStore:
                 things_changes,
                 calendar_changes,
                 now,
-                bana_changes,
+                note_changes,
             )
             connection.execute(
                 "UPDATE proposals SET current_revision_hash = ? WHERE proposal_id = ?",
@@ -507,13 +511,13 @@ class ProposalStore:
         things: Sequence[ThingsChange],
         calendar: Sequence[CalendarChange],
         created_at: str,
-        bana: Sequence[BanaChange] = (),
+        notes: Sequence[NoteChange] = (),
     ) -> None:
         connection.execute(
             """INSERT INTO proposal_revisions(
                 proposal_id, revision_number, revision_hash, state,
                 source_snapshots_json, things_changes_json, calendar_changes_json, created_at,
-                bana_changes_json
+                note_changes_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 proposal_id,
@@ -524,6 +528,6 @@ class ProposalStore:
                 self._encode_things(things),
                 self._encode_calendar(calendar),
                 created_at,
-                canonical_json([item.to_dict() for item in bana]),
+                canonical_json([item.to_dict() for item in notes]),
             ),
         )

@@ -25,8 +25,8 @@ LOCAL_TOOLS = frozenset({
     "propose_changes", "get_proposal", "render_proposal_review",
     "approve_proposal", "reject_proposal", "apply_approved_proposal", "create_requested_task",
     "read_requested_task", "update_requested_task", "trash_requested_task",
-    # Bana notes. The Worker lists these only for grants with the notes / notes:write scopes.
-    "notes_search", "notes_read", "notes_today", "notes_add", "notes_tag", "notes_set_field",
+    # Anytype notes. The Worker lists these only for grants with the notes / notes:write scopes.
+    "notes_search", "notes_read", "notes_today", "notes_list_types", "notes_add", "notes_tag", "notes_set_field",
     "notes_move", "notes_link_task", "promote_notes_to_things",
 })
 MAX_BYTES = 256 * 1024
@@ -39,11 +39,11 @@ async def invoke(request: dict[str, Any], server: Any = None) -> dict[str, Any]:
     if not isinstance(request["arguments"], dict):
         raise ValueError("tool arguments must be an object")
     # The Worker states what the grant allows (it overwrites any client value). Missing means no
-    # Bana writes: captures still land in the ledger and report bana "not permitted".
+    # Anytype writes: captures still land in the ledger and report anytype "not permitted".
     arguments = dict(request["arguments"])
     grant = arguments.pop(GRANT_KEY, None)
     notes_write = isinstance(grant, dict) and grant.get("notes_write") is True
-    server = server or create_mcp(build_default_service(bana_writes=notes_write))
+    server = server or create_mcp(build_default_service(notes_writes=notes_write))
     async with Client(server) as client:
         result = await client.call_tool(request["tool"], arguments, raise_on_error=False)
     output: dict[str, Any] = {

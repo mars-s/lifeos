@@ -314,7 +314,7 @@
         title.append(el("span", "operation", String(change.operation || "change")), el("strong", "", titleForChange(change, domain)));
         row.append(title);
         const identifier = domain === "Things" ? change.task_id : change.event_id;
-        const target = domain === "Bana" ? (change.node_id ? `Note: ${change.node_id}` : "New Bana note")
+        const target = domain === "Anytype" ? (change.object_id ? `Note: ${change.object_id}` : "New Anytype note")
           : domain === "Calendar" ? `Calendar: ${change.calendar_id}` : identifier ? `Task: ${identifier}` : "New Things task";
         row.append(el("p", "change-meta", `${target}${change.destructive ? " · Destructive" : ""}`));
         const fields = Object.entries(change.fields || {}).filter(([key]) => key !== "title" && key !== "name");
@@ -405,7 +405,7 @@
 
         const header = el("header", "header");
         const heading = el("div");
-        heading.append(el("h1", "", "Review proposed changes"), el("p", "subtitle", "Nothing in Things, Calendar or Bana changes until this exact revision is approved and applied."));
+        heading.append(el("h1", "", "Review proposed changes"), el("p", "subtitle", "Nothing in Things, Calendar or Anytype changes until this exact revision is approved and applied."));
         const state = el("div", "state");
         state.dataset.state = String(data.state || "draft");
         state.append(el("span", "state-dot"), document.createTextNode(labelForState(data.state)));
@@ -432,7 +432,7 @@
         notice.append(infoIcon(), noticeCopy);
         const domains = el("div", "domains");
         domains.append(renderDomain("Things", data.things_changes || []), renderDomain("Calendar", data.calendar_changes || []));
-        if ((data.bana_changes || []).length) domains.append(renderDomain("Bana", data.bana_changes));
+        if ((data.note_changes || []).length) domains.append(renderDomain("Anytype", data.note_changes));
         content.append(notice, domains);
         if (data.failure_detail) content.append(el("p", "failure", String(data.failure_detail)));
         const statusText = el("p", "feedback", feedback);

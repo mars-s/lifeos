@@ -91,7 +91,7 @@ try {
    assert.match(sdk.getInstructions(),/do not prepare a proposal or ask for a second LifeOS approval/);
    assert.match(sdk.getInstructions(),/Never bypass platform permissions/);
    const tools=await sdk.listTools();assert.deepEqual(tools.tools.map(t=>t.name),['render_day_plan','render_week_plan','render_brain_dump_canvas',...localNames,'get_lifeos_capabilities','read_things_mirror']);
-   assert.equal(noteNames.length,9);assert.ok(tools.tools.every(t=>!isNoteTool(t.name)));assert.equal(tools.tools.find(tool=>tool.name==='read_things_mirror').annotations.readOnlyHint,true);
+   assert.equal(noteNames.length,10);assert.ok(tools.tools.every(t=>!isNoteTool(t.name)));assert.equal(tools.tools.find(tool=>tool.name==='read_things_mirror').annotations.readOnlyHint,true);
    const capabilities=(await sdk.callTool({name:'get_lifeos_capabilities',arguments:{}})).structuredContent;
    assert.equal(capabilities.local_tools_available,false);
    assert.equal(capabilities.connection_can_write,false);
