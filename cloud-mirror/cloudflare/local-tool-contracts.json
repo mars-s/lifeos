@@ -2821,11 +2821,15 @@
         },
         "revision_hash": {
           "type": "string"
+        },
+        "approval_ticket": {
+          "type": "string"
         }
       },
       "required": [
         "proposal_id",
-        "revision_hash"
+        "revision_hash",
+        "approval_ticket"
       ],
       "type": "object"
     },
@@ -2863,11 +2867,15 @@
         },
         "revision_hash": {
           "type": "string"
+        },
+        "approval_ticket": {
+          "type": "string"
         }
       },
       "required": [
         "proposal_id",
-        "revision_hash"
+        "revision_hash",
+        "approval_ticket"
       ],
       "type": "object"
     },

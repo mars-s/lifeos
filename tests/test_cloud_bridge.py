@@ -100,3 +100,28 @@ async def test_requested_task_exposed_without_widget_and_validated():
     invalid = await invoke({**request, "arguments": {**request["arguments"], "canceled": True}}, server)
     assert invalid["isError"] is True
     assert len(service.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_card_ticket_survives_the_one_process_per_call_bridge(tmp_path):
+    from lifeos.models import ChangeOperation, ThingsChange
+    from lifeos.proposal_store import ProposalStore
+    from lifeos.service import LifeOSService
+
+    db = tmp_path / "lifeos.sqlite3"
+    draft = ProposalStore(db).create_draft(
+        "p1", idempotency_key="k1", source_snapshots=(),
+        things_changes=(ThingsChange(ChangeOperation.CREATE, None, {"title": "Call Sam"}),),
+    )
+    proposal = LifeOSService(ProposalStore(db), None, None).get_proposal("p1")
+
+    def fresh():  # each bridge call is a new process with a new store on the same database
+        return create_mcp(LifeOSService(ProposalStore(db), None, None))
+
+    rendered = await invoke({"tool": "render_proposal_review", "arguments": {"proposal": proposal}}, fresh())
+    ticket = rendered["_meta"]["lifeos/approval_ticket"]
+    args = {"proposal_id": "p1", "revision_hash": draft.revision_hash}
+    refused = await invoke({"tool": "approve_proposal", "arguments": {**args, "approval_ticket": "guess"}}, fresh())
+    approved = await invoke({"tool": "approve_proposal", "arguments": {**args, "approval_ticket": ticket}}, fresh())
+    assert refused["isError"] is True
+    assert approved["structuredContent"]["state"] == "approved"

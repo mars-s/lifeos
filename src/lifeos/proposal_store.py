@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hmac
 import json
+import secrets
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -117,6 +119,23 @@ class ProposalStore:
                 )
                 """
             )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS approval_key (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), key BLOB NOT NULL)"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO approval_key VALUES (1, ?)", (secrets.token_bytes(32),)
+            )
+
+    def approval_ticket(self, proposal_id: str, revision_hash: str) -> str:
+        """Proof that an approve or reject came from the review card for this exact revision.
+
+        render_proposal_review hands it to the card in result `_meta`, which hosts give the card
+        and not the model. The key lives only in this database, so it survives the one process per
+        call that the Worker bridge starts.
+        """
+        with self._lock:
+            key = self._connection.execute("SELECT key FROM approval_key").fetchone()[0]
+        return hmac.new(key, f"{proposal_id}\n{revision_hash}".encode(), "sha256").hexdigest()
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:

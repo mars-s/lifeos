@@ -942,6 +942,9 @@ class LifeOSService:
     def get_proposal(self, proposal_id: str) -> dict[str, Any]:
         return proposal_to_dict(self.store.get_current(proposal_id))
 
+    def approval_ticket(self, proposal_id: str, revision_hash: str) -> str:
+        return self.store.approval_ticket(proposal_id, revision_hash)
+
     def approve_proposal(self, proposal_id: str, revision_hash: str) -> dict[str, Any]:
         return proposal_to_dict(self.store.approve(proposal_id, revision_hash))
 

@@ -72,11 +72,13 @@ In each of ChatGPT and claude.ai, with your Mac awake and Bana open:
 
 ## 8. Approvals
 
-The model can no longer approve its own proposals. Approve on the review card. If a host shows no card, approve in Terminal:
+The model can no longer approve its own proposals. Approve on the review card. Claude Code and Codex (stdio) no longer have approve or reject tools at all. If a host shows no card, approve in Terminal:
 
 ```sh
 uv run lifeos approve <proposal_id> <revision_hash>
 ```
+
+Check: in ChatGPT, render a proposal and press Approve on the card; it should say "Revision approved". Asking the model to approve should fail with a message pointing to the card or `lifeos approve`.
 
 ## 9. Optional: scheduled journal export
 

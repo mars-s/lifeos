@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import glob
+import hmac
 import importlib
 import os
 from collections.abc import Sequence
@@ -11,6 +12,8 @@ from types import ModuleType
 from typing import Any, Literal
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
+from fastmcp.tools.tool import ToolResult
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -247,7 +250,12 @@ class BrainDumpCandidateInput(BaseModel):
     needs_clarification: bool = False
 
 
-def create_mcp(service: LifeOSService, *, auth: Any | None = None) -> FastMCP:
+APPROVAL_TICKET_META = "lifeos/approval_ticket"
+
+
+def create_mcp(service: LifeOSService, *, auth: Any | None = None, stdio: bool = False) -> FastMCP:
+    """stdio: a local agent's transport (Claude Code, Codex). It has no card UI, so approve and
+    reject are not registered there; the person approves with `lifeos approve` in a terminal."""
     mcp = FastMCP(
         "LifeOS",
         instructions=(
@@ -861,27 +869,43 @@ def create_mcp(service: LifeOSService, *, auth: Any | None = None) -> FastMCP:
             "openai/toolInvocation/invoked": "Proposal ready to review.",
         },
     )
-    def render_proposal_review(proposal: ProposalReviewOutput) -> dict[str, Any]:
+    def render_proposal_review(proposal: ProposalReviewOutput) -> Any:
         """Render one exact immutable proposal revision for review.
 
         Pass the exact result from propose_changes or get_proposal. The component may approve or
         reject only the proposal_id and revision_hash shown on screen. Applying remains a separate
         explicitly confirmed tool call.
         """
-        return proposal.model_dump(mode="json")
+        data = proposal.model_dump(mode="json")
+        if stdio:
+            return data
+        # The card's approval ticket rides in result _meta, which hosts give the card, not the model.
+        ticket = service.approval_ticket(data["proposal_id"], data["revision_hash"])
+        return ToolResult(structured_content=data, meta={APPROVAL_TICKET_META: ticket})
 
-    # App-only: the review card calls these for the human. The model must never approve its
-    # own proposal, so hosts hide them from the model (MCP Apps visibility). Hosts that ignore
-    # visibility can still see them; `lifeos approve` in a terminal is the host-free fallback.
-    @mcp.tool(annotations=LOCAL_WRITE, app={"visibility": ["app"]}, meta=APP_ONLY_META)
-    def approve_proposal(proposal_id: str, revision_hash: str) -> dict[str, Any]:
-        """Approve exactly the reviewed revision hash. This makes no external change."""
-        return service.approve_proposal(proposal_id, revision_hash)
+    if not stdio:
+        # App-only: the review card calls these for the human. The model must never approve its
+        # own proposal. Hosts hide them from the model (MCP Apps visibility), and a host that ignores
+        # visibility still cannot use them: each call needs the ticket only the card was given.
+        def card_only(proposal_id: str, revision_hash: str, approval_ticket: str) -> None:
+            expected = service.approval_ticket(proposal_id, revision_hash)
+            if not hmac.compare_digest(approval_ticket.encode(), expected.encode()):
+                raise ToolError(
+                    "Only the person approves or rejects, on the review card or with "
+                    "`lifeos approve` in a terminal. Nothing changed."
+                )
 
-    @mcp.tool(annotations=LOCAL_WRITE, app={"visibility": ["app"]}, meta=APP_ONLY_META)
-    def reject_proposal(proposal_id: str, revision_hash: str) -> dict[str, Any]:
-        """Reject exactly the reviewed revision hash."""
-        return service.reject_proposal(proposal_id, revision_hash)
+        @mcp.tool(annotations=LOCAL_WRITE, app={"visibility": ["app"]}, meta=APP_ONLY_META)
+        def approve_proposal(proposal_id: str, revision_hash: str, approval_ticket: str) -> dict[str, Any]:
+            """Approve exactly the reviewed revision hash. This makes no external change."""
+            card_only(proposal_id, revision_hash, approval_ticket)
+            return service.approve_proposal(proposal_id, revision_hash)
+
+        @mcp.tool(annotations=LOCAL_WRITE, app={"visibility": ["app"]}, meta=APP_ONLY_META)
+        def reject_proposal(proposal_id: str, revision_hash: str, approval_ticket: str) -> dict[str, Any]:
+            """Reject exactly the reviewed revision hash."""
+            card_only(proposal_id, revision_hash, approval_ticket)
+            return service.reject_proposal(proposal_id, revision_hash)
 
     @mcp.tool(annotations=EXTERNAL_WRITE)
     def apply_approved_proposal(proposal_id: str, revision_hash: str) -> dict[str, Any]:
@@ -931,10 +955,11 @@ def build_default_service(config: RuntimeConfig | None = None) -> LifeOSService:
 def main(argv: Sequence[str] | None = None) -> None:
     config = parse_runtime_config(argv)
     service = build_default_service(config)
+    stdio = config.transport == "stdio"
     mcp = (
-        create_mcp(service, auth=build_github_auth(config))
+        create_mcp(service, auth=build_github_auth(config), stdio=stdio)
         if config.oauth_enabled
-        else create_mcp(service)
+        else create_mcp(service, stdio=stdio)
     )
     if config.transport == "stdio":
         mcp.run(transport="stdio", show_banner=config.show_banner, log_level=config.log_level)

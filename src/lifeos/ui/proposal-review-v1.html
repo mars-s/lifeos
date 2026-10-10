@@ -248,6 +248,7 @@
       let requestId = 0;
       let current;
       let busy = false;
+      let ticket = "";
       let feedback = "";
       let feedbackIsError = false;
 
@@ -351,6 +352,12 @@
         window.parent.postMessage({ jsonrpc: "2.0", method: "ui/message", params: { role: "user", content: [{ type: "text", text: prompt }] } }, "*");
       }
 
+      // LifeOS gives only this card (in result _meta, which the model does not see) the ticket
+      // that approve and reject require.
+      function remember(meta) {
+        if (meta && meta["lifeos/approval_ticket"]) ticket = String(meta["lifeos/approval_ticket"]);
+      }
+
       function callTool(name, args) {
         if (window.openai?.callTool) return window.openai.callTool(name, args);
         const id = `lifeos-${++requestId}`;
@@ -372,7 +379,7 @@
         feedbackIsError = false;
         render(current);
         try {
-          const result = await callTool(toolName, { proposal_id: current.proposal_id, revision_hash: current.revision_hash });
+          const result = await callTool(toolName, { proposal_id: current.proposal_id, revision_hash: current.revision_hash, approval_ticket: ticket });
           const output = result?.structuredContent || result?.structured_content || result?.data || result;
           if (output && output.proposal_id) current = output;
           else current = { ...current, state: toolName === "approve_proposal" ? "approved" : "rejected", approved_revision_hash: toolName === "approve_proposal" ? current.revision_hash : null };
@@ -463,7 +470,10 @@
         if (event.source !== window.parent) return;
         const message = event.data;
         if (!message || message.jsonrpc !== "2.0") return;
-        if (message.method === "ui/notifications/tool-result") render(message.params?.structuredContent);
+        if (message.method === "ui/notifications/tool-result") {
+          remember(message.params?._meta);
+          render(message.params?.structuredContent);
+        }
         if (message.id && pendingCalls.has(message.id)) {
           const pending = pendingCalls.get(message.id);
           pendingCalls.delete(message.id);
@@ -473,10 +483,12 @@
       }, { passive: true });
 
       window.addEventListener("openai:set_globals", (event) => {
+        remember(event.detail?.globals?.toolResponseMetadata);
         const output = event.detail?.globals?.toolOutput;
         if (output) render(output);
       }, { passive: true });
 
+      remember(window.openai?.toolResponseMetadata);
       if (window.openai?.toolOutput) render(window.openai.toolOutput);
       else if (new URLSearchParams(window.location.search).get("demo") === "1") render(demo);
     })();

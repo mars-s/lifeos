@@ -46,6 +46,8 @@ async def invoke(request: dict[str, Any], server: Any = None) -> dict[str, Any]:
     }
     if result.structured_content is not None:
         output["structuredContent"] = result.structured_content
+    if result.meta:
+        output["_meta"] = result.meta  # the review card's approval ticket; hosts keep it from the model
     if len(json.dumps(output, ensure_ascii=False).encode()) > MAX_BYTES:
         return {"isError": True, "content": [{"type": "text", "text": "Local result exceeds the response budget. Use a smaller range or page."}]}
     return output

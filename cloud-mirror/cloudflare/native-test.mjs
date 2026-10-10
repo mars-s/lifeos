@@ -102,6 +102,11 @@ try {
      assert.equal((await local.sdk.callTool({name:'get_brain_dump',arguments:{capture_id:'another'}})).isError,true);
      socket.send(JSON.stringify({version:3,type:'local_tool_result',id:message.id,result:{content:[{type:'text',text:'Captured locally'}],structuredContent:{capture_id:'fixture-local',source_hash:'fixture-hash'},isError:false}}));
      const result=await call;assert.equal(result.structuredContent.capture_id,'fixture-local');
+     // The review card's approval ticket rides in result _meta from the Mac to the card.
+     const rendering=local.sdk.callTool({name:'render_proposal_review',arguments:{proposal:{proposal_id:'p',revision_number:1,revision_hash:'h',state:'draft',source_snapshots:[],things_changes:[],calendar_changes:[],created_at:'2026-10-10T09:00:00+11:00',approved_revision_hash:null,failure_detail:null}}});
+     const render=await take();assert.equal(render.tool,'render_proposal_review');
+     socket.send(JSON.stringify({version:3,type:'local_tool_result',id:render.id,result:{content:[{type:'text',text:'{}'}],structuredContent:{proposal_id:'p',revision_hash:'h'},_meta:{'lifeos/approval_ticket':'SYNTHETIC-TICKET'},isError:false}}));
+     assert.equal((await rendering)._meta['lifeos/approval_ticket'],'SYNTHETIC-TICKET');
      assert.equal(await db.prepare('SELECT COUNT(*) AS n FROM native_operations').first('n'),operationCount);
      const direct=await connect('things:read things:write offline_access',true,true);
      try {

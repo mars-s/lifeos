@@ -38,13 +38,18 @@ The supertags come from Bana's "Agent notebook" template: `#capture`, `#interpre
 
 ## Approving without a card
 
-`approve_proposal` and `reject_proposal` are app-only: the review card can call them, the model cannot see them. Where a host does not render the card, approve in a terminal:
+Only the person approves or rejects a proposal. How that is enforced depends on the transport:
+
+- **stdio** (Claude Code, Codex and other local agents): `approve_proposal` and `reject_proposal` are not registered at all. They are not listed and a call to them fails. Approve in a terminal instead (below).
+- **HTTP** (the LifeOS HTTP server, and the Worker through LifeOS Sync): both tools are app-only (MCP Apps visibility `["app"]`, ChatGPT `openai/visibility: private`), and each call must carry an `approval_ticket`. `render_proposal_review` hands the card that ticket in the result `_meta`, which hosts give the card and not the model. The ticket is an HMAC of the proposal id and revision hash with a key kept in the LifeOS SQLite, so it works across the one process per call that the bridge starts. A host that ignores visibility still shows the tools to the model, but the model has no ticket, so its call is refused and nothing changes.
 
 ```sh
 uv run lifeos approve <proposal_id> <revision_hash>
 ```
 
-It shows the changes and asks you to type the first 8 characters of the hash. It refuses to run without an interactive terminal, so an agent's shell cannot use it. Hosts that ignore MCP Apps visibility (some stdio clients) may still show approve and reject to the model; treat a chat "yes, approve" as nothing.
+It shows the changes and asks you to type the first 8 characters of the hash. It refuses to run without an interactive terminal, so an agent's shell cannot use it. Treat a chat "yes, approve" as nothing.
+
+The ticket relies on the host keeping result `_meta` from the model, as ChatGPT and MCP Apps hosts do. An agent with a shell on the Mac can read the SQLite file directly; the ticket does not defend against that.
 
 ## Tests
 
