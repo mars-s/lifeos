@@ -1,6 +1,6 @@
 # The Bana day page is the journal; Markdown is an export
 
-Status: accepted, 10 Oct 2026 (LifeOS + Bana plan, decisions 1 and 2).
+Status: superseded by [ADR 0003](0003-anytype-is-the-notebook.md) on 11 Oct 2026. Accepted 10 Oct 2026 (LifeOS + Bana plan, decisions 1 and 2).
 
 LifeOS used to append reflective prose to a Daily Journal Markdown file, and that file was the journal's source of truth. With Bana as the notebook, keeping Markdown authoritative would mean writing the journal twice: once in Bana, where the person reads and edits it on the Mac and the iPhone, and once in a file nobody edits.
 

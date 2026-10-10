@@ -59,9 +59,9 @@ capture if it must not be sent to that provider.
 3. Reconnect the existing cloud connection in ChatGPT. Explicitly approve
    **Include local LifeOS tools**. Approve queued writes too if proposal apply is
    wanted. Existing grants and refreshed old tokens do not gain these scopes.
-   For Bana notes, also tick **notes** (search and read) and **notes:write** (add and
-   edit). A grant without them never lists the note tools. See the
-   [rollout checklist](bana-rollout.md).
+   For Anytype notes, also tick **notes** (search and read) and **notes:write** (add
+   and edit). A grant without them never lists the note tools. See the
+   [rollout checklist](anytype-rollout.md).
 4. Refresh its tools. `get_lifeos_capabilities` separates bridge connectivity from
    permission. Neither is proof that ChatGPT mounted a card or applied a write.
 5. Verify a supplied preview and a disposable capture in the actual host. Check
