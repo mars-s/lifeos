@@ -4,7 +4,7 @@
 <dict>
 	<key>Label</key>
 	<string>com.lifeos.journal-export</string>
-	<!-- Writes today's Bana day page to the journal folder as Markdown. Bana must be open. -->
+	<!-- Writes today's Anytype journal day to the journal folder as Markdown. Anytype must be open. -->
 	<key>ProgramArguments</key>
 	<array>
 		<string>/Users/REPLACE_ME/.local/bin/uv</string>

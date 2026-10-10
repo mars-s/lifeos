@@ -71,3 +71,13 @@ def test_anytype_connect_saves_key_space_schema_and_chat(tmp_path, monkeypatch, 
         again = json.loads(capsys.readouterr().out)
         assert again["created"] == {"properties": [], "types": [], "tags": []}
         assert len(fake.chats) == 1 and fake.deletes() == []
+
+
+def test_chat_agent_kill_switch_and_setup_check(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("LIFEOS_DB_PATH", str(tmp_path / "lifeos.sqlite3"))
+    assert cli.main(["chat-agent", "pause"]) == 0
+    assert (tmp_path / "chat-agent.paused").exists()
+    assert cli.main(["chat-agent", "resume"]) == 0
+    assert not (tmp_path / "chat-agent.paused").exists()
+    assert cli.main(["chat-agent", "run"]) == 1  # no Anytype space chosen yet
+    assert "lifeos anytype connect" in capsys.readouterr().err

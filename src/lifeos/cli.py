@@ -6,6 +6,9 @@
 a Mac, else a 0600 file), picks the LifeOS space, creates the LifeOS types, properties, the Ask
 agent tag and the "LifeOS" chat if missing. It never prints the key.
 
+`lifeos chat-agent run|pause|resume` runs the Anytype chat agent (launchd keeps it running) or
+flips its kill switch.
+
 `lifeos approve|reject <proposal_id> <revision_hash>` is the fallback when a host does not
 render the review card. It needs an interactive terminal and the first 8 characters of the
 hash typed by hand, so an agent's non-interactive shell cannot approve its own proposal.
@@ -14,10 +17,13 @@ hash typed by hand, so an agent's non-interactive shell cannot approve its own p
 from __future__ import annotations
 
 import argparse
+import contextlib
 import getpass
 import json
+import os
 import sys
 from collections.abc import Callable, Sequence
+from pathlib import Path
 
 from .proposal_store import ProposalStore
 from .runtime import parse_runtime_config
@@ -83,6 +89,53 @@ def _anytype_connect(args, config, ask: Callable[[str], str], secret: Callable[[
     return 0
 
 
+def _chat_agent(args, config) -> int:
+    import logging
+    import shutil
+    import signal
+    import threading
+
+    from .anytype_gateway import build_gateway, settings_path
+    from .chat_agent import ChatAgent, ChatAgentConfig, default_mcp_command, passthrough_env
+
+    folder = config.database_path.parent
+    pause_file = folder / "chat-agent.paused"
+    if args.action == "pause":
+        folder.mkdir(parents=True, exist_ok=True)
+        pause_file.touch()
+        print("Chat agent paused: it will skip new messages until `lifeos chat-agent resume`.")
+        return 0
+    if args.action == "resume":
+        pause_file.unlink(missing_ok=True)
+        print("Chat agent resumed. Messages sent while it was paused stay unanswered.")
+        return 0
+    gateway = build_gateway(config.database_path)
+    if gateway is None:
+        print("lifeos: run `lifeos anytype connect` first.", file=sys.stderr)
+        return 1
+    codex = os.environ.get("LIFEOS_CODEX_BIN") or shutil.which("codex")
+    if not codex:
+        print("lifeos: Codex CLI not found; install it or set LIFEOS_CODEX_BIN.", file=sys.stderr)
+        return 1
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    mcp_env = {
+        **passthrough_env(),
+        "LIFEOS_DB_PATH": str(config.database_path), "LIFEOS_JOURNAL_DIR": str(config.journal_dir),
+        "LIFEOS_ANYTYPE_CONFIG": str(settings_path(config.database_path)),
+    }
+    agent = ChatAgent(gateway, gateway.settings.chat_id or gateway.find_or_create_chat(), ChatAgentConfig(
+        state_path=folder / "chat-agent.sqlite3", mcp_command=default_mcp_command(), mcp_env=mcp_env,
+        codex=codex, codex_home=Path(os.environ["CODEX_HOME"]) if os.environ.get("CODEX_HOME") else None,
+        workdir=folder, timeout=float(os.environ.get("LIFEOS_CHAT_AGENT_TIMEOUT", "300")),
+        max_per_hour=int(os.environ.get("LIFEOS_CHAT_AGENT_MAX_PER_HOUR", "20")), pause_file=pause_file,
+    ))
+    stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    with contextlib.suppress(KeyboardInterrupt):
+        agent.run(stop)
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -104,8 +157,13 @@ def main(
     connect.add_argument("--url", help="Local API base URL (default: Anytype Desktop, 127.0.0.1:31009)")
     connect.add_argument("--pair", action="store_true", help="pair with a 4-digit code instead of pasting a key")
     connect.add_argument("--space", help="space id or name (default: ask)")
+    agent = commands.add_parser("chat-agent", help="the Anytype chat agent (run, pause, resume)")
+    agent.add_argument("action", choices=("run", "pause", "resume"))
     args = parser.parse_args(argv)
     config = parse_runtime_config([])
+
+    if args.command == "chat-agent":
+        return _chat_agent(args, config)
 
     if args.command == "anytype":
         if not interactive():

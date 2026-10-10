@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.lifeos.chat-agent</string>
+	<!-- Answers the "LifeOS" chat in Anytype. Starts at login, restarts if it stops, and on
+	     every start (and after sleep) answers messages that arrived meanwhile, once each.
+	     Pause it with `uv run lifeos chat-agent pause`. Run `lifeos anytype connect` first. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/REPLACE_ME/.local/bin/uv</string>
+		<string>--directory</string>
+		<string>/Users/REPLACE_ME/Developer/projects/lifeos</string>
+		<string>run</string>
+		<string>lifeos</string>
+		<string>chat-agent</string>
+		<string>run</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/Users/REPLACE_ME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<!-- Ids and states only; message text is never logged. -->
+	<key>StandardOutPath</key>
+	<string>/Users/REPLACE_ME/Library/Logs/lifeos-chat-agent.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/REPLACE_ME/Library/Logs/lifeos-chat-agent.log</string>
+</dict>
+</plist>

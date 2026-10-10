@@ -253,8 +253,24 @@ class BrainDumpCandidateInput(BaseModel):
 
 APPROVAL_TICKET_META = "lifeos/approval_ticket"
 
+# LIFEOS_TOOL_PROFILE=chat-agent: the only tools the Anytype chat agent's MCP exposes. Reads,
+# Anytype appends and single named edits, captures, and drafting proposals. Never applying a
+# proposal, never a direct Things write, never anything that deletes.
+CHAT_AGENT_TOOLS = frozenset({
+    "read_things_list", "search_things", "read_things_projects", "read_things_areas",
+    "read_things_tags", "things_deep_link", "read_requested_task", "list_calendars",
+    "calendar_authorization_status", "read_calendar_range", "plan_day", "plan_week",
+    "get_brain_dump", "list_brain_dumps", "search_brain_dumps", "capture_brain_dump",
+    "submit_brain_dump_semanticization", "notes_search", "notes_read", "notes_today",
+    "notes_list_types", "notes_add", "notes_tag", "notes_set_field", "notes_move",
+    "notes_link_task", "promote_notes_to_things", "propose_changes", "get_proposal",
+})
 
-def create_mcp(service: LifeOSService, *, auth: Any | None = None, stdio: bool = False) -> FastMCP:
+
+def create_mcp(
+    service: LifeOSService, *, auth: Any | None = None, stdio: bool = False,
+    only_tools: frozenset[str] | None = None,
+) -> FastMCP:
     """stdio: a local agent's transport (Claude Code, Codex). It has no card UI, so approve and
     reject are not registered there; the person approves with `lifeos approve` in a terminal."""
     mcp = FastMCP(
@@ -925,6 +941,8 @@ def create_mcp(service: LifeOSService, *, auth: Any | None = None, stdio: bool =
         """Apply only an exact approved, still-fresh revision and verify its writes."""
         return service.apply_proposal(proposal_id, revision_hash)
 
+    if only_tools is not None:
+        mcp.enable(names=set(only_tools), components={"tool"}, only=True)
     return mcp
 
 
@@ -970,10 +988,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     config = parse_runtime_config(argv)
     service = build_default_service(config)
     stdio = config.transport == "stdio"
+    profile = os.environ.get("LIFEOS_TOOL_PROFILE", "")
+    if profile not in {"", "chat-agent"}:
+        raise SystemExit(f"unknown LIFEOS_TOOL_PROFILE {profile!r}")
+    only = CHAT_AGENT_TOOLS if profile == "chat-agent" else None
     mcp = (
-        create_mcp(service, auth=build_github_auth(config), stdio=stdio)
+        create_mcp(service, auth=build_github_auth(config), stdio=stdio, only_tools=only)
         if config.oauth_enabled
-        else create_mcp(service, stdio=stdio)
+        else create_mcp(service, stdio=stdio, only_tools=only)
     )
     if config.transport == "stdio":
         mcp.run(transport="stdio", show_banner=config.show_banner, log_level=config.log_level)
