@@ -2205,9 +2205,10 @@
       "openWorldHint": false
     },
     "meta": {
+      "openai/visibility": "private",
+      "openai/widgetAccessible": true,
       "ui": {
         "visibility": [
-          "model",
           "app"
         ]
       },
@@ -2246,9 +2247,10 @@
       "openWorldHint": false
     },
     "meta": {
+      "openai/visibility": "private",
+      "openai/widgetAccessible": true,
       "ui": {
         "visibility": [
-          "model",
           "app"
         ]
       },

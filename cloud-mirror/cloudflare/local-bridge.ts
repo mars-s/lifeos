@@ -12,12 +12,16 @@ export function registerLocalBridge(server: McpServer, env: Env, scopes: string[
     const required = ['things:read', localScope, ...(localToolNeedsWrite(tool.name) ? ['things:write'] : [])];
     const resourceUri = tool.name === 'review_brain_dump_memory' ? 'ui://lifeos/cloud-memory-review-v1.html'
       : tool.name === 'render_proposal_review' ? 'ui://lifeos/cloud-proposal-review-v1.html' : undefined;
+    const visibility = (tool as {meta?: {ui?: {visibility?: string[]}}}).meta?.ui?.visibility;
     server.registerTool(tool.name, {
       description: `${tool.description} Runs on your awake Mac. Raw captures remain in local storage. A timeout is not proof that a write failed.`,
       inputSchema: tool.schema,
       annotations: tool.annotations,
       _meta: {securitySchemes: [{type: 'oauth2', scopes: required}],
-        ...(resourceUri ? {ui: {resourceUri}, 'openai/outputTemplate': resourceUri} : {}),
+        // App-only tools (approve/reject) stay hidden from the model; only the card calls them.
+        ...(visibility || resourceUri ? {ui: {...(resourceUri ? {resourceUri} : {}), ...(visibility ? {visibility} : {})}} : {}),
+        ...(visibility?.length === 1 && visibility[0] === 'app' ? {'openai/visibility': 'private', 'openai/widgetAccessible': true} : {}),
+        ...(resourceUri ? {'openai/outputTemplate': resourceUri} : {}),
       },
     }, async (args: unknown) => {
       if (!required.every(scope => scopes.includes(scope))) {

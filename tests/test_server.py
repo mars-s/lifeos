@@ -63,7 +63,6 @@ async def test_mcp_exposes_read_and_review_tools_but_no_raw_mutations():
         "recall_memory",
         "review_brain_dump_memory",
         "propose_changes",
-        "approve_proposal",
         "apply_approved_proposal",
     } <= names
     assert "update_todo" not in names
@@ -257,8 +256,10 @@ async def test_proposal_review_exposes_exact_revision_actions_to_chatgpt():
     assert render_tool.meta["ui"]["resourceUri"] == "ui://lifeos/proposal-review-v1.html"
     assert render_tool.meta["openai/outputTemplate"] == "ui://lifeos/proposal-review-v1.html"
     assert render_tool.annotations.readOnlyHint is True
-    assert approve_tool.meta["ui"]["visibility"] == ["model", "app"]
-    assert reject_tool.meta["ui"]["visibility"] == ["model", "app"]
+    assert approve_tool.meta["ui"]["visibility"] == ["app"]
+    assert reject_tool.meta["ui"]["visibility"] == ["app"]
+    assert approve_tool.meta["openai/visibility"] == "private"
+    assert approve_tool.meta["openai/widgetAccessible"] is True
     assert resource.mimeType == "text/html;profile=mcp-app"
     assert "Approve revision" in contents[0].text
     assert 'transition("approve_proposal"' in contents[0].text
@@ -626,3 +627,30 @@ def test_main_selects_loopback_streamable_http(monkeypatch):
             "log_level": None,
         }
     ]
+
+
+def _model_visible(tools):
+    """What an MCP Apps host shows the model: no visibility, or one that includes "model"."""
+    return {
+        tool.name for tool in tools
+        if "model" in ((tool.meta or {}).get("ui") or {}).get("visibility", ["model"])
+    }
+
+
+@pytest.mark.asyncio
+async def test_model_cannot_see_approve_or_reject_but_the_card_can_call_them():
+    class Approvals(FakeService):
+        def approve_proposal(self, proposal_id, revision_hash):
+            return {"proposal_id": proposal_id, "state": "approved"}
+
+    async with Client(create_mcp(Approvals())) as client:
+        visible = _model_visible(await client.list_tools())
+        # The card's tools/call still reaches the tool (hosts, not servers, filter the model).
+        approved = await client.call_tool(
+            "approve_proposal", {"proposal_id": "p", "revision_hash": "h"}
+        )
+
+    assert "approve_proposal" not in visible
+    assert "reject_proposal" not in visible
+    assert {"propose_changes", "render_proposal_review", "apply_approved_proposal"} <= visible
+    assert approved.structured_content["state"] == "approved"

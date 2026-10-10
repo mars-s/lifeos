@@ -106,6 +106,13 @@ try {
      assert.equal(tool._meta?.ui?.resourceUri,undefined);
    }
    assert.equal(tools.tools.find(tool=>tool.name==='trash_requested_task').annotations.destructiveHint,true);
+   // App-only: listed for the card host, hidden from the model by visibility.
+   const modelVisible=tools.tools.filter(t=>(t._meta?.ui?.visibility??['model']).includes('model')).map(t=>t.name);
+   for(const name of ['approve_proposal','reject_proposal']){
+     assert.ok(!modelVisible.includes(name));
+     const tool=tools.tools.find(t=>t.name===name);assert.deepEqual(tool._meta.ui.visibility,['app']);assert.equal(tool._meta['openai/visibility'],'private');
+   }
+   assert.ok(modelVisible.includes('render_proposal_review'));assert.ok(modelVisible.includes('apply_approved_proposal'));
    const blocked=await sdk.callTool({name:'get_brain_dump',arguments:{capture_id:'synthetic'}});assert.equal(blocked.isError,true);assert.match(blocked._meta['mcp/www_authenticate'][0],/lifeos:local/);
    const resources=await sdk.listResources();assert.equal(resources.resources.length,5);
    for(const tool of tools.tools.filter(t=>['render_day_plan','render_week_plan','render_brain_dump_canvas'].includes(t.name))){

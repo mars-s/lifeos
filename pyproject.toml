@@ -22,6 +22,7 @@ test = [
 
 [project.scripts]
 lifeos-mcp = "lifeos.server:main"
+lifeos = "lifeos.cli:main"
 
 [build-system]
 requires = ["hatchling"]
