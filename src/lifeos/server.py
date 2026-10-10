@@ -411,7 +411,8 @@ def create_mcp(service: LifeOSService, *, auth: Any | None = None, stdio: bool =
         Things or Calendar. In Bana, each interpretation becomes a new #interpretation node under
         the capture (old ones are never rewritten), with #suggested-action and #question children
         whose Evidence field is the verbatim excerpt. Journal prose goes on the Bana day page
-        (Markdown is an export). For a meeting debrief pass meeting_title to tag it #meeting.
+        (Markdown is an export); with Bana closed it is queued and written there once, later.
+        For a meeting debrief pass meeting_title to tag it #meeting.
         """
         return service.submit_brain_dump_semanticization(
             capture_id=capture_id,

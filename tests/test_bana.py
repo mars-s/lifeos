@@ -276,7 +276,7 @@ def test_capture_succeeds_with_bana_closed_and_journal_falls_back(tmp_path):
     assert capture["bana"] == {"status": "unavailable"}
     assert service.get_brain_dump(capture["capture_id"])["raw_text"] == RAW
     revision = interpret(service, capture, "i", "codex")
-    assert revision["bana"] == {"status": "unavailable"}
+    assert revision["bana"] == {"status": "unavailable", "journal": "queued"}
     assert revision["journal_written"] is True  # Markdown keeps the prose until Bana is back
 
 
@@ -417,3 +417,25 @@ async def test_without_notes_write_nothing_reaches_bana_but_the_ledger_keeps_it(
     # With notes:write the same capture path writes to Bana.
     granted = (await call("capture_brain_dump", {"raw_text": RAW, "idempotency_key": "granted"}, True))
     assert granted["structuredContent"]["bana"]["status"] == "saved"
+
+
+@needs_bana
+def test_journal_prose_written_while_bana_is_closed_reaches_the_day_page_once(bana, tmp_path):
+    gateway, _ = bana
+    prose = "Felt calmer after the garden today."
+    closed = service_for(tmp_path, BanaGateway(tmp_path / "closed"))
+    capture = closed.capture_brain_dump(
+        raw_text=RAW, idempotency_key="j", source="chat", captured_at="2026-10-10T09:30:00+11:00",
+    )
+    revision = interpret(closed, capture, "j-1", "claude")
+    assert revision["bana"] == {"status": "unavailable", "journal": "queued"}
+    assert revision["journal_written"] is True
+    assert closed.flush_journal_outbox() == {"written": 0}  # still closed: it stays queued
+    assert gateway.search(prose) == []
+
+    service = service_for(tmp_path, gateway)  # Bana is open again; same LifeOS database
+    assert service.flush_journal_outbox() == {"written": 1}
+    assert service.notes_today("2026-10-10")["markdown"].count(prose) == 1
+    assert service.flush_journal_outbox() == {"written": 0}
+    assert service.notes_today("2026-10-10")["markdown"].count(prose) == 1
+    assert service.brain_dumps.queued_journal() == []

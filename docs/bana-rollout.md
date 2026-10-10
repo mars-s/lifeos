@@ -17,7 +17,7 @@ Check: verify ends without an error. To include the live Bana tests, build Bana'
 
 Open the Bana desktop app on this Mac with your graph. LifeOS installs Bana's "Agent notebook" template the first time it writes, if its supertags are missing. You can also install it yourself first: account menu, Browse templates, Agent notebook.
 
-Check: `uv run lifeos export-journal` prints a path, and that file holds today's page.
+Check: `uv run lifeos export-journal` prints a path, and that file holds today's page. It also writes any journal prose that was queued while Bana was closed.
 
 ## 3. Rebuild LifeOS Sync
 

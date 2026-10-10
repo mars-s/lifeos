@@ -11,7 +11,7 @@ from enum import Enum
 from hashlib import sha256
 from typing import Any
 
-from .bana_gateway import LIFEOS_TAGS, BanaGateway, BanaNotPermitted, BanaUnavailable
+from .bana_gateway import LIFEOS_TAGS, BanaError, BanaGateway, BanaNotPermitted, BanaUnavailable
 from .brain_dump_store import BrainDumpConflict, BrainDumpStore
 from .memory_gateway import MemoryGatewayError, SupermemoryGateway, UnknownMemoryDocument
 from .models import (
@@ -24,7 +24,13 @@ from .models import (
     ThingsChange,
 )
 from .planner import BusyInterval, PlanningTask, PlanningWindow, plan_day, plan_range
-from .proposal_store import IdempotencyConflict, InvalidTransition, ProposalStore, UnknownProposal
+from .proposal_store import (
+    IdempotencyConflict,
+    InvalidTransition,
+    ProposalError,
+    ProposalStore,
+    UnknownProposal,
+)
 
 
 class ApplyError(RuntimeError):
@@ -71,6 +77,7 @@ class LifeOSService:
         if self.brain_dumps is None:
             raise RuntimeError("brain-dump storage is not configured")
         capture = self.brain_dumps.capture(**fields)
+        self.flush_journal_outbox()
         return {**capture, "bana": self._capture_to_bana(capture)}
 
     def submit_brain_dump_semanticization(
@@ -89,12 +96,54 @@ class LifeOSService:
         if not bana_ready:
             status = "not_configured" if self.bana is None else "unavailable" if permitted else "not permitted"
             revision["bana"] = {"status": status}
+            if status == "unavailable":
+                revision["bana"].update(self._queue_journal(capture, revision))
             return revision
+        self.flush_journal_outbox()
         try:
             revision["bana"] = self._interpretation_to_bana(capture, revision, meeting_title)
         except BanaUnavailable:
-            revision["bana"] = {"status": "unavailable"}
+            # Nothing of this interpretation was recorded, so the prose waits in the outbox.
+            revision["bana"] = {"status": "unavailable", **self._queue_journal(capture, revision)}
         return revision
+
+    def _journal_fields(self, capture: Mapping[str, Any], revision: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "name": f"Journal {capture['captured_at'][11:16]}",
+            "parent": capture["captured_at"][:10],
+            "description": revision["journal_entry"],
+            "fields": {"Capture ID": capture["capture_id"], "Source hash": capture["source_hash"]},
+            "by": str(revision["interpreted_by"]),
+        }
+
+    def _queue_journal(self, capture: Mapping[str, Any], revision: Mapping[str, Any]) -> dict[str, Any]:
+        """Bana closed: keep the prose in the outbox until its day page is reachable."""
+        if not revision.get("journal_entry") or capture["source"] == "synthetic_test":
+            return {}
+        assert self.brain_dumps is not None
+        self.brain_dumps.queue_journal(
+            f"journal-{revision['revision_hash'][:40]}", self._journal_fields(capture, revision)
+        )
+        return {"journal": "queued"}
+
+    def flush_journal_outbox(self) -> dict[str, int]:
+        """Write queued journal prose to its Bana day page, each exactly once (by request_id).
+
+        Runs on every capture, interpretation and journal export, and stops quietly while Bana
+        is closed.
+        """
+        if self.brain_dumps is None or self.bana is None or not self.bana.writes:
+            return {"written": 0}
+        written = 0
+        for request_id, fields in self.brain_dumps.queued_journal():
+            try:
+                result = self._direct_notes(request_id, (), (BanaChange("add", None, fields),))
+            except (BanaUnavailable, BanaError, ProposalError):
+                break
+            if result["saved"]:
+                self.brain_dumps.drop_journal(request_id)
+                written += 1
+        return {"written": written}
 
     def _capture_to_bana(self, capture: Mapping[str, Any]) -> dict[str, Any]:
         if self.bana is None:
@@ -181,12 +230,7 @@ class LifeOSService:
                 "name": question, "parent_change_index": 0, "by": by, "tags": ["question"], "fields": common,
             }))
         if revision.get("journal_entry"):
-            changes.append(BanaChange("add", None, {
-                "name": f"Journal {capture['captured_at'][11:16]}",
-                "parent": capture["captured_at"][:10],
-                "description": revision["journal_entry"],
-                "fields": common, "by": by,
-            }))
+            changes.append(BanaChange("add", None, self._journal_fields(capture, revision)))
         result = self._direct_notes(f"interp-{revision['revision_hash'][:40]}", (), tuple(changes))
         nodes = [str(receipt["node"]) for receipt in result["receipts"] if receipt]
         return {
@@ -204,6 +248,7 @@ class LifeOSService:
         """
         if self.brain_dumps is None:
             raise RuntimeError("brain-dump storage is not configured")
+        self.flush_journal_outbox()
         page = self.notes_today(day)
         marker = f"<!-- lifeos:bana-export {page['date']} -->"
         folder = self.brain_dumps.journal_dir

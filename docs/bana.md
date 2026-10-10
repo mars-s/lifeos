@@ -10,7 +10,7 @@ Bana checks every assistant command itself too (see Bana's `docs/mcp.md`). Its r
 
 The gateway runs only allowlisted Bana commands: search, inspect, tags, Markdown export, day lookup, add, note text, move, tag and field. Everything in the Never tier is outside the allowlist and is refused before any request: `node.hardDelete`, `node.delete`, `trash.empty`, `node.toggleLock`, `import.*`, `file.*`, `settings.*`, `workspace.*` and `commandNode.*`.
 
-If Bana is closed, note tools say it is not reachable and nothing is queued.
+If Bana is closed, note tools say it is not reachable and nothing is queued. The one exception is journal prose (see Capture and interpret).
 
 ## Who may write to Bana
 
@@ -34,7 +34,7 @@ The supertags come from Bana's "Agent notebook" template: `#capture`, `#interpre
 
 1. `capture_brain_dump` saves the exact words in the LifeOS ledger first, then adds a `#capture` node to that day's page with the raw text as its note and the same `Source hash`. Bana closed: the capture still succeeds with `bana.status: "unavailable"`. No `notes:write` on the remote path: `"not permitted"`.
 2. `submit_brain_dump_semanticization` adds a new `#interpretation` node under the capture (`#meeting` too when `meeting_title` is given). Tasks become `#suggested-action` children and questions `#question` children, each with an `Evidence` field holding the verbatim excerpt. Earlier interpretations are never rewritten.
-3. Journal prose goes on the Bana day page. See [ADR 0002](adr/0002-bana-day-page-is-the-journal.md).
+3. Journal prose goes on the Bana day page. See [ADR 0002](adr/0002-bana-day-page-is-the-journal.md). If Bana is closed, the prose goes to the Markdown journal file and into an outbox in the LifeOS SQLite (`bana_journal_outbox`, keyed by request id `journal-<revision hash>`), and the result says `bana: {"status": "unavailable", "journal": "queued"}`. The next capture, interpretation or `lifeos export-journal` that finds Bana open writes it to that day's page and clears the row. The request id makes that write happen exactly once, even if two flushes race or the row is cleared late.
 
 ## Promote to Things
 
@@ -68,6 +68,7 @@ BANA_BIN=/tmp/bana-target/debug/bana sh scripts/verify.sh
 
 ## Not built yet
 
+- Only journal prose is queued while Bana is closed. A capture or interpretation made then is not written later, except that the capture node is written when its next interpretation reaches an open Bana.
 - The raw capture copy is not locked: LifeOS cannot lock nodes (`node.toggleLock` is Never). `source_hash_matches` flags a copy someone edited; the ledger wins.
 - The agenda mirror (Things and Calendar on the day page, plan phase 6) waits for Bana's mirror-upsert path.
 - `#proposal` summary nodes, the agent inbox (`#ask-agent`) and the morning proposal-only run (plan phase 7).
