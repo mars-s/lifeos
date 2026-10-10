@@ -53,8 +53,16 @@ An action inferred from a Brain Dump that has not yet become a Things Task or ca
 _Avoid_: Task, reminder
 
 **Daily Journal**:
-The Markdown document that is the canonical journal record for one local calendar date.
+The Bana day page for one local calendar date. Its prose is the canonical journal record. A Markdown file in the journal folder is an export of it.
 _Avoid_: Memory, transcript
+
+**Bana Note**:
+A node in the person's Bana outliner. Bana holds the words: notes, capture copies, interpretations, meetings and the journal. Agents reach it only through LifeOS's note tools.
+_Avoid_: Task, memory
+
+**Capture Copy**:
+The `#capture` node in Bana that repeats a Brain Dump Capture's raw text with the same Source hash. The LifeOS ledger stays authoritative; a copy whose text no longer matches is flagged, not trusted.
+_Avoid_: Source record
 
 **Agent**:
 A conversational ChatGPT or Claude client that uses the LifeOS tool interface to read context and propose or apply actions.
@@ -73,4 +81,7 @@ Things 3 is authoritative for the content, project membership, dates, and comple
 Apple Calendar is authoritative for the timing of External Commitments and Planned Work Blocks.
 
 **Journal authority**:
-Daily Journal Markdown is authoritative for journal prose. Search indexes, connections, and memories are derived from it.
+The Bana day page is authoritative for journal prose. Markdown in the journal folder is a scheduled export, and the fallback while Bana is closed. Search indexes, connections, and memories are derived from it. See [ADR 0002](docs/adr/0002-bana-day-page-is-the-journal.md).
+
+**Note authority**:
+Bana is authoritative for notes, interpretations and meetings. Raw captures stay authoritative in the LifeOS ledger. Approvals never come from a Bana edit.

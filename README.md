@@ -17,7 +17,7 @@ Your thoughts, tasks and calendar, connected through the agent you already use.
 
 LifeOS connects Things 3 and Apple Calendar to MCP clients such as ChatGPT and Codex. Talk through a brain dump, review a visual plan, then approve the exact changes you want. Your Mac keeps the original words and the saved decisions, so the next chat does not have to start from scratch.
 
-Things stays your task manager. Calendar stays your calendar. LifeOS handles the coordination between them.
+Things stays your task manager. Calendar stays your calendar. [Bana](docs/bana.md) holds your notes and daily journal. LifeOS handles the coordination between them.
 
 > Personal, Mac-first software in active development. This repository includes local MCP tools, interactive ChatGPT cards and a native cloud-sync companion. It is not a packaged, one-click app release.
 
@@ -30,6 +30,7 @@ Things stays your task manager. Calendar stays your calendar. LifeOS handles the
 | An overloaded day or week | A plan preview built around Calendar availability, with draggable blocks and duration editing. |
 | A proposed change | A review card bound to an exact revision, followed by approval, source checks and application receipts. |
 | Something you said last week | Searchable captures and optional memory recall that do not depend on the originating chat. |
+| Something in your notes | Search, read and add Bana notes, with node ids to cite. Captures and interpretations land in Bana too. |
 | A Things edit while your Mac is asleep | A queued title, completion or recoverable Trash operation for the native agent to process when your Mac is awake. |
 
 ### Ask in your own words
@@ -74,7 +75,7 @@ The bridge starts an allowlisted Python subprocess for a tool call. It does not 
 
 ### Preserve the words before interpreting them
 
-Raw brain dumps and transcripts live in local SQLite. Interpretations are separate immutable revisions linked to those captures. Reprocessing does not overwrite the original text. Reflective journal prose can also be appended to local Markdown.
+Raw brain dumps and transcripts live in local SQLite. Interpretations are separate immutable revisions linked to those captures. Reprocessing does not overwrite the original text. A copy of each capture, its interpretations and your journal prose also land in Bana on your Mac; the Bana day page is the journal, and Markdown is an export ([ADR 0002](docs/adr/0002-bana-day-page-is-the-journal.md)).
 
 Local storage does not mean the text never leaves your Mac. ChatGPT receives the content it sends or requests. Bridge traffic passes through Cloudflare in memory, without saving raw captures to its durable queue or D1. Explicit memory indexing sends content to the configured extraction provider.
 
@@ -101,6 +102,8 @@ Read sources → Prepare proposal → Review revision → Approve exact hash
                                                         ↓
 Record receipts ← Apply and verify ← Recheck source snapshots
 ```
+
+Only you approve. The review card calls approval for you; the model cannot see the approve and reject tools. If a host shows no card, run `uv run lifeos approve <proposal_id> <revision_hash>` in a terminal.
 
 LifeOS checks for stale sources before applying a proposal. Application records per-operation receipts. Check saved state before retrying an interrupted call, because a timeout is not proof that nothing happened.
 
@@ -158,6 +161,7 @@ The local service accepts these storage overrides:
 | `LIFEOS_DB_PATH` | `~/Library/Application Support/LifeOS/lifeos.sqlite3` |
 | `LIFEOS_JOURNAL_DIR` | `~/Library/Application Support/LifeOS/Journal` |
 | `LIFEOS_CALENDAR_HELPER` | The EventKit release helper in this checkout. |
+| `BANA_HOME` | `~/Bana` (where the running Bana app announces itself). |
 
 On the owner's configured Mac, `lifeos-stack start`, `lifeos-stack status` and `lifeos-stack stop` control the installed MCP, ngrok and memory launch agents. `lifeos-stack reload` restarts only MCP. This helper uses owner-specific paths. It is not a portable installer or a control for the native menu-bar app.
 
@@ -188,6 +192,8 @@ A passing build or health check does not prove ChatGPT rendered a card, a real w
 | Native sync, signing and owner activation | [Mac companion](mac-sync/README.md) |
 | Event-driven sync and conflict handling | [Smart-sync design](docs/smart-merge-design.md) |
 | Memory options and extraction trade-offs | [Memory research](docs/research/memory-systems-2026-09.md) |
+| Notes in Bana: tools, tiers and safety | [Bana notes](docs/bana.md) |
+| Deploying notes to ChatGPT and claude.ai | [Rollout checklist](docs/bana-rollout.md) |
 | Colours, artwork and reusable mark | [Brand guide](docs/brand.md) |
 
 ## Direction
