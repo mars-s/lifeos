@@ -82,6 +82,9 @@ def run() -> Path:
         db_path = scratch_path / "lifeos.sqlite3"
         log_path = evidence_dir / "server.log"
         env = {key: value for key, value in os.environ.items() if not key.startswith("LIFEOS_")}
+        # No Anytype settings or key: the synthetic capture can never reach the person's notes.
+        env["LIFEOS_ANYTYPE_CONFIG"] = str(scratch_path / "anytype.json")
+        env["LIFEOS_ANYTYPE_NO_KEYCHAIN"] = "1"
         command = [
             str(ROOT / ".venv/bin/lifeos-mcp"),
             "--transport", "streamable-http",

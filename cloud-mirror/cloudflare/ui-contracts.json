@@ -1,0 +1,788 @@
+{
+  "DayPlanWidgetOutput": {
+    "$defs": {
+      "DayPlanBlockView": {
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "duration_minutes": {
+            "minimum": 1,
+            "title": "Duration Minutes",
+            "type": "integer"
+          },
+          "part": {
+            "default": 1,
+            "minimum": 1,
+            "title": "Part",
+            "type": "integer"
+          },
+          "calendar_id": {
+            "minLength": 1,
+            "title": "Calendar Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "title",
+          "start",
+          "end",
+          "duration_minutes",
+          "calendar_id"
+        ],
+        "title": "DayPlanBlockView",
+        "type": "object"
+      },
+      "UnscheduledTaskView": {
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "remaining_minutes": {
+            "minimum": 1,
+            "title": "Remaining Minutes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "task_id",
+          "title",
+          "reason",
+          "remaining_minutes"
+        ],
+        "title": "UnscheduledTaskView",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "day_start": {
+        "title": "Day Start",
+        "type": "string"
+      },
+      "day_end": {
+        "title": "Day End",
+        "type": "string"
+      },
+      "blocks": {
+        "items": {
+          "$ref": "#/$defs/DayPlanBlockView"
+        },
+        "title": "Blocks",
+        "type": "array"
+      },
+      "unscheduled": {
+        "items": {
+          "$ref": "#/$defs/UnscheduledTaskView"
+        },
+        "title": "Unscheduled",
+        "type": "array"
+      },
+      "proposal_ready": {
+        "default": true,
+        "title": "Proposal Ready",
+        "type": "boolean"
+      },
+      "mutates_external_systems": {
+        "default": false,
+        "title": "Mutates External Systems",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "day_start",
+      "day_end",
+      "blocks"
+    ],
+    "title": "DayPlanWidgetOutput",
+    "type": "object"
+  },
+  "WeekPlanWidgetOutput": {
+    "$defs": {
+      "DayPlanBlockView": {
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "duration_minutes": {
+            "minimum": 1,
+            "title": "Duration Minutes",
+            "type": "integer"
+          },
+          "part": {
+            "default": 1,
+            "minimum": 1,
+            "title": "Part",
+            "type": "integer"
+          },
+          "calendar_id": {
+            "minLength": 1,
+            "title": "Calendar Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "title",
+          "start",
+          "end",
+          "duration_minutes",
+          "calendar_id"
+        ],
+        "title": "DayPlanBlockView",
+        "type": "object"
+      },
+      "UnscheduledTaskView": {
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "remaining_minutes": {
+            "minimum": 1,
+            "title": "Remaining Minutes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "task_id",
+          "title",
+          "reason",
+          "remaining_minutes"
+        ],
+        "title": "UnscheduledTaskView",
+        "type": "object"
+      },
+      "WeekPlanDayView": {
+        "additionalProperties": false,
+        "properties": {
+          "day_start": {
+            "title": "Day Start",
+            "type": "string"
+          },
+          "day_end": {
+            "title": "Day End",
+            "type": "string"
+          },
+          "blocks": {
+            "items": {
+              "$ref": "#/$defs/DayPlanBlockView"
+            },
+            "title": "Blocks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "day_start",
+          "day_end"
+        ],
+        "title": "WeekPlanDayView",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "range_start": {
+        "title": "Range Start",
+        "type": "string"
+      },
+      "range_end": {
+        "title": "Range End",
+        "type": "string"
+      },
+      "days": {
+        "items": {
+          "$ref": "#/$defs/WeekPlanDayView"
+        },
+        "maxItems": 14,
+        "minItems": 1,
+        "title": "Days",
+        "type": "array"
+      },
+      "unscheduled": {
+        "items": {
+          "$ref": "#/$defs/UnscheduledTaskView"
+        },
+        "title": "Unscheduled",
+        "type": "array"
+      },
+      "proposal_ready": {
+        "default": true,
+        "title": "Proposal Ready",
+        "type": "boolean"
+      },
+      "mutates_external_systems": {
+        "default": false,
+        "title": "Mutates External Systems",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "range_start",
+      "range_end",
+      "days"
+    ],
+    "title": "WeekPlanWidgetOutput",
+    "type": "object"
+  },
+  "BrainDumpCanvasOutput": {
+    "$defs": {
+      "CanvasItemView": {
+        "additionalProperties": false,
+        "description": "One piece of interpreted content inside a canvas node.",
+        "properties": {
+          "id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "maxLength": 10000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Meta"
+          },
+          "area": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Area"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Start"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End"
+          },
+          "time_expression": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Time Expression"
+          },
+          "source_excerpt": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Excerpt"
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Assignee"
+          },
+          "evidence_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "confirmed",
+                  "notes_only",
+                  "conflict",
+                  "inference"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evidence Status"
+          },
+          "state": {
+            "default": "candidate",
+            "enum": [
+              "candidate",
+              "scheduled",
+              "unscheduled",
+              "unresolved",
+              "saved"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "CanvasItemView",
+        "type": "object"
+      },
+      "CanvasNodeView": {
+        "additionalProperties": false,
+        "description": "A model-positioned region in the responsive twelve-column canvas.",
+        "properties": {
+          "id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "tasks",
+              "calendar",
+              "journal",
+              "questions",
+              "note",
+              "heading",
+              "mermaid",
+              "custom_html"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "maxLength": 20000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Body"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/$defs/CanvasItemView"
+            },
+            "maxItems": 40,
+            "title": "Items",
+            "type": "array"
+          },
+          "accent": {
+            "default": "neutral",
+            "enum": [
+              "neutral",
+              "blue",
+              "green",
+              "plum",
+              "amber"
+            ],
+            "title": "Accent",
+            "type": "string"
+          },
+          "x": {
+            "default": 1,
+            "description": "Legacy placement hint; source order wins.",
+            "maximum": 12,
+            "minimum": 1,
+            "title": "X",
+            "type": "integer"
+          },
+          "y": {
+            "default": 1,
+            "description": "Sort-order hint, not a pixel position.",
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Y",
+            "type": "integer"
+          },
+          "width": {
+            "default": 12,
+            "description": "Number of columns to span, from 1 to 12.",
+            "maximum": 12,
+            "minimum": 1,
+            "title": "Width",
+            "type": "integer"
+          },
+          "min_height": {
+            "default": 2,
+            "description": "Legacy minimum-height hint. Compact row values and older pixel-style values are both accepted, but the renderer always expands the node to fit its content.",
+            "maximum": 2000,
+            "minimum": 1,
+            "title": "Min Height",
+            "type": "integer"
+          },
+          "html": {
+            "anyOf": [
+              {
+                "maxLength": 40000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "HTML for custom_html nodes. It runs only inside an isolated nested sandbox.",
+            "title": "Html"
+          },
+          "css": {
+            "anyOf": [
+              {
+                "maxLength": 30000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "CSS for a custom_html node's isolated document.",
+            "title": "Css"
+          },
+          "javascript": {
+            "anyOf": [
+              {
+                "maxLength": 30000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional JavaScript for a custom_html node. It runs in a unique-origin sandbox with network, navigation, popups, storage, and the LifeOS bridge unavailable.",
+            "title": "Javascript"
+          },
+          "diagram": {
+            "anyOf": [
+              {
+                "maxLength": 20000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Mermaid diagram source for mermaid nodes. Prefer flowchart, mindmap, timeline, or journey syntax. Frontmatter configuration is ignored by the renderer. Add a plain-language relationship summary in body so the diagram is accessible.",
+            "title": "Diagram"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title"
+        ],
+        "title": "CanvasNodeView",
+        "type": "object"
+      },
+      "TranscriptSegmentView": {
+        "additionalProperties": false,
+        "description": "One timestamped speaker turn shown in a meeting debrief.",
+        "properties": {
+          "id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "speaker": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Speaker",
+            "type": "string"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Timestamp"
+          },
+          "text": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "is_user": {
+            "default": false,
+            "title": "Is User",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "speaker",
+          "text"
+        ],
+        "title": "TranscriptSegmentView",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "description": "A flexible visual preview composed by an agent from durable LifeOS data.",
+    "properties": {
+      "version": {
+        "const": "1",
+        "default": "1",
+        "title": "Version",
+        "type": "string"
+      },
+      "title": {
+        "maxLength": 500,
+        "minLength": 1,
+        "title": "Title",
+        "type": "string"
+      },
+      "subtitle": {
+        "anyOf": [
+          {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Subtitle"
+      },
+      "capture_id": {
+        "anyOf": [
+          {
+            "maxLength": 120,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Capture Id"
+      },
+      "revision_hash": {
+        "anyOf": [
+          {
+            "maxLength": 200,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Revision Hash"
+      },
+      "source_label": {
+        "anyOf": [
+          {
+            "maxLength": 200,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Source Label"
+      },
+      "meeting_date": {
+        "anyOf": [
+          {
+            "maxLength": 100,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Meeting Date"
+      },
+      "participants": {
+        "items": {
+          "type": "string"
+        },
+        "maxItems": 40,
+        "title": "Participants",
+        "type": "array"
+      },
+      "transcript_segments": {
+        "items": {
+          "$ref": "#/$defs/TranscriptSegmentView"
+        },
+        "maxItems": 500,
+        "title": "Transcript Segments",
+        "type": "array"
+      },
+      "nodes": {
+        "items": {
+          "$ref": "#/$defs/CanvasNodeView"
+        },
+        "maxItems": 24,
+        "minItems": 1,
+        "title": "Nodes",
+        "type": "array"
+      },
+      "mutates_external_systems": {
+        "const": false,
+        "default": false,
+        "title": "Mutates External Systems",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "title",
+      "nodes"
+    ],
+    "title": "BrainDumpCanvasOutput",
+    "type": "object"
+  }
+}

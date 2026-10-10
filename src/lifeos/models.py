@@ -137,6 +137,37 @@ class CalendarChange:
         )
 
 
+NOTE_OPERATIONS = frozenset({"add", "journal", "tag", "set_field", "move", "link_task"})
+
+
+@dataclass(frozen=True, slots=True)
+class NoteChange:
+    """One note edit in Anytype. `add` makes an object and `journal` appends prose to a day's
+    journal object; the rest edit an existing object."""
+
+    operation: str
+    object_id: str | None
+    fields: Mapping[str, JsonValue]
+
+    def __post_init__(self) -> None:
+        if self.operation not in NOTE_OPERATIONS:
+            raise ValueError(f"unsupported note operation: {self.operation}")
+        if (self.operation in {"add", "journal"}) != (self.object_id is None):
+            raise ValueError("add and journal have no object_id; every other note change needs one")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"operation": self.operation, "object_id": self.object_id, "fields": dict(self.fields)}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> NoteChange:
+        object_id = value.get("object_id")
+        return cls(
+            operation=str(value["operation"]),
+            object_id=None if object_id is None else str(object_id),
+            fields=dict(value.get("fields", {})),
+        )
+
+
 def canonical_json(value: Any) -> str:
     """Return one stable JSON representation or reject non-JSON proposal data."""
 
@@ -151,6 +182,7 @@ def revision_hash(
     source_snapshots: Sequence[SourceSnapshot],
     things_changes: Sequence[ThingsChange],
     calendar_changes: Sequence[CalendarChange],
+    note_changes: Sequence[NoteChange] = (),
 ) -> str:
     """Hash semantic content only; timestamps and state never change a revision hash."""
 
@@ -164,6 +196,9 @@ def revision_hash(
         "things_changes": [item.to_dict() for item in things_changes],
         "calendar_changes": [item.to_dict() for item in calendar_changes],
     }
+    # Only present when used, so every hash made before notes existed stays the same.
+    if note_changes:
+        payload["note_changes"] = [item.to_dict() for item in note_changes]
     return sha256(canonical_json(payload).encode("utf-8")).hexdigest()
 
 
@@ -179,6 +214,7 @@ class ProposalRevision:
     created_at: str
     approved_revision_hash: str | None = None
     failure_detail: str | None = None
+    note_changes: tuple[NoteChange, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.proposal_id or self.revision_number < 1:

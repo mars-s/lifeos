@@ -843,8 +843,9 @@
         const continueButton = element("button", "action secondary", "Continue planning");
         continueButton.type = "button";
         continueButton.addEventListener("click", () => followUp("Continue planning from this exact LifeOS meeting debrief. Resolve only the questions that block my tasks. Do not apply anything yet."));
-        const proposalButton = element("button", "action", "Prepare proposal");
+        const proposalButton = element("button", "action", data.can_prepare_proposal === false ? "Preview only" : "Prepare proposal");
         proposalButton.type = "button";
+        proposalButton.disabled = data.can_prepare_proposal === false;
         proposalButton.addEventListener("click", () => {
           const ids = [...selectedIds];
           followUp(`Prepare a reviewable Things proposal for only these selected task IDs from the meeting debrief: ${ids.join(", ") || "none"}. Keep their LifeOS areas and transcript evidence. Do not apply anything yet.`);

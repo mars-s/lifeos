@@ -17,7 +17,7 @@ Your thoughts, tasks and calendar, connected through the agent you already use.
 
 LifeOS connects Things 3 and Apple Calendar to MCP clients such as ChatGPT and Codex. Talk through a brain dump, review a visual plan, then approve the exact changes you want. Your Mac keeps the original words and the saved decisions, so the next chat does not have to start from scratch.
 
-Things stays your task manager. Calendar stays your calendar. LifeOS handles the coordination between them.
+Things stays your task manager. Calendar stays your calendar. [Anytype](docs/anytype.md) holds your notes and daily journal. LifeOS handles the coordination between them.
 
 > Personal, Mac-first software in active development. This repository includes local MCP tools, interactive ChatGPT cards and a native cloud-sync companion. It is not a packaged, one-click app release.
 
@@ -30,6 +30,7 @@ Things stays your task manager. Calendar stays your calendar. LifeOS handles the
 | An overloaded day or week | A plan preview built around Calendar availability, with draggable blocks and duration editing. |
 | A proposed change | A review card bound to an exact revision, followed by approval, source checks and application receipts. |
 | Something you said last week | Searchable captures and optional memory recall that do not depend on the originating chat. |
+| Something in your notes | Search, read and add Anytype notes, with object ids to cite. Captures and interpretations land in Anytype too. Ask from Anytype's own chat named LifeOS. |
 | A Things edit while your Mac is asleep | A queued title, completion or recoverable Trash operation for the native agent to process when your Mac is awake. |
 
 ### Ask in your own words
@@ -74,11 +75,25 @@ The bridge starts an allowlisted Python subprocess for a tool call. It does not 
 
 ### Preserve the words before interpreting them
 
-Raw brain dumps and transcripts live in local SQLite. Interpretations are separate immutable revisions linked to those captures. Reprocessing does not overwrite the original text. Reflective journal prose can also be appended to local Markdown.
+Raw brain dumps and transcripts live in local SQLite. Interpretations are separate immutable revisions linked to those captures. Reprocessing does not overwrite the original text. A copy of each capture, its interpretations and your journal prose also land in your LifeOS space in Anytype; the Anytype journal day is the journal, and Markdown is an export ([ADR 0003](docs/adr/0003-anytype-is-the-notebook.md)).
 
 Local storage does not mean the text never leaves your Mac. ChatGPT receives the content it sends or requests. Bridge traffic passes through Cloudflare in memory, without saving raw captures to its durable queue or D1. Explicit memory indexing sends content to the configured extraction provider.
 
 ### Approve an exact proposal
+
+Simple tasks you explicitly ask to add can use `create_requested_task` in one call.
+It creates one Things to-do, defaults to Personal, verifies the write and returns
+an immutable audit record and receipt. It does not need a LifeOS review card or
+a second approval message. Reuse its `request_id` unchanged after a timeout.
+An uncertain or failed write is not automatically replayed. Relative dates must
+be resolved to your local `YYYY-MM-DD` date before calling the tool.
+Timing constraints such as "after 8pm" belong in notes. This tool does not set
+or verify a timed alarm, create a Calendar block or invent a duration.
+
+This exception is for explicit single-task requests, not inferred meeting actions,
+batches, existing-item edits or Calendar changes. OAuth write access and platform
+permission prompts still apply. The unified cloud connector needs an awake Mac
+with local tools enabled.
 
 The local proposal flow is:
 
@@ -87,6 +102,8 @@ Read sources → Prepare proposal → Review revision → Approve exact hash
                                                         ↓
 Record receipts ← Apply and verify ← Recheck source snapshots
 ```
+
+Only you approve. The review card calls approval for you; the model cannot see the approve and reject tools. If a host shows no card, run `uv run lifeos approve <proposal_id> <revision_hash>` in a terminal.
 
 LifeOS checks for stale sources before applying a proposal. Application records per-operation receipts. Check saved state before retrying an interrupted call, because a timeout is not proof that nothing happened.
 
@@ -144,6 +161,9 @@ The local service accepts these storage overrides:
 | `LIFEOS_DB_PATH` | `~/Library/Application Support/LifeOS/lifeos.sqlite3` |
 | `LIFEOS_JOURNAL_DIR` | `~/Library/Application Support/LifeOS/Journal` |
 | `LIFEOS_CALENDAR_HELPER` | The EventKit release helper in this checkout. |
+| `LIFEOS_ANYTYPE_CONFIG` | `anytype.json` next to the database (base URL, space, chat), written by `lifeos anytype connect`. |
+| `LIFEOS_ANYTYPE_URL`, `LIFEOS_ANYTYPE_SPACE_ID` | Override the saved Anytype base URL and space. |
+| `LIFEOS_ANYTYPE_API_KEY_FILE` | A 0600 file with the Anytype API key, instead of the macOS Keychain. |
 
 On the owner's configured Mac, `lifeos-stack start`, `lifeos-stack status` and `lifeos-stack stop` control the installed MCP, ngrok and memory launch agents. `lifeos-stack reload` restarts only MCP. This helper uses owner-specific paths. It is not a portable installer or a control for the native menu-bar app.
 
@@ -174,6 +194,8 @@ A passing build or health check does not prove ChatGPT rendered a card, a real w
 | Native sync, signing and owner activation | [Mac companion](mac-sync/README.md) |
 | Event-driven sync and conflict handling | [Smart-sync design](docs/smart-merge-design.md) |
 | Memory options and extraction trade-offs | [Memory research](docs/research/memory-systems-2026-09.md) |
+| Notes in Anytype: tools, tiers, chat agent and safety | [Anytype notes](docs/anytype.md) |
+| Setting up Anytype, the chat agent, ChatGPT and claude.ai | [Rollout checklist](docs/anytype-rollout.md) |
 | Colours, artwork and reusable mark | [Brand guide](docs/brand.md) |
 
 ## Direction
@@ -183,3 +205,16 @@ LifeOS started with one person's workload across work, university and personal p
 The standalone macOS canvas is a future direction, not a shipped app. Today the interactive planning UI lives in MCP Apps cards, alongside the native sync companion.
 
 Built by Avi. [MIT licensed](LICENSE).
+
+## Explicit task CRUD
+
+For a single task the user explicitly requests, the connected Mac supports
+`create_requested_task`, `read_requested_task`, `update_requested_task` and
+`trash_requested_task`. These do not require an extra LifeOS review card.
+Edits and Trash require an exact local task ID and its fresh `source_hash`.
+Use local search or read-by-ID if the cloud mirror has not caught up.
+Deletion moves the task to recoverable Things Trash, never permanent deletion.
+Writes retain immutable intent and verified receipts. Retry with the same request
+ID and arguments; do not automatically replay an uncertain write.
+ChatGPT and macOS permissions still apply. Inferred changes, batches and Calendar
+changes continue through reviewed proposals.

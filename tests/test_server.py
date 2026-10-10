@@ -14,6 +14,9 @@ from lifeos.ui import BrainDumpCanvasOutput
 
 
 class FakeService:
+    def approval_ticket(self, proposal_id, revision_hash):
+        return f"ticket:{proposal_id}:{revision_hash}"
+
     def read_things_list(self, list_name, *, limit, offset):
         return {"list": list_name, "limit": limit, "offset": offset, "items": []}
 
@@ -63,7 +66,6 @@ async def test_mcp_exposes_read_and_review_tools_but_no_raw_mutations():
         "recall_memory",
         "review_brain_dump_memory",
         "propose_changes",
-        "approve_proposal",
         "apply_approved_proposal",
     } <= names
     assert "update_todo" not in names
@@ -257,12 +259,16 @@ async def test_proposal_review_exposes_exact_revision_actions_to_chatgpt():
     assert render_tool.meta["ui"]["resourceUri"] == "ui://lifeos/proposal-review-v1.html"
     assert render_tool.meta["openai/outputTemplate"] == "ui://lifeos/proposal-review-v1.html"
     assert render_tool.annotations.readOnlyHint is True
-    assert approve_tool.meta["ui"]["visibility"] == ["model", "app"]
-    assert reject_tool.meta["ui"]["visibility"] == ["model", "app"]
+    assert approve_tool.meta["ui"]["visibility"] == ["app"]
+    assert reject_tool.meta["ui"]["visibility"] == ["app"]
+    assert approve_tool.meta["openai/visibility"] == "private"
+    assert approve_tool.meta["openai/widgetAccessible"] is True
     assert resource.mimeType == "text/html;profile=mcp-app"
     assert "Approve revision" in contents[0].text
     assert 'transition("approve_proposal"' in contents[0].text
     assert 'transition("reject_proposal"' in contents[0].text
+    assert "approval_ticket: ticket" in contents[0].text
+    assert "toolResponseMetadata" in contents[0].text
     assert 'method: "tools/call"' in contents[0].text
     assert "Approval is not application" in contents[0].text
     assert result.structured_content["proposal_id"] == "meeting-follow-ups"
@@ -586,7 +592,7 @@ def test_main_selects_stdio_transport(monkeypatch):
             calls.append(kwargs)
 
     monkeypatch.setattr(server, "build_default_service", lambda config: object())
-    monkeypatch.setattr(server, "create_mcp", lambda service: FakeMCP())
+    monkeypatch.setattr(server, "create_mcp", lambda service, **_: FakeMCP())
 
     server.main(["--transport", "stdio"])
 
@@ -601,7 +607,7 @@ def test_main_selects_loopback_streamable_http(monkeypatch):
             calls.append(kwargs)
 
     monkeypatch.setattr(server, "build_default_service", lambda config: object())
-    monkeypatch.setattr(server, "create_mcp", lambda service: FakeMCP())
+    monkeypatch.setattr(server, "create_mcp", lambda service, **_: FakeMCP())
 
     server.main(
         [
@@ -626,3 +632,73 @@ def test_main_selects_loopback_streamable_http(monkeypatch):
             "log_level": None,
         }
     ]
+
+
+def _model_visible(tools):
+    """What an MCP Apps host shows the model: no visibility, or one that includes "model"."""
+    return {
+        tool.name for tool in tools
+        if "model" in ((tool.meta or {}).get("ui") or {}).get("visibility", ["model"])
+    }
+
+
+PROPOSAL = {
+    "proposal_id": "p", "revision_number": 1, "revision_hash": "h", "state": "draft",
+    "source_snapshots": [], "things_changes": [], "calendar_changes": [],
+    "created_at": "2026-10-10T09:00:00+11:00", "approved_revision_hash": None, "failure_detail": None,
+}
+
+
+class Approvals(FakeService):
+    def approve_proposal(self, proposal_id, revision_hash):
+        return {"proposal_id": proposal_id, "state": "approved"}
+
+    def reject_proposal(self, proposal_id, revision_hash):
+        return {"proposal_id": proposal_id, "state": "rejected"}
+
+
+@pytest.mark.asyncio
+async def test_only_the_card_can_approve_or_reject_over_http():
+    async with Client(create_mcp(Approvals())) as client:
+        visible = _model_visible(await client.list_tools())
+        rendered = await client.call_tool("render_proposal_review", {"proposal": PROPOSAL})
+        ticket = rendered.meta["lifeos/approval_ticket"]
+        # A model (or a host that ignores visibility) has no ticket: refused, nothing changes.
+        for tool in ("approve_proposal", "reject_proposal"):
+            for guess in ("", "h", ticket + "0"):
+                refused = await client.call_tool(
+                    tool, {"proposal_id": "p", "revision_hash": "h", "approval_ticket": guess},
+                    raise_on_error=False,
+                )
+                assert refused.is_error and "lifeos approve" in refused.content[0].text
+        # The card got the ticket in result _meta and can approve this exact revision only.
+        approved = await client.call_tool(
+            "approve_proposal", {"proposal_id": "p", "revision_hash": "h", "approval_ticket": ticket}
+        )
+
+    assert "approve_proposal" not in visible
+    assert "reject_proposal" not in visible
+    assert {"propose_changes", "render_proposal_review", "apply_approved_proposal"} <= visible
+    assert ticket not in str(rendered.structured_content) and ticket not in str(rendered.content)
+    assert approved.structured_content["state"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_stdio_has_no_approve_or_reject(monkeypatch):
+    built = []
+    monkeypatch.setattr(server, "build_default_service", lambda config: Approvals())
+    monkeypatch.setattr(server.FastMCP, "run", lambda self, **kwargs: built.append(self))
+    server.main(["--transport", "stdio"])
+
+    async with Client(built[0]) as client:
+        names = {tool.name for tool in await client.list_tools()}
+        rendered = await client.call_tool("render_proposal_review", {"proposal": PROPOSAL})
+        called = await client.call_tool(
+            "approve_proposal", {"proposal_id": "p", "revision_hash": "h", "approval_ticket": "x"},
+            raise_on_error=False,
+        )
+
+    assert {"approve_proposal", "reject_proposal"}.isdisjoint(names)
+    assert {"render_proposal_review", "apply_approved_proposal"} <= names
+    assert not rendered.meta or "lifeos/approval_ticket" not in rendered.meta
+    assert called.is_error

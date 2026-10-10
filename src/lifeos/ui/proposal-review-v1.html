@@ -248,6 +248,7 @@
       let requestId = 0;
       let current;
       let busy = false;
+      let ticket = "";
       let feedback = "";
       let feedbackIsError = false;
 
@@ -313,7 +314,8 @@
         title.append(el("span", "operation", String(change.operation || "change")), el("strong", "", titleForChange(change, domain)));
         row.append(title);
         const identifier = domain === "Things" ? change.task_id : change.event_id;
-        const target = domain === "Calendar" ? `Calendar: ${change.calendar_id}` : identifier ? `Task: ${identifier}` : "New Things task";
+        const target = domain === "Anytype" ? (change.object_id ? `Note: ${change.object_id}` : "New Anytype note")
+          : domain === "Calendar" ? `Calendar: ${change.calendar_id}` : identifier ? `Task: ${identifier}` : "New Things task";
         row.append(el("p", "change-meta", `${target}${change.destructive ? " · Destructive" : ""}`));
         const fields = Object.entries(change.fields || {}).filter(([key]) => key !== "title" && key !== "name");
         if (fields.length) {
@@ -350,6 +352,12 @@
         window.parent.postMessage({ jsonrpc: "2.0", method: "ui/message", params: { role: "user", content: [{ type: "text", text: prompt }] } }, "*");
       }
 
+      // LifeOS gives only this card (in result _meta, which the model does not see) the ticket
+      // that approve and reject require.
+      function remember(meta) {
+        if (meta && meta["lifeos/approval_ticket"]) ticket = String(meta["lifeos/approval_ticket"]);
+      }
+
       function callTool(name, args) {
         if (window.openai?.callTool) return window.openai.callTool(name, args);
         const id = `lifeos-${++requestId}`;
@@ -371,7 +379,7 @@
         feedbackIsError = false;
         render(current);
         try {
-          const result = await callTool(toolName, { proposal_id: current.proposal_id, revision_hash: current.revision_hash });
+          const result = await callTool(toolName, { proposal_id: current.proposal_id, revision_hash: current.revision_hash, approval_ticket: ticket });
           const output = result?.structuredContent || result?.structured_content || result?.data || result;
           if (output && output.proposal_id) current = output;
           else current = { ...current, state: toolName === "approve_proposal" ? "approved" : "rejected", approved_revision_hash: toolName === "approve_proposal" ? current.revision_hash : null };
@@ -397,7 +405,7 @@
 
         const header = el("header", "header");
         const heading = el("div");
-        heading.append(el("h1", "", "Review proposed changes"), el("p", "subtitle", "Nothing in Things or Calendar changes until this exact revision is approved and applied."));
+        heading.append(el("h1", "", "Review proposed changes"), el("p", "subtitle", "Nothing in Things, Calendar or Anytype changes until this exact revision is approved and applied."));
         const state = el("div", "state");
         state.dataset.state = String(data.state || "draft");
         state.append(el("span", "state-dot"), document.createTextNode(labelForState(data.state)));
@@ -424,6 +432,7 @@
         notice.append(infoIcon(), noticeCopy);
         const domains = el("div", "domains");
         domains.append(renderDomain("Things", data.things_changes || []), renderDomain("Calendar", data.calendar_changes || []));
+        if ((data.note_changes || []).length) domains.append(renderDomain("Anytype", data.note_changes));
         content.append(notice, domains);
         if (data.failure_detail) content.append(el("p", "failure", String(data.failure_detail)));
         const statusText = el("p", "feedback", feedback);
@@ -461,7 +470,10 @@
         if (event.source !== window.parent) return;
         const message = event.data;
         if (!message || message.jsonrpc !== "2.0") return;
-        if (message.method === "ui/notifications/tool-result") render(message.params?.structuredContent);
+        if (message.method === "ui/notifications/tool-result") {
+          remember(message.params?._meta);
+          render(message.params?.structuredContent);
+        }
         if (message.id && pendingCalls.has(message.id)) {
           const pending = pendingCalls.get(message.id);
           pendingCalls.delete(message.id);
@@ -471,10 +483,12 @@
       }, { passive: true });
 
       window.addEventListener("openai:set_globals", (event) => {
+        remember(event.detail?.globals?.toolResponseMetadata);
         const output = event.detail?.globals?.toolOutput;
         if (output) render(output);
       }, { passive: true });
 
+      remember(window.openai?.toolResponseMetadata);
       if (window.openai?.toolOutput) render(window.openai.toolOutput);
       else if (new URLSearchParams(window.location.search).get("demo") === "1") render(demo);
     })();

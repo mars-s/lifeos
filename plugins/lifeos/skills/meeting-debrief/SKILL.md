@@ -64,6 +64,8 @@ Call `submit_brain_dump_semanticization` using the stored capture and source has
 - confidence reflects the evidence quality, not writing fluency;
 - set `needs_clarification` whenever ownership, deadline, or meaning is uncertain.
 
+Pass `meeting_title` (the meeting's name) so the interpretation lands in Anytype as a Meeting object linked to the capture, with your tasks as Suggested action objects carrying their `Evidence` excerpt, and open ownership listed as questions in its body. Only the user's own actions become suggestions.
+
 Do not write a journal entry unless the user provided genuinely reflective first-person material. Do not create or modify Things tasks or Calendar events during the debrief.
 
 ## Present the debrief
@@ -78,4 +80,4 @@ Then call `render_brain_dump_canvas` using the saved revision. Set `source_label
 
 For the relationship view, follow [meeting diagram guidance](references/meeting-diagrams.md). This applies Diagram Design's small, source-linked visual grammar to the existing Mermaid canvas; it does not replace the raw transcript, semanticization, or approval flow. If a separate polished static export is requested, use the full Diagram Design skill and its style-guide gate before generating HTML/SVG.
 
-End with the LifeOS capture ID and a reminder that nothing has changed in Things or Calendar. If the user later asks to act on an item, use the normal proposal and approval flow.
+End with the LifeOS capture ID, the Anytype meeting object id (or that Anytype was unavailable), and a reminder that nothing has changed in Things or Calendar. If the user later asks to act on an item, use `promote_notes_to_things` and let the user approve the card. Chat text is not approval.

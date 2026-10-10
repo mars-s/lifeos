@@ -15,6 +15,7 @@ final class Agent: NSObject, NSApplicationDelegate {
     var retry: Task<Void, Never>?
     var midnight: Task<Void, Never>?
     let events = CloudEvents()
+    let localBridge = LocalToolBridge()
     let watcher = ThingsChangeWatcher()
     var calendarObservers: [NSObjectProtocol] = []
     var wakeObserver: NSObjectProtocol?
@@ -22,8 +23,16 @@ final class Agent: NSObject, NSApplicationDelegate {
     var online = false
     var initialReconciliationPending = true
     var setupMessage = "Secure setup required"
+    let desktop = DesktopWindowController()
+    let desktopPreview = CommandLine.arguments.contains("--desktop-preview")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if desktopPreview {
+            desktop.model.preview = true
+            desktop.model.status = "Preview: no sync services started"
+            desktop.open()
+            return
+        }
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item?.button?.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "LifeOS Sync")
         loadEngine(); rebuildMenu()
@@ -31,6 +40,15 @@ final class Agent: NSObject, NSApplicationDelegate {
         watcher.onStatus = { [weak self] in self?.writeStatus(); self?.rebuildMenu() }
         watcher.start(since: engine?.journal.state.confirmedEventID ?? 0)
         events.onStatus = { [weak self] _ in self?.writeStatus(); self?.rebuildMenu() }
+        events.localToolsEnabled = { [weak self] in self?.localBridge.enabled ?? false }
+        events.onLocalTool = { [weak self] request in
+            guard let self, let engine = self.engine, !engine.journal.state.paused, !engine.busy else {
+                return LocalToolBridge.failure("Mac sync is paused or busy. No local invocation was sent.")
+            }
+            let result = await self.localBridge.invoke(request)
+            if request["tool"] as? String == "apply_approved_proposal" { self.invalidate(local: true) }
+            return result
+        }
         events.onRevision = { [weak self] revision, catchup in
             guard let self, let engine = self.engine else { return 0 }
             let changed: Bool
@@ -90,6 +108,7 @@ final class Agent: NSObject, NSApplicationDelegate {
     func sync(force: Bool = false) async {
         guard let engine else { return }
         guard online else { return }
+        guard !localBridge.busy else { return }
         if engine.busy { return }
         await engine.cycle(force: force); rebuildMenu()
         writeStatus()
@@ -112,10 +131,20 @@ final class Agent: NSObject, NSApplicationDelegate {
     func writeStatus() {
         guard let engine else { return }
         let summary: JSON = ["status": engine.message, "updated_at": ISO8601DateFormatter().string(from: Date()), "inventoryReads": engine.inventoryReads, "pendingRequests": engine.pendingRequests, "snapshotsUploaded": engine.snapshotsUploaded, "notificationRevision": engine.journal.state.cloudRevision, "feedCursor": engine.feedCursor, "feedHint": engine.journal.state.feedHint, "smartSync": engine.journal.state.smartSync, "connection": events.status, "watcher": watcher.status]
-        try? encoded(summary).write(to: directory.appendingPathComponent("status.json"), options: .atomic)
+        var bridgeStatus = summary
+        bridgeStatus["localToolsEnabled"] = localBridge.enabled
+        bridgeStatus["localToolBusy"] = localBridge.busy
+        try? encoded(bridgeStatus).write(to: directory.appendingPathComponent("status.json"), options: .atomic)
     }
     func rebuildMenu() {
+        desktop.model.status = engine?.message ?? setupMessage
+        desktop.model.connection = events.status
+        desktop.model.pending = engine?.pendingCount ?? 0
+        desktop.model.lastSync = engine?.journal.state.lastSync
+        desktop.model.paused = engine?.journal.state.paused ?? true
         let menu = NSMenu()
+        add(menu, "Open LifeOS", #selector(openDesktop))
+        menu.addItem(.separator())
         menu.addItem(withTitle: engine?.message ?? setupMessage, action: nil, keyEquivalent: "")
         menu.addItem(withTitle: events.status, action: nil, keyEquivalent: "")
         menu.addItem(withTitle: watcher.status, action: nil, keyEquivalent: "")
@@ -130,6 +159,7 @@ final class Agent: NSObject, NSApplicationDelegate {
             add(menu, "Sync now", #selector(syncNow))
         }
         add(menu, "Reload secure setup", #selector(reload))
+        add(menu, localBridge.enabled ? "Disable local LifeOS tools" : "Enable local LifeOS tools", #selector(toggleLocalTools))
         add(menu, "Authorize Keychain access once", #selector(authorizeCredential))
         add(menu, "Start at login", #selector(login))
         menu.addItem(.separator())
@@ -146,6 +176,16 @@ final class Agent: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
     @objc func syncNow() { invalidate(local: true, force: true) }
+    @objc func openDesktop() { desktop.open() }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        desktop.open()
+        return true
+    }
+    @objc func toggleLocalTools() {
+        UserDefaults.standard.set(!localBridge.enabled, forKey: "localLifeOSToolsEnabled")
+        events.reconnect(); rebuildMenu(); writeStatus()
+    }
     @objc func reload() { if engine == nil { loadEngine() }; events.reconnect(); invalidate(local: true, force: true); rebuildMenu() }
     @objc func authorizeCredential() {
         do {
@@ -205,7 +245,19 @@ if let position = args.firstIndex(of: "--import-legacy"), args.count == position
     exit(0)
 }
 let app = NSApplication.shared
+if args.contains("--desktop-check") {
+    do {
+        let snapshot = args.firstIndex(of: "--snapshot").flatMap { position in
+            args.indices.contains(position + 1) ? URL(fileURLWithPath: args[position + 1]) : nil
+        }
+        try DesktopWindowController.verify(snapshot: snapshot)
+    } catch {
+        fputs("Desktop check failed.\n", stderr)
+        exit(1)
+    }
+    exit(0)
+}
 let delegate = Agent()
-app.setActivationPolicy(.accessory)
+app.setActivationPolicy(delegate.desktopPreview ? .regular : .accessory)
 app.delegate = delegate
 app.run()

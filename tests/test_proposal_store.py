@@ -150,3 +150,16 @@ def test_invalid_shape_is_rejected_before_storage() -> None:
         ThingsChange(ChangeOperation.UPDATE, None, {})
     with pytest.raises(ValueError):
         CalendarChange(ChangeOperation.CREATE, "", None, {})
+
+
+def test_the_unreleased_bana_column_is_renamed_and_kept(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.sqlite3"
+    with ProposalStore(path):
+        pass
+    with sqlite3.connect(path) as connection:
+        connection.execute("ALTER TABLE proposal_revisions RENAME COLUMN note_changes_json TO bana_changes_json")
+    with ProposalStore(path) as store:
+        columns = {row[1] for row in store._connection.execute("PRAGMA table_info(proposal_revisions)")}
+    assert "note_changes_json" in columns and "bana_changes_json" not in columns

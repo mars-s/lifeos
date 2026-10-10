@@ -8,6 +8,7 @@ cp .build/release/LifeOSSync "$APP/Contents/MacOS/LifeOSSync"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/native-write.js "$APP/Contents/Resources/"
 cp ../cloud-mirror/lifeos_cache/things_read.js "$APP/Contents/Resources/"
+cp Resources/mountain.png Resources/twilight-forest.png Resources/sunny-field.png "$APP/Contents/Resources/"
 /usr/bin/osacompile -o "$APP/Contents/Resources/things_classify.scpt" ../cloud-mirror/lifeos_cache/things_classify.applescript
 /usr/bin/osacompile -o "$APP/Contents/Resources/things_bulk.scpt" Resources/things_bulk.applescript
 rm -f "$APP/Contents/Resources/native-trash.scpt"

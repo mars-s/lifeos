@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "lifeos",
-  "version": "0.4.0",
+  "version": "0.5.2",
   "description": "Capture thoughts and meeting evidence locally, organize Things, and plan time through Apple Calendar.",
   "author": {
     "name": "Avi Das"
@@ -12,12 +12,13 @@
     "com.openai": {
       "interface": {
         "displayName": "LifeOS",
-        "shortDescription": "Capture thoughts, debrief meetings, and plan reviewed work.",
-        "longDescription": "LifeOS preserves brain dumps and meeting evidence locally, turns them into reviewable candidate work, and coordinates approved changes with Things and Apple Calendar.",
+        "shortDescription": "Add requested tasks, capture thoughts, and plan reviewed work.",
+        "longDescription": "LifeOS creates, reads, updates and trashes individual Things tasks you explicitly request without an extra LifeOS approval card. Local reads avoid cloud sync delays, and deletion uses recoverable Trash. It preserves brain dumps and meeting evidence locally, turns inferred work into reviewable candidates, and coordinates approved Things and Apple Calendar changes. ChatGPT permissions still apply.",
         "developerName": "Avi Das",
         "category": "Productivity",
         "capabilities": ["Read", "Write"],
         "defaultPrompt": [
+          "Add a task to Things directly using create_requested_task. My request is permission, so do not ask for another LifeOS approval.",
           "Brain dump this and sort the useful parts without creating tasks yet.",
           "I just had a meeting. Use the transcript to extract only my own follow-up tasks, verify ownership against the notes, and route each task to the right LifeOS area.",
           "Read my captured thoughts and help me turn the actionable ones into a reviewed plan."

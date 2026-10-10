@@ -4,7 +4,8 @@ The read side is designed for an MCP proposal layer: every returned value is
 structured data and each source record carries a stable snapshot hash.  The
 write side is deliberately private to this adapter.  It launches one official
 Things URL at a time, then re-reads the affected record before reporting an
-outcome.  It has no delete or bulk-write operation.
+outcome. Deletion means recoverable Trash via the existing native AppleScript.
+It has no permanent-delete or bulk-write operation.
 
 This file adapts ideas from hald/things-mcp (MIT, pinned at 7e6e660).  In
 particular, its URL parameter names and percent-encoding approach informed the
@@ -22,6 +23,7 @@ import time as _time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import quote
 
@@ -505,6 +507,33 @@ class ThingsGateway:
         if launched is not None:
             return launched
         return self._verify_existing(command.name, todo_id, self._todo_params(**changes))
+
+    def trash_todo(self, todo_id: str) -> WriteResult:
+        """Use the shipped public Things automation and verify Trash membership."""
+        _strict_id(todo_id)
+        script = Path(__file__).resolve().parents[2] / "mac-sync/Resources/native-trash.applescript"
+        app = Path("/Applications/LifeOS Sync.app/Contents/Resources/native-trash.applescript")
+        if not script.is_file():
+            script = app
+        try:
+            config_path = Path.home() / "Library/Application Support/LifeOS/NativeSync/config.json"
+            app_path = json.loads(config_path.read_text())["appPath"]
+            if not isinstance(app_path, str) or not Path(app_path).is_dir():
+                raise ValueError("Things app path is unavailable")
+            output = subprocess.run(
+                ["/usr/bin/osascript", str(script), app_path,
+                 todo_id, "things_wins", "false", "false"],
+                check=True, capture_output=True, text=True, timeout=30,
+            )
+            receipt = json.loads(output.stdout)
+        except (subprocess.SubprocessError, ValueError, OSError, KeyError):
+            return WriteResult(status="uncertain", command="trash", checked_at=_time.time(),
+                               error="Things Trash automation did not return a verified receipt")
+        if receipt.get("state") not in {"applied", "satisfied"}:
+            return WriteResult(status="uncertain", command="trash", checked_at=_time.time(),
+                               error="Things Trash membership was not verified")
+        return WriteResult(status="verified", command="trash", checked_at=_time.time(),
+                           record={"record": {"uuid": todo_id, "in_trash_list": True}})
 
     def update_project(self, project_id: str, **changes: Any) -> WriteResult:
         command = self.build_update_project_command(project_id, **changes)
