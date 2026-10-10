@@ -14,6 +14,44 @@ AREA_ID = "33333333-3333-4333-8333-333333333333"
 HOSTILE_ID = '11111111-1111-4111-8111-111111111111"; rm -rf /'
 
 
+@pytest.mark.parametrize("state,applied", [("applied", True), ("satisfied", True),
+                                         ("uncertain", False), ("failed", False)])
+def test_trash_requires_native_membership_receipt(tmp_path, monkeypatch, state, applied):
+    import json
+    from types import SimpleNamespace
+
+    from lifeos import things_gateway
+
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    config = tmp_path / "Library/Application Support/LifeOS/NativeSync/config.json"
+    config.parent.mkdir(parents=True)
+    app = tmp_path / "Things3.app"
+    app.mkdir()
+    config.write_text(json.dumps({"appPath": str(app)}))
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        assert kwargs["timeout"] == 30
+        assert args[-4:] == [TODO_ID, "things_wins", "false", "false"]
+        assert args[2] == str(app)
+        return SimpleNamespace(stdout=json.dumps({"state": state}))
+
+    monkeypatch.setattr(things_gateway.subprocess, "run", run)
+    result = ThingsGateway(FakeThings()).trash_todo(TODO_ID)
+    assert result.applied is applied
+    assert len(calls) == 1
+
+
+def test_trash_rejects_hostile_id_without_automation(monkeypatch):
+    from lifeos import things_gateway
+    def forbidden(*args, **kwargs):
+        pytest.fail("No automation for an invalid ID")
+    monkeypatch.setattr(things_gateway.subprocess, "run", forbidden)
+    with pytest.raises(ValueError):
+        ThingsGateway(FakeThings()).trash_todo(HOSTILE_ID)
+
+
 class FakeThings:
     def __init__(self):
         self.records = {

@@ -1,0 +1,710 @@
+{
+  "render_day_plan": {
+    "additionalProperties": false,
+    "properties": {
+      "preview": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "day_start": {
+                "type": "string"
+              },
+              "day_end": {
+                "type": "string"
+              },
+              "blocks": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "task_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "start": {
+                      "type": "string"
+                    },
+                    "end": {
+                      "type": "string"
+                    },
+                    "duration_minutes": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "part": {
+                      "default": 1,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "calendar_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "task_id",
+                    "title",
+                    "start",
+                    "end",
+                    "duration_minutes",
+                    "calendar_id"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "unscheduled": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "task_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "reason": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "remaining_minutes": {
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "task_id",
+                    "title",
+                    "reason",
+                    "remaining_minutes"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "proposal_ready": {
+                "default": true,
+                "type": "boolean"
+              },
+              "mutates_external_systems": {
+                "default": false,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "day_start",
+              "day_end",
+              "blocks"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "day_start": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "day_end": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "blocks": {
+        "anyOf": [
+          {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "task_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "title": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                },
+                "end": {
+                  "type": "string"
+                },
+                "duration_minutes": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "part": {
+                  "default": 1,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "calendar_id": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "task_id",
+                "title",
+                "start",
+                "end",
+                "duration_minutes",
+                "calendar_id"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "unscheduled": {
+        "anyOf": [
+          {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "task_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "title": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "reason": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "remaining_minutes": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "task_id",
+                "title",
+                "reason",
+                "remaining_minutes"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "things_changes": {
+        "anyOf": [
+          {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "operation": {
+                  "enum": [
+                    "create",
+                    "update",
+                    "complete",
+                    "cancel"
+                  ],
+                  "type": "string"
+                },
+                "task_id": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "fields": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "destructive": {
+                  "default": false,
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "operation"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "calendar_changes": {
+        "anyOf": [
+          {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "operation": {
+                  "enum": [
+                    "create",
+                    "update",
+                    "delete"
+                  ],
+                  "type": "string"
+                },
+                "calendar_id": {
+                  "type": "string"
+                },
+                "event_id": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "fields": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "destructive": {
+                  "default": false,
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "operation",
+                "calendar_id"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "proposal_ready": {
+        "default": true,
+        "type": "boolean"
+      },
+      "mutates_external_systems": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "type": "object"
+  },
+  "render_week_plan": {
+    "additionalProperties": false,
+    "properties": {
+      "preview": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "range_start": {
+                "type": "string"
+              },
+              "range_end": {
+                "type": "string"
+              },
+              "days": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "day_start": {
+                      "type": "string"
+                    },
+                    "day_end": {
+                      "type": "string"
+                    },
+                    "blocks": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "task_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "title": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "start": {
+                            "type": "string"
+                          },
+                          "end": {
+                            "type": "string"
+                          },
+                          "duration_minutes": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "part": {
+                            "default": 1,
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "calendar_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "task_id",
+                          "title",
+                          "start",
+                          "end",
+                          "duration_minutes",
+                          "calendar_id"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "day_start",
+                    "day_end"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 14,
+                "minItems": 1,
+                "type": "array"
+              },
+              "unscheduled": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "task_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "title": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "reason": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "remaining_minutes": {
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "task_id",
+                    "title",
+                    "reason",
+                    "remaining_minutes"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "proposal_ready": {
+                "default": true,
+                "type": "boolean"
+              },
+              "mutates_external_systems": {
+                "default": false,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "range_start",
+              "range_end",
+              "days"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "range_start": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "range_end": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "days": {
+        "anyOf": [
+          {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "day_start": {
+                  "type": "string"
+                },
+                "day_end": {
+                  "type": "string"
+                },
+                "blocks": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "task_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "title": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "start": {
+                        "type": "string"
+                      },
+                      "end": {
+                        "type": "string"
+                      },
+                      "duration_minutes": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "part": {
+                        "default": 1,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "calendar_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "task_id",
+                      "title",
+                      "start",
+                      "end",
+                      "duration_minutes",
+                      "calendar_id"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "day_start",
+                "day_end"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "unscheduled": {
+        "anyOf": [
+          {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "task_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "title": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "reason": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "remaining_minutes": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "task_id",
+                "title",
+                "reason",
+                "remaining_minutes"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "things_changes": {
+        "anyOf": [
+          {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "operation": {
+                  "enum": [
+                    "create",
+                    "update",
+                    "complete",
+                    "cancel"
+                  ],
+                  "type": "string"
+                },
+                "task_id": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "fields": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "destructive": {
+                  "default": false,
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "operation"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "calendar_changes": {
+        "anyOf": [
+          {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "operation": {
+                  "enum": [
+                    "create",
+                    "update",
+                    "delete"
+                  ],
+                  "type": "string"
+                },
+                "calendar_id": {
+                  "type": "string"
+                },
+                "event_id": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "fields": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "destructive": {
+                  "default": false,
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "operation",
+                "calendar_id"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "proposal_ready": {
+        "default": true,
+        "type": "boolean"
+      },
+      "mutates_external_systems": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "type": "object"
+  }
+}

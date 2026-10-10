@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from threading import Event
 
 import pytest
 
 from lifeos.models import ProposalState
-from lifeos.proposal_store import ProposalStore, RevisionMismatch
+from lifeos.proposal_store import IdempotencyConflict, ProposalStore, RevisionMismatch
 from lifeos.service import LifeOSService
 from lifeos.things_gateway import WriteResult
 
@@ -74,6 +76,16 @@ class FakeThings:
             checked_at=1.0,
         )
 
+    def build_update_todo_command(self, todo_id, **fields):
+        return None
+
+    def trash_todo(self, todo_id):
+        self.writes += 1
+        return WriteResult(
+            status="verified", command="trash", checked_at=1.0,
+            record={"record": {"uuid": todo_id, "in_trash_list": True}},
+        )
+
     def create_todo(self, **fields):
         self.writes += 1
         return WriteResult(
@@ -125,6 +137,160 @@ def build_service(tmp_path):
         things,
         calendar,
     )
+
+
+@pytest.mark.parametrize("trash", [False, True])
+def test_requested_change_is_verified_and_idempotent(tmp_path, trash):
+    service, things, calendar = build_service(tmp_path)
+    args = dict(request_id="explicit-edit", task_id=TODO_ID, expected_source_hash="v1",
+                fields=None if trash else {"title": "New title"}, trash=trash)
+    result = service.change_requested_task(**args)
+    assert result["saved"] is True
+    assert result["requires_lifeos_approval"] is False
+    assert result["receipt"]
+    assert things.writes == 1
+    assert calendar.writes == 0
+    assert service.change_requested_task(**args) == result
+    assert things.writes == 1
+    with pytest.raises(IdempotencyConflict):
+        service.change_requested_task(**{**args, "expected_source_hash": "different"})
+
+
+def test_requested_change_rejects_stale_target(tmp_path):
+    service, things, _ = build_service(tmp_path)
+    with pytest.raises(ValueError, match="missing or changed"):
+        service.change_requested_task(request_id="stale-edit", task_id=TODO_ID,
+                                      expected_source_hash="stale", fields={"title": "New title"})
+    assert things.writes == 0
+
+
+def test_requested_trash_does_not_resume_uncertain_write(tmp_path):
+    service, things, _ = build_service(tmp_path)
+    def uncertain(todo_id):
+        things.writes += 1
+        return WriteResult(status="uncertain", command="trash", checked_at=1.0)
+    things.trash_todo = uncertain
+    args = dict(request_id="uncertain-trash", task_id=TODO_ID, expected_source_hash="v1", trash=True)
+    result = service.change_requested_task(**args)
+    assert result["saved"] is False
+    assert service.change_requested_task(**args) == result
+    assert things.writes == 1
+
+
+def test_requested_task_saves_without_review_and_returns_same_receipt_on_retry(tmp_path):
+    service, things, calendar = build_service(tmp_path)
+    things.read_areas = lambda **_: {"items": [things.read_area(AREA_ID)]}
+    things.read_area = lambda _: {
+        "record": {"uuid": AREA_ID, "type": "area", "title": "Personal"},
+        "source_hash": things.area_version,
+    }
+    request = dict(request_id="call-james-20261009", title="Call James",
+                   notes="Call after 8pm.", when="2026-10-09")
+    result = service.create_requested_task(**request)
+    assert result["state"] == "applied"
+    assert result["saved"] is True
+    assert result["requires_lifeos_approval"] is False
+    assert result["receipt"]
+    assert result["things_changes"][0]["fields"] == {
+        "title": "Call James", "notes": "Call after 8pm.",
+        "when": "2026-10-09", "area_id": AREA_ID,
+    }
+    things.area_version = "area-v2"
+    assert service.create_requested_task(**request) == result
+    assert things.writes == 1
+    assert calendar.writes == 0
+
+
+def test_requested_task_changed_content_never_reuses_a_key(tmp_path):
+    service, things, _ = build_service(tmp_path)
+    service.create_requested_task(request_id="same", title="Call James", area_id=AREA_ID)
+    with pytest.raises(IdempotencyConflict):
+        service.create_requested_task(request_id="same", title="Call someone else", area_id=AREA_ID)
+    assert things.writes == 1
+
+
+def test_requested_task_uncertain_write_is_not_repeated(tmp_path):
+    service, things, _ = build_service(tmp_path)
+    def uncertain(**_):
+        things.writes += 1
+        raise RuntimeError("synthetic write outcome unknown")
+    things.create_todo = uncertain
+    request = dict(request_id="uncertain", title="Call James", area_id=AREA_ID)
+    result = service.create_requested_task(**request)
+    assert result["state"] == "partial_failure"
+    assert result["saved"] is False
+    assert result["receipt"] is None
+    assert service.create_requested_task(**request) == result
+    assert things.writes == 1
+
+
+@pytest.mark.parametrize("when", ["tomorrow", "2026-02-30", "2026-10-09@25:00", "2026-10-09@20:00", "2026-1-9"])
+def test_requested_task_invalid_date_prevents_write(tmp_path, when):
+    service, things, calendar = build_service(tmp_path)
+    with pytest.raises(ValueError):
+        service.create_requested_task(request_id="invalid", title="Call James", when=when, area_id=AREA_ID)
+    assert things.writes == calendar.writes == 0
+
+
+def test_requested_task_rechecks_area_before_write(tmp_path):
+    service, things, calendar = build_service(tmp_path)
+    original = things.read_area
+    calls = 0
+    def changed(area_id):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            things.area_version = "area-v2"
+        return original(area_id)
+    things.read_area = changed
+    result = service.create_requested_task(request_id="stale", title="Call James", area_id=AREA_ID)
+    assert result["state"] == "stale"
+    assert result["saved"] is False
+    assert things.writes == calendar.writes == 0
+
+
+def test_requested_task_concurrent_retry_does_not_duplicate_write(tmp_path):
+    service, things, _ = build_service(tmp_path)
+    entered, release = Event(), Event()
+    original = things.create_todo
+    def held(**fields):
+        entered.set()
+        assert release.wait(5)
+        return original(**fields)
+    things.create_todo = held
+    request = dict(request_id="concurrent", title="Call James", area_id=AREA_ID)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(service.create_requested_task, **request)
+        try:
+            assert entered.wait(5)
+            second = service.create_requested_task(**request)
+            assert second["state"] == "applying"
+            assert second["saved"] is False
+        finally:
+            release.set()
+        assert first.result(timeout=5)["saved"] is True
+    assert things.writes == 1
+
+
+def test_requested_task_cannot_autoapprove_a_revised_proposal(tmp_path):
+    service, things, calendar = build_service(tmp_path)
+    result = service.create_requested_task(request_id="revised", title="Call James", area_id=AREA_ID)
+    revision = service.store.get_current(result["proposal_id"])
+    service.store.create_revision(
+        result["proposal_id"], source_snapshots=revision.source_snapshots,
+        things_changes=revision.things_changes,
+    )
+    with pytest.raises(IdempotencyConflict):
+        service.create_requested_task(request_id="revised", title="Call James", area_id=AREA_ID)
+    assert things.writes == 1
+    assert calendar.writes == 0
+
+
+def test_requested_task_missing_default_area_does_not_write(tmp_path):
+    service, things, calendar = build_service(tmp_path)
+    with pytest.raises(ValueError, match="Personal area"):
+        service.create_requested_task(request_id="no-area", title="Call James")
+    assert things.writes == calendar.writes == 0
 
 
 def proposal_inputs(service):

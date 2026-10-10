@@ -8,6 +8,9 @@ import {ownerSync} from './owner-sync';
 export {OwnerSync} from './owner-sync';
 import {MirrorStore,canonical,type Cell} from '../site/lib/mirror-store';
 import {BulkD1} from './d1-bulk';
+import {registerCloudUI} from './cloud-ui';
+import {registerLocalBridge} from './local-bridge';
+import {localScope} from './bridge-contract';
 
 // OAuth grants explicitly gate read access and queued writes.
 type OAuthEnv=Env & {
@@ -39,7 +42,7 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
     if(url.pathname==='/authorize'&&request.method==='GET') {
       stage='client_authorization';
       const req=await oauth.parseAuthRequest(request);
-      if(req.scope.some(s=>![scope,writeScope,'offline_access'].includes(s))||req.scope.includes(writeScope)&&!writesEnabled(env))return json({error:'This access is not activated.'},400);
+      if(req.scope.some(s=>![scope,writeScope,localScope,'offline_access'].includes(s))||req.scope.includes(writeScope)&&!writesEnabled(env))return json({error:'This access is not activated.'},400);
       stage='consent_start';
       const facts=await oauth.describeConsent(req),consent=await oauth.beginConsent(req);
       const headers=consent.headers;headers.set('Content-Type','text/html; charset=utf-8');
@@ -48,8 +51,9 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       const clientOrigin=new URL(req.redirectUri).origin;
       headers.set('Content-Security-Policy',`default-src 'none'; form-action 'self' https://github.com ${clientOrigin}; base-uri 'none'; frame-ancestors 'none'`);
       const writing=req.scope.includes(writeScope)||writesEnabled(env);
-      const writeChoice=writesEnabled(env)&&!req.scope.includes(writeScope)?'<p><label><input type="checkbox" name="queued_writes" value="allow" checked> Include queued edits (things:write)</label>. Uncheck for read-only access.</p>':'';
-      return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><title>LifeOS access</title><h1>Allow ${writing?'reading and queued edits':'cloud mirror reading'}?</h1><p>${escape(facts.clientName)} requests access to cached Things tasks, projects, areas and tags, including notes.${writing?' It may queue title changes, task completion and moving to-dos to recoverable Things Trash. Your Mac applies them when awake. '+policyDescription(env):' Changes remain disabled for this grant.'}</p><p>Tokens return to ${escape(facts.redirectHost)}.${facts.redirectIsLoopback?' This is a local app; verify which app requested access.':''}</p><p>Permissions: things:read${writing?', things:write':''}. Offline access lets the client refresh its sign-in.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}">${writeChoice}<button name="decision" value="allow">Allow with GitHub</button><button name="decision" value="deny">Deny</button></form></html>`,{headers});
+      const writeChoice=req.scope.includes(writeScope)?'<input type="hidden" name="queued_writes" value="allow">':writesEnabled(env)?'<p><label><input type="checkbox" name="queued_writes" value="allow" checked> Include queued edits (things:write)</label>. Uncheck for read-only access.</p>':'';
+      const localChoice=!req.scope.includes(localScope)?'<p><label><input type="checkbox" name="local_tools" value="allow"> Include local LifeOS tools (lifeos:local)</label>: read Calendar and saved brain dumps, capture transcripts on the Mac, plan, recall memory and review proposals. With things:write, a single task you explicitly request can be saved without an extra LifeOS review card. Other local changes use approved proposals for Things and owned Calendar events. Explicit memory indexing uses the existing remote extraction service. Raw captures remain on the Mac, but requests and results transit this service and the connected client. Local tools require an awake Mac and its enabled bridge.</p>':'<p>Local LifeOS tools include Calendar, Mac-stored captures, planning, memory and reviewed proposals. With things:write, explicit single-task requests can save without an extra LifeOS review card. Raw captures are not stored in this cloud service. Explicit memory indexing uses the existing remote extraction service.</p>';
+      return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><title>LifeOS access</title><h1>Allow ${writing?'reading and queued edits':'cloud mirror reading'}?</h1><p>${escape(facts.clientName)} requests access to cached Things tasks, projects, areas and tags, including notes.${writing?' It may queue title changes, task completion and moving to-dos to recoverable Things Trash. Your Mac applies them when awake. '+policyDescription(env):' Changes remain disabled for this grant.'}</p><p>Tokens return to ${escape(facts.redirectHost)}.${facts.redirectIsLoopback?' This is a local app; verify which app requested access.':''}</p><p>Permissions: things:read${writing?', things:write':''}. Offline access lets the client refresh its sign-in.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}">${writeChoice}${localChoice}<button name="decision" value="allow">Allow with GitHub</button><button name="decision" value="deny">Deny</button></form></html>`,{headers});
     }
     if(url.pathname==='/authorize'&&request.method==='POST') {
       stage='consent_session';
@@ -60,7 +64,7 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       // Only the fixed optional write permission can be added by owner consent.
       // Client identity, redirect and PKCE remain recovered from the bound transaction.
       const approved=await oauth.approveConsent(request,handle,
-        form.get('queued_writes')==='allow'&&writesEnabled(env)?{scope:[scope,writeScope,'offline_access']}:{});
+        form.get('local_tools')==='allow'?{scope:[scope,...form.get('queued_writes')==='allow'&&writesEnabled(env)?[writeScope]:[],localScope,'offline_access']}:form.get('queued_writes')==='allow'&&writesEnabled(env)?{scope:[scope,writeScope,'offline_access']}:{});
       if(approved.request.scope.includes(writeScope)&&!writesEnabled(env))return json({error:'Write activation pending.'},403);
       const verifier=crypto.randomUUID()+crypto.randomUUID();
       stage='github_redirect';
@@ -122,7 +126,17 @@ async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Re
   // HTTP Origin is checked without trusting identity headers or static role keys.
   const source=request.headers.get('origin');
   if(source&&![origin,'https://chatgpt.com','https://chat.openai.com'].includes(source))return json({error:'Origin denied.'},403);
-  const server=new McpServer({name:'LifeOS Cloud Mirror',version:'0.4.0'});
+  const server=new McpServer({name:'LifeOS',version:'0.5.2'},{
+    instructions:'For ONE task the user explicitly asks to add, use create_requested_task directly. For an explicit single-task edit or deletion, use update_requested_task or trash_requested_task. First resolve the exact task and source_hash with local search_things/read_things_list, not the potentially stale cloud mirror. If ambiguous, ask which task. Deletion means recoverable Trash only. The request is permission: do not prepare a proposal or ask for a second LifeOS approval. Resolve relative dates in the user timezone to YYYY-MM-DD; put timing constraints such as "after 8pm" in notes. These tools do not set a timed alarm. Reuse the same request_id and arguments after a timeout; only report saved when saved is true with a receipt. An awake connected Mac and existing things:write plus lifeos:local permissions are required. Never bypass platform permissions. Inferred meeting follow-ups, batches and Calendar changes still require a reviewed exact-revision proposal and verified apply.',
+  });
+  const localAvailable=env.OWNER_SYNC?await ownerSync(env).localBridgeAvailable():false;
+  const localAllowed=c.auth!.scope.includes(localScope);
+  registerCloudUI(server,origin,localAvailable&&localAllowed);
+  registerLocalBridge(server,env,c.auth!.scope,origin);
+  server.registerTool('get_lifeos_capabilities',{description:'Read the capabilities of this connection. Reports which local LifeOS features have not migrated. Does not establish that the Mac is online.',inputSchema:{},annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async()=>{
+    const capabilities={connector:'LifeOS',preview_widgets:['day_plan','week_plan','brain_dump_canvas','proposal_review','memory_review'],cloud_queue_enabled:writesEnabled(env),connection_can_write:writesEnabled(env)&&c.auth!.scope.includes(writeScope),supported_writes:['title','complete_todo','trash_todo'],local_tools_connected:localAvailable,connection_can_use_local_tools:localAllowed,local_tools_available:localAvailable&&localAllowed,local_task_creation_available:localAvailable&&localAllowed&&c.auth!.scope.includes(writeScope),local_task_crud_available:localAvailable&&localAllowed&&c.auth!.scope.includes(writeScope),local_task_tools:['create_requested_task','read_requested_task','update_requested_task','trash_requested_task'],raw_capture_storage:'Mac only',local_tool_delivery:'transient, no offline queue or automatic replay',local_write_policy:'Explicit single-task creates, edits and recoverable Trash requests use direct tools without a LifeOS review card. Local reads avoid mirror sync delays. Other changes require exact-revision approval and verified apply.'};
+    return {content:[{type:'text' as const,text:JSON.stringify(capabilities)}],structuredContent:capabilities};
+  });
   const db=new BulkD1(env.DB),queue=new NativeQueue(db,env.LIFEOS_OWNER_ID);
   server.registerTool('read_things_mirror',{description:'Read the confirmed Things snapshot with sync age, timezone and pending edits. When present, effective shows the cached view including queued edits, with pending operation markers. Confirmed remains the last verified Things state. This cache is not live ThingsCloud. Follow next_cursor until null; restart pagination if sequence changes. Unsupported, absent and unknown fields remain explicit.',inputSchema:{cursor:z.number().int().min(0).max(10000).default(0)},annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async({cursor})=>{
     const state=await new MirrorStore(db,env.LIFEOS_OWNER_ID).state(cursor);
@@ -166,12 +180,12 @@ async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Re
       catch{return {content:[{type:'text',text:'Edit could not be queued. Refresh the target and use only title changes or completed status. An operation ID must never be reused for different content.'}],isError:true};}
     });
   }
-  const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true,maxRequestBodySize:65536});
+  const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true,maxRequestBodySize:256*1024});
   await server.connect(transport);
   try {const response=await transport.handleRequest(request);response.headers.set('Cache-Control','no-store');return response;}
   finally {await server.close();}
 }
-const provider=new OAuthProvider<OAuthEnv>({apiRoute:'/mcp',apiHandler:{fetch:mcp},defaultHandler:{fetch:auth},authorizeEndpoint:'/authorize',tokenEndpoint:'/oauth/token',clientRegistrationEndpoint:'/oauth/register',clientIdMetadataDocumentEnabled:false,scopesSupported:[scope,writeScope,'offline_access'],requiredScopes:[scope,writeScope],resourceMetadata:{resource,authorization_servers:[origin],resource_name:'LifeOS cloud mirror'},accessTokenTTL:3600,refreshTokenTTL:2592000,clientRegistrationTTL:7776000,onError:()=>{},tokenExchangeCallback(options){if(!owner(options.props,options.env)||options.scope.some(s=>![scope,writeScope,'offline_access'].includes(s))||options.scope.includes(writeScope)&&!writesEnabled(options.env))throw new OAuthError('invalid_grant',{description:'Owner grant required.'});}});
+const provider=new OAuthProvider<OAuthEnv>({apiRoute:'/mcp',apiHandler:{fetch:mcp},defaultHandler:{fetch:auth},authorizeEndpoint:'/authorize',tokenEndpoint:'/oauth/token',clientRegistrationEndpoint:'/oauth/register',clientIdMetadataDocumentEnabled:false,scopesSupported:[scope,writeScope,localScope,'offline_access'],requiredScopes:[scope,writeScope,localScope],resourceMetadata:{resource,authorization_servers:[origin],resource_name:'LifeOS'},accessTokenTTL:3600,refreshTokenTTL:2592000,clientRegistrationTTL:7776000,onError:()=>{},tokenExchangeCallback(options){if(!owner(options.props,options.env)||options.scope.some(s=>![scope,writeScope,localScope,'offline_access'].includes(s))||options.scope.includes(writeScope)&&!writesEnabled(options.env))throw new OAuthError('invalid_grant',{description:'Owner grant required.'});}});
 export default {async fetch(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Response> {
   const path=new URL(request.url).pathname;
   if(path==='/health'||path==='/state'||path.startsWith('/api/'))return mirror.fetch(request,env);
@@ -179,7 +193,8 @@ export default {async fetch(request:Request,env:OAuthEnv,ctx:ExecutionContext):P
   if(!env.OAUTH_KV||!env.GITHUB_CLIENT_ID||!env.GITHUB_CLIENT_SECRET||!env.LIFEOS_GITHUB_OWNER_ID)return json({error:'Dot OAuth setup is not activated. Mac sync remains available.'},503);
   if(request.method==='POST') {
     const chunks:Uint8Array[]=[];let size=0;const reader=request.body?.getReader();
-    if(reader)for(;;){const p=await reader.read();if(p.done)break;size+=p.value.length;if(size>65536){void reader.cancel();return json({error:'OAuth/MCP request exceeds budget.'},413);}chunks.push(p.value);}
+    const budget=path==='/mcp'?256*1024:65536;
+    if(reader)for(;;){const p=await reader.read();if(p.done)break;size+=p.value.length;if(size>budget){void reader.cancel();return json({error:'OAuth/MCP request exceeds budget.'},413);}chunks.push(p.value);}
     const bytes=new Uint8Array(size);let pos=0;for(const c of chunks){bytes.set(c,pos);pos+=c.length;}
     request=new Request(request,{body:bytes});
   }

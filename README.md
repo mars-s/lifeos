@@ -80,6 +80,20 @@ Local storage does not mean the text never leaves your Mac. ChatGPT receives the
 
 ### Approve an exact proposal
 
+Simple tasks you explicitly ask to add can use `create_requested_task` in one call.
+It creates one Things to-do, defaults to Personal, verifies the write and returns
+an immutable audit record and receipt. It does not need a LifeOS review card or
+a second approval message. Reuse its `request_id` unchanged after a timeout.
+An uncertain or failed write is not automatically replayed. Relative dates must
+be resolved to your local `YYYY-MM-DD` date before calling the tool.
+Timing constraints such as "after 8pm" belong in notes. This tool does not set
+or verify a timed alarm, create a Calendar block or invent a duration.
+
+This exception is for explicit single-task requests, not inferred meeting actions,
+batches, existing-item edits or Calendar changes. OAuth write access and platform
+permission prompts still apply. The unified cloud connector needs an awake Mac
+with local tools enabled.
+
 The local proposal flow is:
 
 ```text
@@ -183,3 +197,16 @@ LifeOS started with one person's workload across work, university and personal p
 The standalone macOS canvas is a future direction, not a shipped app. Today the interactive planning UI lives in MCP Apps cards, alongside the native sync companion.
 
 Built by Avi. [MIT licensed](LICENSE).
+
+## Explicit task CRUD
+
+For a single task the user explicitly requests, the connected Mac supports
+`create_requested_task`, `read_requested_task`, `update_requested_task` and
+`trash_requested_task`. These do not require an extra LifeOS review card.
+Edits and Trash require an exact local task ID and its fresh `source_hash`.
+Use local search or read-by-ID if the cloud mirror has not caught up.
+Deletion moves the task to recoverable Things Trash, never permanent deletion.
+Writes retain immutable intent and verified receipts. Retry with the same request
+ID and arguments; do not automatically replay an uncertain write.
+ChatGPT and macOS permissions still apply. Inferred changes, batches and Calendar
+changes continue through reviewed proposals.

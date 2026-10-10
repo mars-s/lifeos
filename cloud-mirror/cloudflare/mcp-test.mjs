@@ -8,10 +8,11 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-await build({entryPoints:['mcp-entry.ts'],outfile:'.test-mcp.mjs',bundle:true,platform:'node',format:'esm',external:['cloudflare:workers']});
+await build({entryPoints:['mcp-entry.ts'],outfile:'.test-mcp.mjs',bundle:true,platform:'node',format:'esm',loader:{'.html':'text'},external:['cloudflare:workers']});
 const origin='https://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev',resource=origin+'/mcp';
 const dir=await mkdtemp(join(tmpdir(),'lifeos-mcp-fixture-'));
 const hash=s=>createHash('sha256').update(s).digest('hex');
+const localNames=JSON.parse(await readFile('local-tool-contracts.json','utf8')).map(tool=>tool.name);
 let userId=42,upstreamScope='',upstreamCalls=0;
 const mf=new Miniflare({...convertV4MiniflareOptions({modules:true,script:await readFile('.test-mcp.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],kvNamespaces:['OAUTH_KV'],d1Databases:{DB:'fixture'},bindings:{LIFEOS_OWNER_ID:'fixture-owner',LIFEOS_ADAPTER_ID:'fixture-mac',LIFEOS_GITHUB_OWNER_ID:'42',GITHUB_CLIENT_ID:'SYNTHETIC-client',GITHUB_CLIENT_SECRET:'SYNTHETIC-secret',LIFEOS_SYNC_KEY_SHA256:hash('SYNTHETIC-sync-fixture-only-at-least-32-characters'),LIFEOS_READ_KEY_SHA256:hash('SYNTHETIC-read-fixture-only-at-least-32-characters')},outboundService:async req=>{
   upstreamCalls++;const url=new URL(req.url);
@@ -83,7 +84,54 @@ try {
    const token=await request('/oauth/token',{method:'POST',body:new URLSearchParams({grant_type:'authorization_code',client_id:clientId,code,redirect_uri:'https://chatgpt.com/connector/oauth/callback',code_verifier:verifier,resource})});assert.equal(token.status,200);const access=await token.json();assert.ok(access.access_token);assert.ok(access.refresh_token);
    const sdk=new Client({name:'Fixture dot',version:'1.0.0'}),transport=new StreamableHTTPClientTransport(new URL(resource),{requestInit:{headers:{Authorization:'Bearer '+access.access_token}},fetch:(url,init)=>mf.dispatchFetch(url,init)});
    await sdk.connect(transport);
-   const tools=await sdk.listTools();assert.deepEqual(tools.tools.map(t=>t.name),['read_things_mirror']);assert.equal(tools.tools[0].annotations.readOnlyHint,true);
+   assert.match(sdk.getInstructions(),/use create_requested_task directly/);
+   assert.match(sdk.getInstructions(),/do not prepare a proposal or ask for a second LifeOS approval/);
+   assert.match(sdk.getInstructions(),/Never bypass platform permissions/);
+   const tools=await sdk.listTools();assert.deepEqual(tools.tools.map(t=>t.name),['render_day_plan','render_week_plan','render_brain_dump_canvas',...localNames,'get_lifeos_capabilities','read_things_mirror']);assert.equal(tools.tools.find(tool=>tool.name==='read_things_mirror').annotations.readOnlyHint,true);
+   const capabilities=(await sdk.callTool({name:'get_lifeos_capabilities',arguments:{}})).structuredContent;
+   assert.equal(capabilities.local_tools_available,false);
+   assert.equal(capabilities.connection_can_write,false);
+   assert.equal(capabilities.raw_capture_storage,'Mac only');
+   assert.equal(capabilities.connection_can_use_local_tools,false);
+   assert.ok(localNames.includes('apply_approved_proposal'));
+   const direct=tools.tools.find(tool=>tool.name==='create_requested_task');
+   assert.ok(direct);assert.equal(direct.annotations.readOnlyHint,false);
+   assert.equal(direct.annotations.destructiveHint,false);assert.equal(direct.annotations.idempotentHint,true);
+   assert.equal(direct._meta?.ui?.resourceUri,undefined);
+   assert.ok(localNames.includes('read_requested_task'));
+   for(const name of ['update_requested_task','trash_requested_task']){
+     const tool=tools.tools.find(tool=>tool.name===name);
+     assert.ok(tool);assert.equal(tool.annotations.readOnlyHint,false);
+     assert.equal(tool.annotations.idempotentHint,true);
+     assert.equal(tool._meta?.ui?.resourceUri,undefined);
+   }
+   assert.equal(tools.tools.find(tool=>tool.name==='trash_requested_task').annotations.destructiveHint,true);
+   const blocked=await sdk.callTool({name:'get_brain_dump',arguments:{capture_id:'synthetic'}});assert.equal(blocked.isError,true);assert.match(blocked._meta['mcp/www_authenticate'][0],/lifeos:local/);
+   const resources=await sdk.listResources();assert.equal(resources.resources.length,5);
+   for(const tool of tools.tools.filter(t=>['render_day_plan','render_week_plan','render_brain_dump_canvas'].includes(t.name))){
+     const uri=tool._meta.ui.resourceUri;assert.equal(tool._meta['openai/outputTemplate'],uri);
+     const resource=(await sdk.readResource({uri})).contents[0];
+     assert.equal(resource.mimeType,'text/html;profile=mcp-app');assert.match(resource.text,/window\.openai/);
+     assert.deepEqual(resource._meta.ui.csp.connectDomains,[]);
+   }
+   const plan={day_start:'2026-10-02T09:00:00+10:00',day_end:'2026-10-02T17:00:00+10:00',blocks:[{task_id:'synthetic-task',title:'Synthetic preview',start:'2026-10-02T10:00:00+10:00',end:'2026-10-02T11:00:00+10:00',duration_minutes:60,calendar_id:'synthetic-calendar'}]};
+   const preview=await sdk.callTool({name:'render_day_plan',arguments:{plan}});assert.equal(preview.isError,undefined);
+   const directDay=await sdk.callTool({name:'render_day_plan',arguments:plan});assert.equal(directDay.isError,undefined);
+   const exactDay=await sdk.callTool({name:'render_day_plan',arguments:{preview:plan,blocks:plan.blocks,unscheduled:[],things_changes:[],calendar_changes:[],proposal_ready:true,mutates_external_systems:false}});assert.equal(exactDay.isError,undefined);assert.deepEqual(exactDay.structuredContent.blocks,preview.structuredContent.blocks);
+   assert.equal(preview.structuredContent.can_prepare_proposal,false);assert.equal(preview.structuredContent.proposal_ready,false);
+   assert.equal(preview.structuredContent.mutates_external_systems,false);
+   assert.equal((await sdk.callTool({name:'render_day_plan',arguments:{plan:{...plan,blocks:[{...plan.blocks[0],duration_minutes:45}]}}})).isError,true);
+   assert.equal((await sdk.callTool({name:'render_day_plan',arguments:{plan:{...plan,day_start:'2026-10-02T09:00:00'}}})).isError,true);
+   assert.equal((await sdk.callTool({name:'render_day_plan',arguments:{plan:{...plan,mutates_external_systems:true}}})).isError,true);
+   const canvas={title:'Synthetic meeting',nodes:[{id:'tasks',kind:'tasks',title:'My tasks'}]};
+   const debrief=await sdk.callTool({name:'render_brain_dump_canvas',arguments:{canvas}});assert.equal(debrief.isError,undefined);assert.equal(debrief.structuredContent.can_prepare_proposal,false);
+   assert.equal((await sdk.callTool({name:'render_brain_dump_canvas',arguments:{canvas:{...canvas,nodes:[...canvas.nodes,...canvas.nodes]}}})).isError,true);
+   assert.equal((await sdk.callTool({name:'render_brain_dump_canvas',arguments:{canvas:{...canvas,nodes:[{id:'bad',kind:'tasks',title:'Invalid',javascript:'alert(1)'}]}}})).isError,true);
+   const week={range_start:plan.day_start,range_end:plan.day_end,days:[plan]};
+   const weekly=await sdk.callTool({name:'render_week_plan',arguments:{plan:week}});assert.equal(weekly.isError,undefined);assert.equal(weekly.structuredContent.can_prepare_proposal,false);
+   const exactWeek=await sdk.callTool({name:'render_week_plan',arguments:{preview:week,things_changes:[],calendar_changes:[],proposal_ready:true,mutates_external_systems:false}});assert.equal(exactWeek.isError,undefined);assert.deepEqual(exactWeek.structuredContent.days,weekly.structuredContent.days);
+   assert.equal((await sdk.callTool({name:'render_week_plan',arguments:{plan:{...week,days:[plan,plan]}}})).isError,true);
+   assert.equal(await db.prepare('SELECT COUNT(*) AS n FROM mirror_items').first('n'),206);
    let cursor=0,ids=[];do {const page=await sdk.callTool({name:'read_things_mirror',arguments:{cursor}});assert.equal(page.isError,undefined);const state=JSON.parse(page.content[0].text);ids.push(...state.confirmed.map(i=>i.id));assert.equal(state.total_items,205);cursor=state.next_cursor;}while(cursor!==null);assert.equal(ids.length,205);assert.ok(!ids.includes('private-other-owner'));
    assert.equal((await sdk.callTool({name:'approve',arguments:{}})).isError,true);
    await sdk.close();

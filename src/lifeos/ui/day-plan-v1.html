@@ -754,9 +754,10 @@
           }
           render(draftOutput);
         });
-        const prepare = node("button", "action action-primary", editMode ? "Done editing" : "Prepare proposal");
+        const canPrepare = data.can_prepare_proposal !== false;
+        const prepare = node("button", "action action-primary", editMode ? "Done editing" : canPrepare ? "Prepare proposal" : "Preview only");
         prepare.type = "button";
-        prepare.disabled = data.blocks.length === 0;
+        prepare.disabled = data.blocks.length === 0 || (!editMode && !canPrepare);
         prepare.addEventListener("click", () => {
           if (editMode) {
             editMode = false;

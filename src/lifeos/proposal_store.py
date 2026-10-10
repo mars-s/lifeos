@@ -276,9 +276,13 @@ class ProposalStore:
             )
             return self._fetch_revision(connection, proposal_id, expected_hash)
 
-    def begin_apply(self, proposal_id: str, expected_hash: str) -> ProposalRevision:
+    def begin_apply(
+        self, proposal_id: str, expected_hash: str, *, allow_resume: bool = True,
+    ) -> ProposalRevision:
         with self._transaction() as connection:
             current = self._require_current_hash(connection, proposal_id, expected_hash)
+            if not allow_resume and current.state is not ProposalState.APPROVED:
+                raise InvalidTransition("this request has already been claimed; check its saved state")
             if current.state is ProposalState.APPLYING:
                 return current
             if (

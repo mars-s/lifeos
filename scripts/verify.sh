@@ -2,5 +2,6 @@
 set -eu
 
 uv run ruff check .
+uv run python scripts/export-ui-contracts.py --check
 uv run pytest -q
 uv run python .agents/skills/verify/scripts/verify_lifeos.py run

@@ -25,5 +25,11 @@ Preconditions:
 
 ## Gotchas
 
+- For the unified cloud connector, run `npm run test:mcp` and `npm run test:native`
+  in `cloud-mirror/cloudflare`. The former checks exact day/week output and the
+  five UI resources. The latter checks local-tool consent, transient delivery and
+  absence of synthetic raw text from cloud storage. Neither uses live credentials.
+- `sh scripts/verify.sh` rejects stale generated cloud and native schema contracts.
+
 - An MCP resource test does not prove ChatGPT mounted the widget. A live host visual check remains separate.
 - Never run approval or apply actions in the real account as a widget smoke test.

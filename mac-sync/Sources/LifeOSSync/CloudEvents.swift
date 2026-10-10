@@ -9,6 +9,8 @@ final class CloudEvents {
     var onRevision: ((Int, Bool) async -> Int)?
     var onFeedRevision: ((Int, Bool) async -> Int)?
     var onStatus: ((String) -> Void)?
+    var onLocalTool: ((JSON) async -> JSON)?
+    var localToolsEnabled: (() -> Bool)?
     private(set) var status = "Offline" { didSet { onStatus?(status) } }
     init() {
         let config = URLSessionConfiguration.ephemeral
@@ -35,6 +37,7 @@ final class CloudEvents {
                 request.setValue("3", forHTTPHeaderField: "X-LifeOS-Protocol")
                 let connection = session.webSocketTask(with: request)
                 socket = connection; connection.resume(); status = "Connecting"
+                try await connection.send(.string(String(decoding: encoded(["version": 3, "type": "local_tools", "enabled": localToolsEnabled?() ?? false]), as: UTF8.self)))
                 // Register the socket before catch-up. The server sends its durable watermark.
                 let maintenance = Task {
                     while !Task.isCancelled {
@@ -64,6 +67,13 @@ final class CloudEvents {
                     let data: Data
                     switch message { case .data(let bytes): data = bytes; case .string(let string): data = Data(string.utf8); @unknown default: throw SyncError.invalid }
                     let value = try decoded(data)
+                    if value["type"] as? String == "local_tool_request" {
+                        guard data.count <= 256 * 1024, value["version"] as? Int == 3,
+                              let id = value["id"] as? String, UUID(uuidString: id) != nil else { throw SyncError.invalid }
+                        let result = await onLocalTool?(value) ?? LocalToolBridge.failure("Local tools unavailable.")
+                        try await connection.send(.string(String(decoding: encoded(["version": 3, "type": "local_tool_result", "id": id, "result": result]), as: UTF8.self)))
+                        continue
+                    }
                     guard data.count <= 1024, let revision = value["revision"] as? Int,
                           let version = value["version"] as? Int, [1, 3].contains(version), revision >= 0 else { throw SyncError.invalid }
                     status = "Connected"; failures = 0

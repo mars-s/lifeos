@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from enum import Enum
+from hashlib import sha256
 from typing import Any
 
 from .brain_dump_store import BrainDumpConflict, BrainDumpStore
@@ -19,7 +22,7 @@ from .models import (
     ThingsChange,
 )
 from .planner import BusyInterval, PlanningTask, PlanningWindow, plan_day, plan_range
-from .proposal_store import ProposalStore
+from .proposal_store import IdempotencyConflict, InvalidTransition, ProposalStore, UnknownProposal
 
 
 class ApplyError(RuntimeError):
@@ -557,6 +560,159 @@ class LifeOSService:
         copied["items"] = items
         return copied
 
+    def create_requested_task(
+        self, *, request_id: str, title: str, notes: str = "",
+        when: str | None = None, area_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create one explicitly requested task, retaining an immutable audit and receipt."""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
+            raise ValueError("request_id must be a stable 1-128 character identifier")
+        if not isinstance(title, str) or not title.strip() or len(title) > 1000:
+            raise ValueError("title must be non-empty and at most 1000 characters")
+        if not isinstance(notes, str) or len(notes) > 10000:
+            raise ValueError("notes must be at most 10000 characters")
+        if when is not None:
+            if not isinstance(when, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", when):
+                raise ValueError("when must be an absolute local YYYY-MM-DD; put time constraints in notes")
+            datetime.strptime(when, "%Y-%m-%d")
+        if area_id is not None and (
+            not isinstance(area_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", area_id)
+        ):
+            raise ValueError("area_id must be a Things identifier")
+        proposal_id = "requested-task-" + sha256(request_id.encode()).hexdigest()
+        fields = {"title": title, "notes": notes}
+        if when is not None:
+            fields["when"] = when
+        try:
+            revision = self.store.get_current(proposal_id)
+        except UnknownProposal:
+            if area_id is None:
+                page = self.things.read_areas(limit=500, offset=0)
+                matches = [
+                    item["record"]["uuid"] for item in page["items"]
+                    if item["record"].get("title", "").casefold() == "personal"
+                ]
+                if len(matches) != 1:
+                    raise ValueError("Personal area must resolve uniquely; read areas and supply area_id") from None
+                area_id = matches[0]
+            area = self.things.read_area(area_id)
+            snapshot = SourceSnapshot(
+                system="things", record_id=area_id, version=area["source_hash"],
+                data={"kind": "area"},
+            )
+            fields["area_id"] = area_id
+            revision = self.store.create_draft(
+                proposal_id, idempotency_key=f"requested-task:{request_id}",
+                source_snapshots=(snapshot,),
+                things_changes=(ThingsChange(ChangeOperation.CREATE, None, fields),),
+            )
+        else:
+            # Compare intent before replaying. Destination/source snapshots stay
+            # immutable even if Personal is renamed after the original write.
+            if (
+                revision.revision_number != 1 or len(revision.things_changes) != 1
+                or revision.calendar_changes
+                or revision.things_changes[0].operation is not ChangeOperation.CREATE
+                or revision.things_changes[0].task_id is not None
+                or revision.things_changes[0].destructive
+                or len(revision.source_snapshots) != 1
+                or revision.source_snapshots[0].system != "things"
+                or revision.source_snapshots[0].data.get("kind") != "area"
+                or revision.source_snapshots[0].record_id != revision.things_changes[0].fields.get("area_id")
+            ):
+                raise IdempotencyConflict("request_id no longer refers to the original single-task creation")
+            expected = dict(fields)
+            if area_id is not None:
+                expected["area_id"] = area_id
+            actual = dict(revision.things_changes[0].fields)
+            if area_id is None:
+                actual.pop("area_id", None)
+            if actual != expected:
+                raise IdempotencyConflict("request_id was already used for different task content")
+        if revision.state is ProposalState.DRAFT:
+            try:
+                revision = self.store.approve(proposal_id, revision.revision_hash)
+            except InvalidTransition:
+                revision = self.store.get_current(proposal_id)
+        if revision.state is ProposalState.APPROVED:
+            # Another caller may have claimed this request. Never issue a
+            # second gateway write while its result is still uncertain.
+            with suppress(InvalidTransition):
+                self.apply_proposal(proposal_id, revision.revision_hash, allow_resume=False)
+        revision = self.store.get_current(proposal_id)
+        receipt = self.store.get_operation_result(proposal_id, revision.revision_hash, "things", 0)
+        return {
+            **proposal_to_dict(revision),
+            "saved": revision.state is ProposalState.APPLIED,
+            "receipt": receipt,
+            "requires_lifeos_approval": False,
+            "retry_policy": "Reuse request_id unchanged. Never automatically retry a partial_failure or applying state.",
+        }
+
+    def change_requested_task(
+        self, *, request_id: str, task_id: str, expected_source_hash: str,
+        fields: Mapping[str, Any] | None = None, trash: bool = False,
+    ) -> dict[str, Any]:
+        """Apply one explicit edit or recoverable deletion with a local freshness check."""
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
+            raise ValueError("request_id must be a stable identifier")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", task_id):
+            raise ValueError("task_id must be an opaque Things identifier")
+        if not expected_source_hash:
+            raise ValueError("read the local task and supply its source_hash")
+        changes = dict(fields or {})
+        allowed = {"title", "notes", "when", "deadline", "tags", "checklist",
+                   "completed", "canceled", "area_id", "project_id"}
+        if trash and changes:
+            raise ValueError("Trash cannot be combined with an edit")
+        if not trash and (not changes or set(changes) - allowed):
+            raise ValueError("provide supported task fields only")
+        when = changes.get("when")
+        if when is not None:
+            if not isinstance(when, str):
+                raise ValueError("when must be a day or an absolute date")
+            if when not in {"today", "tomorrow", "anytime", "someday"}:
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", when):
+                    raise ValueError("when must not contain an unverified alarm time")
+                datetime.strptime(when, "%Y-%m-%d")
+        # Validate edits before storing or approving them. No gateway write occurs.
+        if not trash:
+            self.things.build_update_todo_command(task_id, **changes)
+        operation = ChangeOperation.DELETE if trash else ChangeOperation.UPDATE
+        proposal_id = "requested-change-" + sha256(request_id.encode()).hexdigest()
+        snapshot = SourceSnapshot("things", task_id, expected_source_hash, {"kind": "to-do"})
+        change = ThingsChange(operation, task_id, changes, destructive=trash)
+        try:
+            revision = self.store.get_current(proposal_id)
+        except UnknownProposal:
+            observed = self.things.read_todo(task_id)
+            if observed is None or observed["source_hash"] != expected_source_hash:
+                raise ValueError("task is missing or changed; read it again before making a new request") from None
+            revision = self.store.create_draft(
+                proposal_id, idempotency_key=f"requested-change:{request_id}",
+                source_snapshots=(snapshot,), things_changes=(change,),
+            )
+        else:
+            if (revision.revision_number != 1 or revision.calendar_changes
+                    or revision.source_snapshots != (snapshot,)
+                    or revision.things_changes != (change,)):
+                raise IdempotencyConflict("request_id was already used for a different task change")
+        if revision.state is ProposalState.DRAFT:
+            with suppress(InvalidTransition):
+                self.store.approve(proposal_id, revision.revision_hash)
+            revision = self.store.get_current(proposal_id)
+        if revision.state is ProposalState.APPROVED:
+            with suppress(InvalidTransition):
+                self.apply_proposal(proposal_id, revision.revision_hash, allow_resume=False)
+        revision = self.store.get_current(proposal_id)
+        return {
+            **proposal_to_dict(revision),
+            "saved": revision.state is ProposalState.APPLIED,
+            "receipt": self.store.get_operation_result(proposal_id, revision.revision_hash, "things", 0),
+            "requires_lifeos_approval": False,
+            "retry_policy": "Reuse request_id and arguments unchanged. Never automatically resume uncertain writes.",
+        }
+
     def create_proposal(
         self,
         *,
@@ -597,8 +753,10 @@ class LifeOSService:
             for event_id in snapshot.data.get("event_ids", [])
         }
         for change in things:
-            if change.operation is ChangeOperation.DELETE:
-                raise ValueError("Things deletion is not supported")
+            if change.operation is ChangeOperation.DELETE and (
+                change.fields or not change.destructive
+            ):
+                raise ValueError("Things deletion must be an explicit recoverable Trash operation")
             if change.operation is ChangeOperation.CREATE:
                 title = change.fields.get("title")
                 if not isinstance(title, str) or not title:
@@ -633,8 +791,12 @@ class LifeOSService:
     def reject_proposal(self, proposal_id: str, revision_hash: str) -> dict[str, Any]:
         return proposal_to_dict(self.store.reject(proposal_id, revision_hash))
 
-    def apply_proposal(self, proposal_id: str, revision_hash: str) -> dict[str, Any]:
+    def apply_proposal(
+        self, proposal_id: str, revision_hash: str, *, allow_resume: bool = True,
+    ) -> dict[str, Any]:
         revision = self.store.get_revision(proposal_id, revision_hash)
+        if not allow_resume and revision.state is not ProposalState.APPROVED:
+            return proposal_to_dict(revision)
         if revision.state is ProposalState.APPLIED:
             return proposal_to_dict(revision)
         if revision.state is ProposalState.APPROVED:
@@ -642,7 +804,7 @@ class LifeOSService:
             revision = self.store.check_freshness(proposal_id, revision_hash, observed)
             if revision.state is ProposalState.STALE:
                 return proposal_to_dict(revision)
-        revision = self.store.begin_apply(proposal_id, revision_hash)
+        revision = self.store.begin_apply(proposal_id, revision_hash, allow_resume=allow_resume)
         try:
             for index, change in enumerate(revision.things_changes):
                 self._apply_once(
@@ -711,6 +873,10 @@ class LifeOSService:
             if item_kind != "todo":
                 raise ApplyError("V1 can only create Things to-dos")
             result = self.things.create_todo(**fields)
+        elif change.operation is ChangeOperation.DELETE:
+            if item_kind != "todo" or fields:
+                raise ApplyError("Only a single Things to-do can be moved to Trash")
+            result = self.things.trash_todo(change.task_id)
         elif item_kind == "project":
             if change.operation is not ChangeOperation.UPDATE:
                 raise ApplyError("V1 can only update Things projects")

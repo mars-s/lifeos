@@ -4,6 +4,7 @@ import {BulkD1} from './d1-bulk';
 import {canonical,fingerprint,MirrorStore} from '../site/lib/mirror-store';
 import {SyncFeed} from './sync-feed';
 import {DemoError} from '../site/lib/demo-store';
+import {localToolNames} from './bridge-contract';
 
 type Mutation='claim'|'ack'|'commit';
 type Intent={position:number;id:string;hash:string;request:string;policy:Policy|Mutation;prepared:string|null};
@@ -11,6 +12,32 @@ type Outcome={hash:string;rejected:number};
 export type Acceptance=NativeOperation|{id:string;state:'accepted';acceptance_pending:true};
 export class OwnerSync extends DurableObject<Env> {
   private serial:Promise<void>=Promise.resolve();
+  // Transient local calls are deliberately absent from D1, DO storage and feed.
+  // Losing the connection reports uncertainty, never a queued or applied write.
+  private localCalls = new Map<string, {socket: WebSocket; finish: (result: unknown) => void}>();
+  localBridgeAvailable() {
+    return this.ctx.getWebSockets().some(socket => socket.readyState === WebSocket.OPEN && socket.deserializeAttachment()?.localBridge === true);
+  }
+  async callLocalTool(tool: string, args: Record<string, unknown>) {
+    const failure = (text: string) => ({isError: true, content: [{type: 'text', text}]});
+    if (!localToolNames.has(tool) || !args || Array.isArray(args) || typeof args !== 'object') return failure('Unsupported local tool.');
+    const socket = this.ctx.getWebSockets().find(socket => socket.readyState === WebSocket.OPEN && socket.deserializeAttachment()?.localBridge === true);
+    if (!socket) return failure('Local LifeOS tools are unavailable. Open LifeOS Sync on your awake Mac and enable local tools. Nothing was queued.');
+    if (this.localCalls.size >= 4 || [...this.localCalls.values()].some(call => call.socket === socket)) return failure('Local LifeOS is busy. No new invocation was sent.');
+    const id = crypto.randomUUID(), message = JSON.stringify({version: 3, type: 'local_tool_request', id, tool, arguments: args});
+    if (new TextEncoder().encode(message).length > 256 * 1024) return failure('Local request exceeds the transport budget.');
+    return await new Promise<unknown>(resolve => {
+      const timer = setTimeout(() => finish(failure('Local response timed out. The outcome may be unknown. Check saved capture or proposal state before retrying a write. Nothing is replayed automatically.')), 25000);
+      const finish = (result: unknown) => {clearTimeout(timer); this.localCalls.delete(id); resolve(result);};
+      this.localCalls.set(id, {socket, finish});
+      try {socket.send(message);} catch {finish(failure('Local connection closed before delivery. Check saved state before retrying a write.'));}
+    });
+  }
+  private failLocalCalls(socket: WebSocket) {
+    for (const call of [...this.localCalls.values()]) if (call.socket === socket) {
+      call.finish({isError: true, content: [{type: 'text', text: 'Mac connection closed. The local outcome may be unknown. Check saved state before retrying a write. Nothing is replayed automatically.'}]});
+    }
+  }
   constructor(ctx:DurableObjectState,env:Env){
     super(ctx,env);
     ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS intents(position INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,hash TEXT NOT NULL,request TEXT NOT NULL,policy TEXT NOT NULL,prepared TEXT)`);
@@ -141,15 +168,27 @@ export class OwnerSync extends DurableObject<Env> {
   }
   async webSocketMessage(socket:WebSocket,message:string|ArrayBuffer){
     try{
+      if (typeof message !== 'string' || new TextEncoder().encode(message).length > 256 * 1024) throw new Error();
       const input=JSON.parse(typeof message==='string'?message:'');
+      if (input.type === 'local_tools' && input.version === 3 && typeof input.enabled === 'boolean' && Object.keys(input).sort().join(',') === 'enabled,type,version') {
+        const state = socket.deserializeAttachment();
+        if (state.version !== 3) throw new Error();
+        socket.serializeAttachment({...state, localBridge: input.enabled}); return;
+      }
+      if (input.type === 'local_tool_result' && input.version === 3) {
+        const pending = this.localCalls.get(input.id);
+        if (!pending || pending.socket !== socket) return;
+        if (Object.keys(input).sort().join(',') !== 'id,result,type,version' || !input.result || !Array.isArray(input.result.content) || input.result.content.some((item: {type?: string; text?: unknown}) => item.type !== 'text' || typeof item.text !== 'string') || input.result.isError !== undefined && typeof input.result.isError !== 'boolean') throw new Error();
+        pending.finish(input.result); return;
+      }
       const state=socket.deserializeAttachment() as {ack:number;retries:number;version?:number};const version=state.version===3?3:1;
       if(input.version!==version||Object.keys(input).sort().join(',')!=='ack,version'||!Number.isSafeInteger(input.ack)||input.ack<0||input.ack>(version===3?this.feedRevision():this.revision()))throw new Error();
       socket.serializeAttachment({...state,ack:Math.max(state.ack,input.ack),retries:0});
     }catch{socket.close(1008,'Invalid acknowledgement');}
     await this.schedule();
   }
-  async webSocketClose(socket:WebSocket,code:number,reason:string){socket.close(code,reason);await this.schedule();}
-  async webSocketError(socket:WebSocket){socket.close(1011,'Connection failed');await this.schedule();}
+  async webSocketClose(socket:WebSocket,code:number,reason:string){this.failLocalCalls(socket);socket.close(code,reason);await this.schedule();}
+  async webSocketError(socket:WebSocket){this.failLocalCalls(socket);socket.close(1011,'Connection failed');await this.schedule();}
   async alarm(){
     try{await this.locked(()=>this.drain());}
     catch{await this.ctx.storage.setAlarm(Date.now()+5000);return;}

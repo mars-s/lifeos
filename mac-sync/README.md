@@ -9,11 +9,51 @@ Swift6.3 menu-bar agent for the existing Cloudflare mirror. This version queues 
 - Bounded bulk public inventory child process with two complete matching passes. Exact live parity measured 1.782 seconds versus 14.948 seconds for the old reader in one stable run.
 
 - Native menu-bar status, pause/resume, sync now, wake/network refresh, background launch of Things when needed and optional start at login.
-- App-scoped Keychain credential with no recurring interactive retrieval, no Python runtime and no 1Password runtime dependency.
+- App-scoped Keychain credential with no recurring interactive retrieval and no Python or 1Password dependency for native sync. The optional unified local-tools bridge starts the retained Python service for individual tool calls.
 - Application Support journal, single-instance lock, persisted upload retries, intents before writes and receipts before cloud acknowledgement.
 - Read-before-write and read-back verification through fixed bundled public Things scripts. No private Things database access by the native agent.
 - Existing mirror journal migration, preserving its sequence and making an online SQLite backup. Undelivered legacy uploads block migration; the old helper is restored rather than losing them.
 - Worker/D1 operation journal and pending overlay. Existing read grants cannot write, including after refresh. A separate native key can consume only native sync routes; the old upload key cannot claim writes.
+
+## Native LifeOS window
+
+The existing AppKit menu bar now includes **Open LifeOS**. It presents a SwiftUI
+window in this same app and process. Reopening reuses one window. Closing it does
+not stop sync or quit the menu-bar app. The existing owner and journal remain
+unchanged.
+
+The window observes the owning agent's status, connection, pending queue count
+and last-sync time. It does not create another engine or start another service.
+The Oura-inspired Today view includes a local focus timer and session drafts.
+On macOS 26, navigation and floating controls use native Liquid Glass. Content
+panels use regular material rather than stacking glass on glass. Older systems
+fall back to regular material; Reduce Transparency and increased contrast use
+solid surfaces with stronger outlines. The scene extends behind the sidebar so
+its material has a real background to sample.
+The timer only wakes while running. Drafts are explicitly temporary and are not
+yet connected to the durable LifeOS journal, Things or Calendar. Task and calendar
+destinations are labelled as not connected, rather than showing invented records.
+
+For an isolated preview, after building:
+
+```sh
+'build/LifeOS Sync.app/Contents/MacOS/LifeOSSync' --desktop-preview
+```
+
+Preview mode skips engine, watcher, network monitor and credential setup. Do not
+mistake its status for a live sync result. Quit the preview before running the
+normal app from that same bundle.
+
+The isolated lifecycle check uses the real window controller without creating
+an Agent or SyncEngine:
+
+```sh
+'build/LifeOS Sync.app/Contents/MacOS/LifeOSSync' --desktop-check
+```
+
+An optional `--snapshot /absolute/path.png` exports its initial view. The output
+directory must already exist. The background artwork was generated for the
+LifeOS design study and is bundled locally, with no font or image downloads.
 
 ## Build and synthetic verification
 
