@@ -6,14 +6,16 @@ import re
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import asdict, is_dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime
 from enum import Enum
 from hashlib import sha256
 from typing import Any
 
+from .bana_gateway import LIFEOS_TAGS, BanaGateway, BanaUnavailable
 from .brain_dump_store import BrainDumpConflict, BrainDumpStore
 from .memory_gateway import MemoryGatewayError, SupermemoryGateway, UnknownMemoryDocument
 from .models import (
+    BanaChange,
     CalendarChange,
     ChangeOperation,
     ProposalRevision,
@@ -55,12 +57,14 @@ class LifeOSService:
         calendar: Any,
         brain_dumps: BrainDumpStore | None = None,
         memory: SupermemoryGateway | None = None,
+        bana: BanaGateway | None = None,
     ) -> None:
         self.store = store
         self.things = things
         self.calendar = calendar
         self.brain_dumps = brain_dumps
         self.memory = memory
+        self.bana = bana
 
     def capture_brain_dump(self, **fields: Any) -> dict[str, Any]:
         if self.brain_dumps is None:
@@ -721,17 +725,20 @@ class LifeOSService:
         source_snapshots: Sequence[Mapping[str, Any]],
         things_changes: Sequence[Mapping[str, Any]] = (),
         calendar_changes: Sequence[Mapping[str, Any]] = (),
+        bana_changes: Sequence[Mapping[str, Any]] = (),
     ) -> dict[str, Any]:
         snapshots = tuple(SourceSnapshot.from_dict(item) for item in source_snapshots)
         things = tuple(ThingsChange.from_dict(item) for item in things_changes)
         calendar = tuple(CalendarChange.from_dict(item) for item in calendar_changes)
-        self._validate_proposal(snapshots, things, calendar)
+        bana = tuple(BanaChange.from_dict(item) for item in bana_changes)
+        self._validate_proposal(snapshots, things, calendar, bana)
         revision = self.store.create_draft(
             proposal_id,
             idempotency_key=idempotency_key,
             source_snapshots=snapshots,
             things_changes=things,
             calendar_changes=calendar,
+            bana_changes=bana,
         )
         return proposal_to_dict(revision)
 
@@ -740,11 +747,25 @@ class LifeOSService:
         snapshots: Sequence[SourceSnapshot],
         things: Sequence[ThingsChange],
         calendar: Sequence[CalendarChange],
+        bana: Sequence[BanaChange] = (),
     ) -> None:
-        if not things and not calendar:
+        if not things and not calendar and not bana:
             raise ValueError("a proposal needs at least one change")
-        if len(things) + len(calendar) > 100:
+        if len(things) + len(calendar) + len(bana) > 100:
             raise ValueError("a proposal may contain at most 100 changes")
+        bana_nodes = {item.record_id for item in snapshots if item.system == "bana"}
+        for change in bana:
+            if change.operation == "add":
+                if not str(change.fields.get("name", "")).strip():
+                    raise ValueError("a new Bana node needs a name")
+            elif change.node_id not in bana_nodes:
+                raise ValueError("each edited Bana node needs a reviewed source snapshot")
+            if change.operation == "link_task" and "things_id" not in change.fields:
+                index = change.fields.get("things_change_index")
+                if not isinstance(index, int) or not 0 <= index < len(things) or (
+                    things[index].operation is not ChangeOperation.CREATE
+                ):
+                    raise ValueError("link_task needs things_id or the index of a Things create")
         things_snapshots = {item.record_id: item for item in snapshots if item.system == "things"}
         calendar_snapshots = [item for item in snapshots if item.system == "calendar_range"]
         reviewed_event_ids = {
@@ -824,6 +845,11 @@ class LifeOSService:
                         proposal_id, index, change
                     ),
                 )
+            for index, change in enumerate(revision.bana_changes):
+                self._apply_once(
+                    proposal_id, revision_hash, "bana", index,
+                    lambda change=change: self._apply_bana(proposal_id, revision_hash, change),
+                )
         except Exception as error:
             failed = self.store.finish_apply(
                 proposal_id,
@@ -864,6 +890,10 @@ class LifeOSService:
             return SourceSnapshot(
                 snapshot.system, snapshot.record_id, observed.source_hash, snapshot.data
             )
+        if snapshot.system == "bana":
+            observed = self._notes().snapshot(snapshot.record_id)
+            version = observed["hash"] if observed else "missing"
+            return SourceSnapshot(snapshot.system, snapshot.record_id, version, snapshot.data)
         raise ValueError(f"unsupported snapshot system: {snapshot.system}")
 
     def _apply_things(self, change: ThingsChange) -> dict[str, Any]:
@@ -912,3 +942,176 @@ class LifeOSService:
             deleted = self.calendar.delete_linked_work_block(event_identifier=change.event_id)
             return {"deleted_event_identifier": deleted}
         raise ApplyError(f"unsupported Calendar operation: {change.operation.value}")
+
+    # Notes in Bana. Reads are tier 0. Appends (tier 1) and one explicit edit with the node's
+    # fresh hash (tier 2) run as auto-approved proposals, so they share request_id retries,
+    # receipts and the stale check. Anything inferred or multi-node goes through
+    # propose_changes and waits for the person.
+
+    def _notes(self) -> BanaGateway:
+        if self.bana is None:
+            raise BanaUnavailable("Bana is not configured for this LifeOS service.")
+        return self.bana
+
+    def notes_search(self, query: str, *, limit: int = 20) -> dict[str, Any]:
+        clean = query.strip()
+        if not clean or not 1 <= limit <= 200:
+            raise ValueError("query must not be empty and limit must be 1 to 200")
+        hits = self._notes().search(clean, limit)
+        return {"query": clean, "results": hits, "count": len(hits), "content_is_untrusted": True}
+
+    def notes_read(self, node_id: str) -> dict[str, Any]:
+        bana = self._notes()
+        snapshot = bana.snapshot(_node_id(node_id))
+        if snapshot is None:
+            raise ValueError("no Bana node with that id")
+        return {
+            "node_id": str(node_id), "hash": snapshot["hash"], "node": snapshot["node"],
+            "markdown": bana.markdown(node_id),
+            "snapshot": SourceSnapshot("bana", str(node_id), snapshot["hash"], {"kind": "node"}).to_dict(),
+            "content_is_untrusted": True,
+        }
+
+    def notes_today(self, day: str | None = None) -> dict[str, Any]:
+        day = day or date.today().isoformat()
+        datetime.strptime(day, "%Y-%m-%d")
+        return {"date": day, **self.notes_read(str(self._notes().day(day)))}
+
+    def notes_add(
+        self, *, request_id: str, name: str, by: str, parent: str = "today",
+        tag: str | None = None, description: str | None = None,
+    ) -> dict[str, Any]:
+        if not name.strip() or len(name) > 10_000:
+            raise ValueError("name must be non-empty and at most 10000 characters")
+        if not (parent in {"today", "tomorrow"} or re.fullmatch(r"\d+|\d{4}-\d{2}-\d{2}", parent)):
+            raise ValueError("parent must be today, tomorrow, YYYY-MM-DD or a node id")
+        tags = [self._existing_tag(tag)] if tag else []
+        fields: dict[str, Any] = {
+            "name": name, "parent": parent, "tags": tags,
+            "fields": {"By": by, "Request ID": request_id},
+        }
+        if description:
+            fields["description"] = description
+        return self._direct_notes(request_id, (), (BanaChange("add", None, fields),))
+
+    def notes_edit(
+        self, *, request_id: str, node_id: str, expected_hash: str, by: str,
+        operation: str, fields: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        node_id = _node_id(node_id)
+        if not expected_hash:
+            raise ValueError("read the node with notes_read and pass its hash")
+        if operation == "tag":
+            fields = {"tag": self._existing_tag(str(fields["tag"]))}
+        if operation == "link_task":
+            things_id = str(fields["things_id"])
+            if self.things.read_todo(things_id) is None:
+                raise ValueError("no Things to-do with that id")
+        snapshot = SourceSnapshot("bana", node_id, expected_hash, {"kind": "node"})
+        change = BanaChange(operation, node_id, {**fields, "by": by})
+        return self._direct_notes(request_id, (snapshot,), (change,))
+
+    def _existing_tag(self, tag: str) -> str:
+        """Agents may use a supertag that exists or a LifeOS one, never invent one."""
+        clean = tag.strip().lstrip("#")
+        if clean not in LIFEOS_TAGS and clean not in self._notes().tags():
+            raise ValueError(f"no supertag #{clean} in Bana; ask the person to create it")
+        return clean
+
+    def _direct_notes(
+        self, request_id: str, snapshots: tuple[SourceSnapshot, ...], changes: tuple[BanaChange, ...],
+    ) -> dict[str, Any]:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
+            raise ValueError("request_id must be a stable 1-128 character identifier")
+        proposal_id = "note-request-" + sha256(request_id.encode()).hexdigest()
+        try:
+            revision = self.store.get_current(proposal_id)
+        except UnknownProposal:
+            # Bana closed: say so now and record nothing, so a later retry can still write.
+            if not self._notes().available():
+                raise BanaUnavailable("Bana is not reachable. Open Bana on this Mac and try again.") from None
+            for snapshot in snapshots:
+                if self._observe(snapshot).version != snapshot.version:
+                    raise ValueError("the node changed or is gone; read it again with notes_read") from None
+            revision = self.store.create_draft(
+                proposal_id, idempotency_key=f"note-request:{request_id}",
+                source_snapshots=snapshots, bana_changes=changes,
+            )
+        else:
+            if (revision.revision_number != 1 or revision.things_changes or revision.calendar_changes
+                    or revision.source_snapshots != snapshots or revision.bana_changes != changes):
+                raise IdempotencyConflict("request_id was already used for a different note change")
+        if revision.state is ProposalState.DRAFT:
+            with suppress(InvalidTransition):
+                self.store.approve(proposal_id, revision.revision_hash)
+            revision = self.store.get_current(proposal_id)
+        if revision.state is ProposalState.APPROVED:
+            with suppress(InvalidTransition):
+                self.apply_proposal(proposal_id, revision.revision_hash, allow_resume=False)
+        revision = self.store.get_current(proposal_id)
+        receipts = [
+            self.store.get_operation_result(proposal_id, revision.revision_hash, "bana", index)
+            for index in range(len(revision.bana_changes))
+        ]
+        return {
+            **proposal_to_dict(revision),
+            "saved": revision.state is ProposalState.APPLIED,
+            "node_id": str(receipts[0]["node"]) if receipts and receipts[0] else None,
+            "receipts": receipts,
+            "requires_lifeos_approval": False,
+            "retry_policy": "Reuse request_id and arguments unchanged. Uncertain writes are never replayed.",
+        }
+
+    def _apply_bana(self, proposal_id: str, revision_hash: str, change: BanaChange) -> dict[str, Any]:
+        bana = self._notes()
+        fields = dict(change.fields)
+        by = fields.pop("by", None)
+        if change.operation == "add":
+            node = bana.add(
+                name=str(fields["name"]), parent=fields.get("parent", "today"),
+                tags=tuple(fields.get("tags", ())), fields=fields.get("fields"),
+                description=fields.get("description"),
+            )
+            tree = bana.inspect(node)
+            if tree.get("name") != fields["name"] or not set(fields.get("tags", ())) <= set(tree.get("tags", [])):
+                raise ApplyError("Bana node did not read back as written")
+            return {"node": node, "operation": "add", "by": by}
+        node = _node_id(str(change.node_id))
+        expected: dict[str, Any] = {}
+        if change.operation == "tag":
+            bana.tag(node, str(fields["tag"]))
+        elif change.operation == "set_field":
+            bana.set_field(node, str(fields["field"]), str(fields["value"]))
+            expected[str(fields["field"])] = str(fields["value"])
+        elif change.operation == "move":
+            bana.move(node, _node_id(str(fields["parent"])))
+        elif change.operation == "link_task":
+            things_id = fields.get("things_id")
+            if things_id is None:
+                receipt = self.store.get_operation_result(
+                    proposal_id, revision_hash, "things", int(fields["things_change_index"])
+                ) or {}
+                record = receipt.get("record") or {}
+                things_id = (record.get("record") or record).get("uuid")
+            if not things_id:
+                raise ApplyError("the Things to-do to link has no id")
+            expected = {"Things ID": str(things_id), "Things link": f"things:///show?id={things_id}"}
+            for field, value in {**expected, "Synced at": datetime.now(UTC).isoformat()}.items():
+                bana.set_field(node, field, value)
+            bana.tag(node, "in-things")
+        tree = bana.inspect(node)
+        ok = all(tree.get("fields", {}).get(key) == value for key, value in expected.items())
+        if change.operation in {"tag", "link_task"}:
+            ok = ok and (fields.get("tag", "in-things") in tree.get("tags", []))
+        if change.operation == "move":
+            ok = ok and str((tree.get("breadcrumbs") or [{}])[-1].get("id")) == str(fields["parent"])
+        if not ok:
+            raise ApplyError("Bana node did not read back as written")
+        return {"node": int(node), "operation": change.operation, "by": by,
+                **({"things_id": expected["Things ID"]} if "Things ID" in expected else {})}
+
+
+def _node_id(value: str) -> str:
+    if not re.fullmatch(r"\d{1,18}", str(value)):
+        raise ValueError("a Bana node id is a number from notes_search or notes_read")
+    return str(value)

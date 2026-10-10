@@ -1539,7 +1539,7 @@
   },
   {
     "name": "propose_changes",
-    "description": "Store an immutable preview. This does not change Things or Calendar.\n\nAfter creating the draft, call render_proposal_review with the exact returned revision so\nthe user can inspect and approve the revision hash they are looking at.",
+    "description": "Store an immutable preview. This does not change Things, Calendar or Bana.\n\nBana edits that are inferred, or touch more than one node, belong here with a \"bana\"\nsource snapshot (from notes_read) for each edited node.\n\nAfter creating the draft, call render_proposal_review with the exact returned revision so\nthe user can inspect and approve the revision hash they are looking at.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1556,7 +1556,8 @@
               "system": {
                 "enum": [
                   "things",
-                  "calendar_range"
+                  "calendar_range",
+                  "bana"
                 ],
                 "type": "string"
               },
@@ -1686,6 +1687,53 @@
             }
           ],
           "default": null
+        },
+        "bana_changes": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "operation": {
+                    "enum": [
+                      "add",
+                      "tag",
+                      "set_field",
+                      "move",
+                      "link_task"
+                    ],
+                    "type": "string"
+                  },
+                  "node_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "description": "Omit for add; required otherwise."
+                  },
+                  "fields": {
+                    "additionalProperties": true,
+                    "description": "add: name, parent, tags, fields, description. tag: tag. set_field: field, value. move: parent. link_task: things_id, or things_change_index of a Things create in this proposal. Always include by (chatgpt, claude, codex).",
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "operation"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -1783,7 +1831,8 @@
                   "system": {
                     "enum": [
                       "things",
-                      "calendar_range"
+                      "calendar_range",
+                      "bana"
                     ],
                     "type": "string"
                   },
@@ -1923,6 +1972,43 @@
                 }
               ],
               "default": null
+            },
+            "bana_changes": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "operation": {
+                    "enum": [
+                      "add",
+                      "tag",
+                      "set_field",
+                      "move",
+                      "link_task"
+                    ],
+                    "type": "string"
+                  },
+                  "node_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "fields": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "operation"
+                ],
+                "type": "object"
+              },
+              "type": "array"
             }
           },
           "required": [
@@ -1980,7 +2066,8 @@
               "system": {
                 "enum": [
                   "things",
-                  "calendar_range"
+                  "calendar_range",
+                  "bana"
                 ],
                 "title": "System",
                 "type": "string"
@@ -2142,6 +2229,48 @@
           ],
           "default": null,
           "title": "Failure Detail"
+        },
+        "bana_changes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "enum": [
+                  "add",
+                  "tag",
+                  "set_field",
+                  "move",
+                  "link_task"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "node_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Node Id"
+              },
+              "fields": {
+                "additionalProperties": true,
+                "title": "Fields",
+                "type": "object"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "ProposalBanaChangeView",
+            "type": "object"
+          },
+          "title": "Bana Changes",
+          "type": "array"
         }
       },
       "required": [
