@@ -12,6 +12,7 @@ import os
 import socket
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
 from fastmcp import Client
@@ -23,6 +24,7 @@ from lifeos.bana_gateway import (
     BanaGateway,
     BanaUnavailable,
 )
+from lifeos.brain_dump_store import BrainDumpStore
 from lifeos.proposal_store import IdempotencyConflict, ProposalStore
 from lifeos.server import create_mcp
 from lifeos.service import LifeOSService
@@ -63,7 +65,11 @@ def bana(tmp_path):
 
 
 def service_for(tmp_path, gateway, things=None):
-    return LifeOSService(ProposalStore(tmp_path / "lifeos.sqlite3"), things or NoThings(), None, bana=gateway)
+    db = tmp_path / "lifeos.sqlite3"
+    return LifeOSService(
+        ProposalStore(db), things or NoThings(), None,
+        BrainDumpStore(db, tmp_path / "journal"), bana=gateway,
+    )
 
 
 def test_never_commands_are_not_reachable_and_fail_before_any_request(tmp_path):
@@ -168,3 +174,107 @@ async def test_note_tools_over_mcp(bana, tmp_path):
     assert added.structured_content["saved"] is True
     assert found.structured_content["results"][0]["id"] == int(added.structured_content["node_id"])
     assert "From MCP" in today.structured_content["markdown"]
+
+
+RAW = (
+    "Need to email Sam about the water rota before Friday.\n"
+    "Not sure if the build day is the 18th or the 25th.\n"
+    "Felt calmer after the garden today."
+)
+
+
+def interpret(service, capture, key, by):
+    return service.submit_brain_dump_semanticization(
+        capture_id=capture["capture_id"], source_hash=capture["source_hash"], idempotency_key=key,
+        interpreted_by=by, summary="Garden admin.",
+        items=[
+            {"kind": "task", "title": "Email Sam about the water rota", "confidence": 0.9,
+             "source_excerpt": "email Sam about the water rota", "time_expression": "before Friday"},
+            {"kind": "question", "title": "Which date is the build day?", "confidence": 0.6,
+             "source_excerpt": "the 18th or the 25th"},
+        ],
+        unresolved=["Is the rota weekly?"],
+        journal_entry="Felt calmer after the garden today.",
+    )
+
+
+@needs_bana
+def test_capture_then_interpret_twice(bana, tmp_path):
+    gateway, _ = bana
+    service = service_for(tmp_path, gateway)
+    capture = service.capture_brain_dump(
+        raw_text=RAW, idempotency_key="cap-1", source="chat", captured_at="2026-10-10T09:30:00+11:00",
+    )
+    assert capture["bana"]["status"] == "saved" and capture["bana"]["source_hash_matches"]
+    # Retrying the capture makes no second node.
+    assert service.capture_brain_dump(
+        raw_text=RAW, idempotency_key="cap-1", source="chat", captured_at="2026-10-10T09:30:00+11:00",
+    )["bana"]["node_id"] == capture["bana"]["node_id"]
+    first = interpret(service, capture, "i-1", "chatgpt")
+    second = interpret(service, capture, "i-2", "claude")
+    assert first["bana"]["status"] == second["bana"]["status"] == "saved"
+    assert first["bana"]["node_id"] != second["bana"]["node_id"]
+    assert first["journal_written"] is False  # the journal's home is the Bana day page
+
+    raw_node = service.notes_read(capture["bana"]["node_id"])["node"]
+    assert raw_node["tags"] == ["capture"]
+    assert raw_node["fields"]["Source hash"] == capture["source_hash"]
+    raw_hits = [hit for hit in gateway.search("Capture:") if "#capture" in hit["line"]]
+    assert len(raw_hits) == 1
+    interpretations = [child for child in raw_node["children"] if "interpretation" in child.get("tags", [])]
+    assert len(interpretations) == 2
+    evidence = [
+        item["fields"]["Evidence"]
+        for node in interpretations for item in node.get("children", [])
+        if "Evidence" in item.get("fields", {})
+    ]
+    assert len(evidence) == 4 and all(quote in RAW for quote in evidence)
+    kinds = {tag for item in interpretations[0]["children"] for tag in item.get("tags", [])}
+    assert kinds == {"suggested-action", "question"}
+
+    day = service.notes_today("2026-10-10")
+    assert "Felt calmer after the garden today." in day["markdown"]
+    exported = service.export_journal("2026-10-10")
+    text = Path(exported["path"]).read_text()
+    assert exported["path"].endswith("2026-10-10.md") and "Felt calmer" in text
+    # A file LifeOS did not export is never overwritten.
+    hand = tmp_path / "journal" / "2026-10-11.md"
+    hand.write_text("# my own words\n")
+    assert service.export_journal("2026-10-11")["path"].endswith("2026-10-11.bana.md")
+    assert hand.read_text() == "# my own words\n"
+
+
+@needs_bana
+def test_meeting_debrief_is_a_meeting_node(bana, tmp_path):
+    gateway, _ = bana
+    service = service_for(tmp_path, gateway)
+    capture = service.capture_brain_dump(raw_text=RAW, idempotency_key="m", source="import")
+    result = service.submit_brain_dump_semanticization(
+        capture_id=capture["capture_id"], source_hash=capture["source_hash"], idempotency_key="mi",
+        interpreted_by="claude", items=[], meeting_title="Garden committee",
+    )
+    node = service.notes_read(result["bana"]["node_id"])["node"]
+    assert node["name"] == "Garden committee" and set(node["tags"]) == {"interpretation", "meeting"}
+
+
+def test_capture_succeeds_with_bana_closed_and_journal_falls_back(tmp_path):
+    service = service_for(tmp_path, BanaGateway(tmp_path / "closed"))
+    capture = service.capture_brain_dump(raw_text=RAW, idempotency_key="c", source="chat", captured_at="2026-10-10T09:30:00+11:00")
+    assert capture["bana"] == {"status": "unavailable"}
+    assert service.get_brain_dump(capture["capture_id"])["raw_text"] == RAW
+    revision = interpret(service, capture, "i", "codex")
+    assert revision["bana"] == {"status": "unavailable"}
+    assert revision["journal_written"] is True  # Markdown keeps the prose until Bana is back
+
+
+@needs_bana
+def test_export_journal_cli(bana, tmp_path, monkeypatch, capsys):
+    from lifeos import cli
+
+    _, home = bana
+    monkeypatch.setenv("BANA_HOME", str(home))
+    monkeypatch.setenv("LIFEOS_DB_PATH", str(tmp_path / "lifeos.sqlite3"))
+    monkeypatch.setenv("LIFEOS_JOURNAL_DIR", str(tmp_path / "journal"))
+    assert cli.main(["export-journal", "--date", "2026-10-10"]) == 0
+    written = json.loads(capsys.readouterr().out)
+    assert "Seed swap at the library" in Path(written["path"]).read_text()

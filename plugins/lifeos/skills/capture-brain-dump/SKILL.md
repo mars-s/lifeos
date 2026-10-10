@@ -1,6 +1,6 @@
 ---
 name: capture-brain-dump
-description: Preserve a spoken or typed brain dump in LifeOS, then extract reviewable candidate tasks, projects, notes, ideas, questions, and journal prose without writing to Things or Calendar.
+description: Preserve a spoken or typed brain dump in LifeOS and Bana, then extract reviewable candidate tasks, projects, notes, ideas, questions, and journal prose without writing to Things or Calendar.
 ---
 
 # Capture a brain dump
@@ -12,6 +12,15 @@ Use this when the user says they are brain dumping, unloading thoughts, capturin
 3. Call `submit_brain_dump_semanticization` with the returned `capture_id` and `source_hash`. Set `interpreted_by` to `chatgpt`. Use a different stable idempotency key for this interpretation.
 4. Call `render_brain_dump_canvas` with the saved `capture_id`, the semanticization revision hash, and the same durable data. Include task candidates, possible Calendar placement, journal prose, and unresolved questions when present. Keep task candidates primary, supporting context short, and node source order deliberate. Placement fields are compatibility hints; the renderer owns the collision-free layout. Calendar items are previews, not scheduled events.
 5. Report the saved capture ID, candidate count, and unresolved questions. Keep the response brief unless the user asks to review details.
+
+## Where it lands
+
+The LifeOS ledger keeps the exact words and stays authoritative. Bana is the notebook:
+
+- `capture_brain_dump` also puts a `#capture` node on that day's Bana page, with the raw text and the same `Source hash`. If its result says `bana.status: "unavailable"`, tell the user the capture is safe in LifeOS and will reach Bana when Bana is open and they interpret it again. Nothing is queued.
+- `submit_brain_dump_semanticization` adds a new `#interpretation` node under the capture (earlier ones are never rewritten). Tasks become `#suggested-action` children and questions `#question` children, each with an `Evidence` field holding the verbatim excerpt. Journal prose goes on the Bana day page; Markdown in the journal folder is an export.
+- Cite Bana node ids from the results when you refer back to them. To find older material, use `notes_search` and `notes_read`.
+- To turn a suggestion into a Things to-do, use `promote_notes_to_things` and let the user review the proposal card. Never approve it yourself.
 
 When the user asks LifeOS to remember or semantically recall this capture, call `index_brain_dump_memory` with the saved `capture_id` and exact `source_hash`. This sends the raw capture to the configured remote MiMo extractor through the local Supermemory process. Tell the user whether processing is queued or complete; check with `get_brain_dump_memory_status` before claiming recall is ready. Do not silently index confidential meeting transcripts just because they were captured.
 
@@ -25,4 +34,4 @@ Use `journal_entry` only for reflective prose the user would reasonably expect i
 
 Prefer the structured `tasks`, `calendar`, `journal`, and `questions` nodes. Use a `mermaid` node when relationships benefit from a flowchart, mind map, timeline, or journey. Keep labels concise, provide plain Mermaid source without frontmatter, and put a meaningful plain-language summary of the relationships in the node's `body` for accessibility. LifeOS applies the host-aware theme and strict security settings. `custom_html` is a legacy escape hatch for an interaction Mermaid cannot express. Its HTML, CSS, and JavaScript run in an isolated nested sandbox with no network or LifeOS tool access; do not use it for diagrams or merely to restyle a normal list.
 
-Capturing and interpreting write to LifeOS local storage. Optional memory indexing also sends the raw text to the configured remote extractor. None of these steps create or update Things tasks, projects, or Calendar events. If the user asks to act on candidates, show a normal LifeOS proposal and wait for the existing approval flow.
+Capturing and interpreting write to LifeOS local storage and the local Bana app. Optional memory indexing also sends the raw text to the configured remote extractor. None of these steps create or update Things tasks, projects, or Calendar events. If the user asks to act on candidates, show a normal LifeOS proposal and wait for the person to approve it on the card (or with `lifeos approve` in a terminal). Chat text is not approval.

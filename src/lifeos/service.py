@@ -67,14 +67,146 @@ class LifeOSService:
         self.bana = bana
 
     def capture_brain_dump(self, **fields: Any) -> dict[str, Any]:
+        """The ledger row first (authoritative), then a copy in Bana with the same sha256."""
         if self.brain_dumps is None:
             raise RuntimeError("brain-dump storage is not configured")
-        return self.brain_dumps.capture(**fields)
+        capture = self.brain_dumps.capture(**fields)
+        return {**capture, "bana": self._capture_to_bana(capture)}
 
-    def submit_brain_dump_semanticization(self, **fields: Any) -> dict[str, Any]:
+    def submit_brain_dump_semanticization(
+        self, *, meeting_title: str | None = None, **fields: Any,
+    ) -> dict[str, Any]:
+        """Store the interpretation; write it into Bana, journal prose on the day page.
+
+        With Bana closed the ledger still records it and the prose falls back to Markdown.
+        """
         if self.brain_dumps is None:
             raise RuntimeError("brain-dump storage is not configured")
-        return self.brain_dumps.submit_semanticization(**fields)
+        capture = self.brain_dumps.get(fields["capture_id"])
+        bana_ready = (
+            self.bana is not None and capture["source"] != "synthetic_test" and self.bana.available()
+        )
+        revision = self.brain_dumps.submit_semanticization(**fields, write_journal=not bana_ready)
+        if not bana_ready:
+            revision["bana"] = {"status": "unavailable" if self.bana else "not_configured"}
+            return revision
+        try:
+            revision["bana"] = self._interpretation_to_bana(capture, revision, meeting_title)
+        except BanaUnavailable:
+            revision["bana"] = {"status": "unavailable"}
+        return revision
+
+    def _capture_to_bana(self, capture: Mapping[str, Any]) -> dict[str, Any]:
+        if self.bana is None:
+            return {"status": "not_configured"}
+        if capture["source"] == "synthetic_test":
+            return {"status": "skipped_test_capture"}
+        first_line = capture["raw_text"].strip().splitlines()[0][:80]
+        change = BanaChange("add", None, {
+            "name": f"Capture: {first_line}",
+            "parent": capture["captured_at"][:10],
+            "tags": ["capture"],
+            "description": capture["raw_text"],
+            "fields": {
+                "Capture ID": capture["capture_id"], "Source hash": capture["source_hash"],
+                "By": "lifeos", "Request ID": f"capture-{capture['capture_id']}",
+            },
+        })
+        try:
+            result = self._direct_notes(f"capture-{capture['capture_id']}", (), (change,))
+        except BanaUnavailable:
+            return {"status": "unavailable"}
+        node_id = result["node_id"]
+        if not result["saved"] or node_id is None:
+            return {"status": result["state"], "node_id": node_id}
+        return {"status": "saved", "node_id": node_id, **self._bana_capture_check(capture, node_id)}
+
+    def _bana_capture_check(self, capture: Mapping[str, Any], node_id: str) -> dict[str, Any]:
+        """The ledger wins: a Bana copy whose text no longer hashes the same is flagged."""
+        node = self._notes().inspect(node_id)
+        matches = sha256(str(node.get("description", "")).encode()).hexdigest() == capture["source_hash"]
+        return {"source_hash_matches": matches, "locked": bool(node.get("locked", False))}
+
+    def _capture_node(self, capture: Mapping[str, Any]) -> str:
+        """The capture's Bana node, written now if Bana was closed when it was captured."""
+        proposal_id = "note-request-" + sha256(f"capture-{capture['capture_id']}".encode()).hexdigest()
+        with suppress(UnknownProposal):
+            revision = self.store.get_current(proposal_id)
+            receipt = self.store.get_operation_result(proposal_id, revision.revision_hash, "bana", 0)
+            if receipt:
+                return str(receipt["node"])
+        written = self._capture_to_bana(capture)
+        if written.get("status") != "saved":
+            raise BanaUnavailable("the capture could not be written to Bana")
+        return str(written["node_id"])
+
+    def _interpretation_to_bana(
+        self, capture: Mapping[str, Any], revision: Mapping[str, Any], meeting_title: str | None,
+    ) -> dict[str, Any]:
+        """One new node per interpretation (old ones are never rewritten), children per item."""
+        parent = self._capture_node(capture)
+        by = str(revision["interpreted_by"])
+        common = {"Capture ID": capture["capture_id"], "Source hash": capture["source_hash"], "By": by}
+        changes = [BanaChange("add", None, {
+            "name": meeting_title or f"Interpretation {revision['revision_number']} by {by}",
+            "parent": parent,
+            "tags": ["interpretation", *(["meeting"] if meeting_title else [])],
+            "fields": {**common, "Request ID": f"interp-{revision['revision_hash'][:40]}"},
+            **({"description": revision["summary"]} if revision.get("summary") else {}),
+        })]
+        tag_for = {"task": "suggested-action", "project": "suggested-action", "question": "question"}
+        for item in revision["items"]:
+            details = [item.get("detail")] + [
+                f"{label}: {item[key]}" for key, label in
+                (("area", "Area"), ("project", "Project"), ("time_expression", "When"))
+                if item.get(key)
+            ]
+            fields = dict(common)
+            if item.get("source_excerpt"):
+                fields["Evidence"] = item["source_excerpt"]
+            changes.append(BanaChange("add", None, {
+                "name": item["title"], "parent_change_index": 0,
+                "tags": [tag_for[item["kind"]]] if item["kind"] in tag_for else [],
+                "fields": fields,
+                **({"description": "\n".join(d for d in details if d)} if any(details) else {}),
+            }))
+        for question in revision["unresolved"]:
+            changes.append(BanaChange("add", None, {
+                "name": question, "parent_change_index": 0, "tags": ["question"], "fields": common,
+            }))
+        if revision.get("journal_entry"):
+            changes.append(BanaChange("add", None, {
+                "name": f"Journal {capture['captured_at'][11:16]}",
+                "parent": capture["captured_at"][:10],
+                "description": revision["journal_entry"],
+                "fields": common,
+            }))
+        result = self._direct_notes(f"interp-{revision['revision_hash'][:40]}", (), tuple(changes))
+        nodes = [str(receipt["node"]) for receipt in result["receipts"] if receipt]
+        return {
+            "status": "saved" if result["saved"] else result["state"],
+            "node_id": nodes[0] if nodes else None,
+            "item_node_ids": nodes[1:],
+            "journal": "bana_day_page" if revision.get("journal_entry") else None,
+        }
+
+    def export_journal(self, day: str | None = None) -> dict[str, Any]:
+        """Write one Bana day page to the journal folder as Markdown (an export, not a source).
+
+        A file there that LifeOS did not export (hand-written, or a fallback written while Bana
+        was closed) is never overwritten; the export goes beside it as <day>.bana.md.
+        """
+        if self.brain_dumps is None:
+            raise RuntimeError("brain-dump storage is not configured")
+        page = self.notes_today(day)
+        marker = f"<!-- lifeos:bana-export {page['date']} -->"
+        folder = self.brain_dumps.journal_dir
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{page['date']}.md"
+        if path.exists() and not path.read_text(encoding="utf-8").startswith(marker):
+            path = folder / f"{page['date']}.bana.md"
+        path.write_text(f"{marker}\n{page['markdown']}", encoding="utf-8")
+        return {"date": page["date"], "path": str(path), "node_id": page["node_id"]}
 
     def get_brain_dump(self, capture_id: str) -> dict[str, Any]:
         if self.brain_dumps is None:
@@ -1067,8 +1199,14 @@ class LifeOSService:
         fields = dict(change.fields)
         by = fields.pop("by", None)
         if change.operation == "add":
+            parent = fields.get("parent", "today")
+            if "parent_change_index" in fields:  # a node made earlier in this same proposal
+                receipt = self.store.get_operation_result(
+                    proposal_id, revision_hash, "bana", int(fields["parent_change_index"])
+                ) or {}
+                parent = receipt["node"]
             node = bana.add(
-                name=str(fields["name"]), parent=fields.get("parent", "today"),
+                name=str(fields["name"]), parent=parent,
                 tags=tuple(fields.get("tags", ())), fields=fields.get("fields"),
                 description=fields.get("description"),
             )

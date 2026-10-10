@@ -1,4 +1,6 @@
-"""`lifeos`: human-only commands that must not depend on an MCP host.
+"""`lifeos`: commands that must not depend on an MCP host.
+
+`lifeos export-journal [--date D]` writes a Bana day page to LIFEOS_JOURNAL_DIR (launchd runs it).
 
 `lifeos approve|reject <proposal_id> <revision_hash>` is the fallback when a host does not
 render the review card. It needs an interactive terminal and the first 8 characters of the
@@ -40,8 +42,23 @@ def main(
         command = commands.add_parser(name, help=f"{name} one exact proposal revision")
         command.add_argument("proposal_id")
         command.add_argument("revision_hash")
+    export = commands.add_parser("export-journal", help="write a Bana day page to the journal folder")
+    export.add_argument("--date", help="YYYY-MM-DD (default: today)")
     args = parser.parse_args(argv)
     config = parse_runtime_config([])
+
+    if args.command == "export-journal":
+        from .bana_gateway import BanaGateway
+        from .brain_dump_store import BrainDumpStore
+        from .service import LifeOSService
+
+        # Only Bana and the journal folder: no Things or Calendar access is needed.
+        service = LifeOSService(
+            ProposalStore(config.database_path), None, None,
+            BrainDumpStore(config.database_path, config.journal_dir), bana=BanaGateway(),
+        )
+        print(json.dumps(service.export_journal(args.date)))
+        return 0
 
     if not interactive():
         print("lifeos: approval needs a person at an interactive terminal.", file=sys.stderr)

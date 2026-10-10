@@ -43,6 +43,10 @@ class BrainDumpStore:
         self._connection.execute("PRAGMA foreign_keys = ON")
         self._migrate()
 
+    @property
+    def journal_dir(self) -> Path:
+        return self._journal_dir
+
     def close(self) -> None:
         self._connection.close()
 
@@ -279,7 +283,9 @@ class BrainDumpStore:
         summary: str | None = None,
         journal_entry: str | None = None,
         schema_version: str = "1",
+        write_journal: bool = True,
     ) -> dict[str, Any]:
+        """write_journal=False when the prose goes to the Bana day page instead (its home)."""
         capture = self._require_capture(capture_id)
         if source_hash != capture["source_hash"]:
             raise BrainDumpConflict("source_hash does not match the stored raw capture")
@@ -360,7 +366,7 @@ class BrainDumpStore:
                 ).fetchone()
                 revision = self._semanticization_to_dict(existing)
 
-        if clean_journal and not revision["journal_written"]:
+        if write_journal and clean_journal and not revision["journal_written"]:
             journal_path = self._append_journal(capture, revision)
             with self._transaction() as connection:
                 connection.execute(

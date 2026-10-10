@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.lifeos.journal-export</string>
+	<!-- Writes today's Bana day page to the journal folder as Markdown. Bana must be open. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/REPLACE_ME/.local/bin/uv</string>
+		<string>--directory</string>
+		<string>/Users/REPLACE_ME/Developer/projects/lifeos</string>
+		<string>run</string>
+		<string>lifeos</string>
+		<string>export-journal</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>0</integer></dict>
+		<dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>50</integer></dict>
+	</array>
+	<key>StandardErrorPath</key>
+	<string>/tmp/lifeos-journal-export.log</string>
+</dict>
+</plist>

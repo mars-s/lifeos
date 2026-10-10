@@ -39,7 +39,7 @@
   },
   {
     "name": "capture_brain_dump",
-    "description": "Immediately preserve an exact brain dump in LifeOS before interpreting it.\n\nUse the user's verbatim words. This writes only LifeOS local storage; it never creates or\nchanges Things tasks or Calendar events. Reuse the idempotency key when retrying the same\ncapture.",
+    "description": "Immediately preserve an exact brain dump in LifeOS before interpreting it.\n\nUse the user's verbatim words. The LifeOS ledger keeps the exact text; a copy lands on\nthe Bana day page as a #capture node with the same Source hash. If Bana is closed the\ncapture still succeeds and reports bana.status \"unavailable\". Never creates or changes\nThings tasks or Calendar events. Reuse the idempotency key when retrying the same capture.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -117,7 +117,7 @@
   },
   {
     "name": "submit_brain_dump_semanticization",
-    "description": "Store an immutable interpretation of an already-preserved brain dump.\n\nPreserve ambiguity, include verbatim source excerpts, and never invent dates, durations,\nareas, or projects. Route FIT/course work to University; explicit Heimdall, Korvant,\nSentinel, Monash Automation, Paperless, or Chemwatch work to that area; and only otherwise\nuse Personal. Put vague timing in time_expression and leave suggested_when null unless an\nexact ISO-8601 date-time is known. Candidate tasks remain suggestions and do not modify\nThings or Calendar. Journal prose is appended to the local Daily Journal Markdown.",
+    "description": "Store an immutable interpretation of an already-preserved brain dump.\n\nPreserve ambiguity, include verbatim source excerpts, and never invent dates, durations,\nareas, or projects. Route FIT/course work to University; explicit Heimdall, Korvant,\nSentinel, Monash Automation, Paperless, or Chemwatch work to that area; and only otherwise\nuse Personal. Put vague timing in time_expression and leave suggested_when null unless an\nexact ISO-8601 date-time is known. Candidate tasks remain suggestions and do not modify\nThings or Calendar. In Bana, each interpretation becomes a new #interpretation node under\nthe capture (old ones are never rewritten), with #suggested-action and #question children\nwhose Evidence field is the verbatim excerpt. Journal prose goes on the Bana day page\n(Markdown is an export). For a meeting debrief pass meeting_title to tag it #meeting.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -301,6 +301,17 @@
         "schema_version": {
           "default": "1",
           "type": "string"
+        },
+        "meeting_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [

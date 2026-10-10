@@ -354,9 +354,10 @@ def create_mcp(service: LifeOSService, *, auth: Any | None = None) -> FastMCP:
     ) -> dict[str, Any]:
         """Immediately preserve an exact brain dump in LifeOS before interpreting it.
 
-        Use the user's verbatim words. This writes only LifeOS local storage; it never creates or
-        changes Things tasks or Calendar events. Reuse the idempotency key when retrying the same
-        capture.
+        Use the user's verbatim words. The LifeOS ledger keeps the exact text; a copy lands on
+        the Bana day page as a #capture node with the same Source hash. If Bana is closed the
+        capture still succeeds and reports bana.status "unavailable". Never creates or changes
+        Things tasks or Calendar events. Reuse the idempotency key when retrying the same capture.
         """
         return service.capture_brain_dump(
             raw_text=raw_text,
@@ -378,6 +379,7 @@ def create_mcp(service: LifeOSService, *, auth: Any | None = None) -> FastMCP:
         summary: str | None = None,
         journal_entry: str | None = None,
         schema_version: str = "1",
+        meeting_title: str | None = None,
     ) -> dict[str, Any]:
         """Store an immutable interpretation of an already-preserved brain dump.
 
@@ -386,7 +388,10 @@ def create_mcp(service: LifeOSService, *, auth: Any | None = None) -> FastMCP:
         Sentinel, Monash Automation, Paperless, or Chemwatch work to that area; and only otherwise
         use Personal. Put vague timing in time_expression and leave suggested_when null unless an
         exact ISO-8601 date-time is known. Candidate tasks remain suggestions and do not modify
-        Things or Calendar. Journal prose is appended to the local Daily Journal Markdown.
+        Things or Calendar. In Bana, each interpretation becomes a new #interpretation node under
+        the capture (old ones are never rewritten), with #suggested-action and #question children
+        whose Evidence field is the verbatim excerpt. Journal prose goes on the Bana day page
+        (Markdown is an export). For a meeting debrief pass meeting_title to tag it #meeting.
         """
         return service.submit_brain_dump_semanticization(
             capture_id=capture_id,
@@ -398,6 +403,7 @@ def create_mcp(service: LifeOSService, *, auth: Any | None = None) -> FastMCP:
             summary=summary,
             journal_entry=journal_entry,
             schema_version=schema_version,
+            meeting_title=meeting_title,
         )
 
     @mcp.tool(annotations=READ_ONLY)
