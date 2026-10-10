@@ -1143,6 +1143,34 @@ class LifeOSService:
         change = BanaChange(operation, node_id, {**fields, "by": by})
         return self._direct_notes(request_id, (snapshot,), (change,))
 
+    def promote_notes_to_things(
+        self, *, proposal_id: str, items: Sequence[Mapping[str, Any]], by: str,
+    ) -> dict[str, Any]:
+        """A draft proposal: one Things to-do per note, then link each note back (#in-things).
+
+        Each note's hash is recorded, so editing it before apply makes the proposal stale.
+        """
+        if not items:
+            raise ValueError("promote at least one note")
+        snapshots, things, links = [], [], []
+        for index, item in enumerate(items):
+            node_id = _node_id(str(item["node_id"]))
+            observed = self._notes().snapshot(node_id)
+            if observed is None or observed["hash"] != item["expected_hash"]:
+                raise ValueError(f"note {node_id} changed or is gone; read it again with notes_read")
+            fields = {
+                "title": item.get("title") or observed["node"]["name"],
+                "notes": item.get("notes") or f"From Bana note {node_id}.",
+            }
+            fields.update({key: item[key] for key in ("when", "area_id") if item.get(key)})
+            snapshots.append(SourceSnapshot("bana", node_id, observed["hash"], {"kind": "node"}).to_dict())
+            things.append(ThingsChange(ChangeOperation.CREATE, None, fields).to_dict())
+            links.append(BanaChange("link_task", node_id, {"things_change_index": index, "by": by}).to_dict())
+        return self.create_proposal(
+            proposal_id=proposal_id, idempotency_key=f"promote-notes:{proposal_id}",
+            source_snapshots=snapshots, things_changes=things, bana_changes=links,
+        )
+
     def _existing_tag(self, tag: str) -> str:
         """Agents may use a supertag that exists or a LifeOS one, never invent one."""
         clean = tag.strip().lstrip("#")

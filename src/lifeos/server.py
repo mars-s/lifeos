@@ -144,6 +144,17 @@ class BanaChangeInput(BaseModel):
 By = Literal["chatgpt", "claude", "codex", "other"]
 
 
+class PromoteNoteInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str
+    expected_hash: str = Field(description="The hash from notes_read.")
+    title: str | None = Field(default=None, description="Default: the note's text.")
+    notes: str | None = None
+    when: str | None = Field(default=None, description="YYYY-MM-DD only, already resolved.")
+    area_id: str | None = Field(default=None, description="From read_things_areas.")
+
+
 class PlanningTaskInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -790,6 +801,20 @@ def create_mcp(service: LifeOSService, *, auth: Any | None = None) -> FastMCP:
         return service.notes_edit(
             request_id=request_id, node_id=node_id, expected_hash=expected_hash, by=by,
             operation="link_task", fields={"things_id": things_id},
+        )
+
+    @mcp.tool(annotations=LOCAL_WRITE)
+    def promote_notes_to_things(
+        proposal_id: str, items: list[PromoteNoteInput], by: By,
+    ) -> dict[str, Any]:
+        """Draft a proposal turning Bana notes into Things to-dos. Changes nothing yet.
+
+        On apply each note gets Things ID, Things link and #in-things. Call render_proposal_review
+        with the result; the person approves on the card. Editing a note before apply makes the
+        proposal stale and nothing is created.
+        """
+        return service.promote_notes_to_things(
+            proposal_id=proposal_id, items=[item.model_dump() for item in items], by=by,
         )
 
     @mcp.tool(annotations=LOCAL_WRITE)

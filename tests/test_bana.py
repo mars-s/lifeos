@@ -278,3 +278,62 @@ def test_export_journal_cli(bana, tmp_path, monkeypatch, capsys):
     assert cli.main(["export-journal", "--date", "2026-10-10"]) == 0
     written = json.loads(capsys.readouterr().out)
     assert "Seed swap at the library" in Path(written["path"]).read_text()
+
+
+class FakeThings:
+    """Records create_todo calls; never touches real Things."""
+
+    def __init__(self):
+        self.created = []
+
+    def create_todo(self, **fields):
+        from lifeos.things_gateway import WriteResult
+
+        self.created.append(fields)
+        uuid = f"TODO-{len(self.created)}"
+        return WriteResult(status="verified", command="create", record={"record": {"uuid": uuid, **fields}})
+
+
+def promote(service, node):
+    return service.promote_notes_to_things(
+        proposal_id=f"promote-{node}", by="claude",
+        items=[{"node_id": node, "expected_hash": service.notes_read(node)["hash"]}],
+    )
+
+
+@needs_bana
+def test_promote_note_to_things_links_the_node(bana, tmp_path):
+    gateway, _ = bana
+    things = FakeThings()
+    service = service_for(tmp_path, gateway, things)
+    node = service.notes_add(request_id="p", name="Order compost", by="claude", tag="task")["node_id"]
+    draft = promote(service, node)
+    assert draft["state"] == "draft" and things.created == []
+    from lifeos.ui import ProposalReviewOutput
+
+    assert ProposalReviewOutput.model_validate(draft).bana_changes[0].operation == "link_task"
+    # The card (or `lifeos approve`) approves; the model cannot.
+    service.approve_proposal(draft["proposal_id"], draft["revision_hash"])
+    applied = service.apply_proposal(draft["proposal_id"], draft["revision_hash"])
+    assert applied["state"] == "applied"
+    assert things.created == [{"title": "Order compost", "notes": f"From Bana note {node}."}]
+    linked = service.notes_read(node)["node"]
+    assert set(linked["tags"]) == {"task", "in-things"}
+    assert linked["fields"]["Things ID"] == "TODO-1"
+    assert linked["fields"]["Things link"] == "things:///show?id=TODO-1"
+    assert linked["fields"]["Synced at"]
+
+
+@needs_bana
+def test_editing_the_note_after_approval_makes_apply_stale(bana, tmp_path):
+    gateway, _ = bana
+    things = FakeThings()
+    service = service_for(tmp_path, gateway, things)
+    node = service.notes_add(request_id="s", name="Fix the gate", by="codex")["node_id"]
+    draft = promote(service, node)
+    service.approve_proposal(draft["proposal_id"], draft["revision_hash"])
+    gateway.set_field(node, "Status", "Changed my mind")  # the person edits the note
+    result = service.apply_proposal(draft["proposal_id"], draft["revision_hash"])
+    assert result["state"] == "stale"
+    assert things.created == []
+    assert "in-things" not in service.notes_read(node)["node"].get("tags", [])
