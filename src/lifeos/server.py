@@ -375,7 +375,8 @@ def create_mcp(service: LifeOSService, *, auth: Any | None = None, stdio: bool =
 
         Use the user's verbatim words. The LifeOS ledger keeps the exact text; a copy lands on
         the Bana day page as a #capture node with the same Source hash. If Bana is closed the
-        capture still succeeds and reports bana.status "unavailable". Never creates or changes
+        capture still succeeds and reports bana.status "unavailable" ("not permitted" when this
+        connection lacks notes:write). Never creates or changes
         Things tasks or Calendar events. Reuse the idempotency key when retrying the same capture.
         """
         return service.capture_brain_dump(
@@ -935,7 +936,8 @@ def _load_things() -> ModuleType:
         glob.iglob = original_iglob
 
 
-def build_default_service(config: RuntimeConfig | None = None) -> LifeOSService:
+def build_default_service(config: RuntimeConfig | None = None, *, bana_writes: bool = True) -> LifeOSService:
+    """bana_writes=False for a remote caller whose grant lacks notes:write."""
     things = _load_things()
 
     config = config or parse_runtime_config([])
@@ -948,7 +950,7 @@ def build_default_service(config: RuntimeConfig | None = None) -> LifeOSService:
         CalendarGateway(helper_path),
         BrainDumpStore(database_path, config.journal_dir),
         SupermemoryGateway(),
-        BanaGateway(),
+        BanaGateway(writes=bana_writes),
     )
 
 

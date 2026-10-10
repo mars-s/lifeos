@@ -11,7 +11,7 @@ from enum import Enum
 from hashlib import sha256
 from typing import Any
 
-from .bana_gateway import LIFEOS_TAGS, BanaGateway, BanaUnavailable
+from .bana_gateway import LIFEOS_TAGS, BanaGateway, BanaNotPermitted, BanaUnavailable
 from .brain_dump_store import BrainDumpConflict, BrainDumpStore
 from .memory_gateway import MemoryGatewayError, SupermemoryGateway, UnknownMemoryDocument
 from .models import (
@@ -83,12 +83,12 @@ class LifeOSService:
         if self.brain_dumps is None:
             raise RuntimeError("brain-dump storage is not configured")
         capture = self.brain_dumps.get(fields["capture_id"])
-        bana_ready = (
-            self.bana is not None and capture["source"] != "synthetic_test" and self.bana.available()
-        )
+        permitted = self.bana is not None and self.bana.writes
+        bana_ready = permitted and capture["source"] != "synthetic_test" and self.bana.available()
         revision = self.brain_dumps.submit_semanticization(**fields, write_journal=not bana_ready)
         if not bana_ready:
-            revision["bana"] = {"status": "unavailable" if self.bana else "not_configured"}
+            status = "not_configured" if self.bana is None else "unavailable" if permitted else "not permitted"
+            revision["bana"] = {"status": status}
             return revision
         try:
             revision["bana"] = self._interpretation_to_bana(capture, revision, meeting_title)
@@ -114,6 +114,8 @@ class LifeOSService:
         })
         try:
             result = self._direct_notes(f"capture-{capture['capture_id']}", (), (change,))
+        except BanaNotPermitted:
+            return {"status": "not permitted"}
         except BanaUnavailable:
             return {"status": "unavailable"}
         node_id = result["node_id"]
@@ -955,6 +957,8 @@ class LifeOSService:
         self, proposal_id: str, revision_hash: str, *, allow_resume: bool = True,
     ) -> dict[str, Any]:
         revision = self.store.get_revision(proposal_id, revision_hash)
+        if revision.bana_changes and revision.state is ProposalState.APPROVED:
+            self._require_bana_writes()  # refused before any Things or Bana write starts
         if not allow_resume and revision.state is not ProposalState.APPROVED:
             return proposal_to_dict(revision)
         if revision.state is ProposalState.APPLIED:
@@ -1087,6 +1091,12 @@ class LifeOSService:
     # receipts and the stale check. Anything inferred or multi-node goes through
     # propose_changes and waits for the person.
 
+    def _require_bana_writes(self) -> None:
+        """Every Bana write (notes, captures, interpretations, journal prose, promotions) needs
+        a grant with notes:write on the remote path. Checked before anything is recorded."""
+        if not self._notes().writes:
+            raise BanaNotPermitted("not permitted: this connection may not write to Bana (notes:write)")
+
     def _notes(self) -> BanaGateway:
         if self.bana is None:
             raise BanaUnavailable("Bana is not configured for this LifeOS service.")
@@ -1191,6 +1201,7 @@ class LifeOSService:
     ) -> dict[str, Any]:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
             raise ValueError("request_id must be a stable 1-128 character identifier")
+        self._require_bana_writes()
         proposal_id = "note-request-" + sha256(request_id.encode()).hexdigest()
         try:
             revision = self.store.get_current(proposal_id)

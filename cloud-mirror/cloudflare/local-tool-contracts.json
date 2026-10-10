@@ -39,7 +39,7 @@
   },
   {
     "name": "capture_brain_dump",
-    "description": "Immediately preserve an exact brain dump in LifeOS before interpreting it.\n\nUse the user's verbatim words. The LifeOS ledger keeps the exact text; a copy lands on\nthe Bana day page as a #capture node with the same Source hash. If Bana is closed the\ncapture still succeeds and reports bana.status \"unavailable\". Never creates or changes\nThings tasks or Calendar events. Reuse the idempotency key when retrying the same capture.",
+    "description": "Immediately preserve an exact brain dump in LifeOS before interpreting it.\n\nUse the user's verbatim words. The LifeOS ledger keeps the exact text; a copy lands on\nthe Bana day page as a #capture node with the same Source hash. If Bana is closed the\ncapture still succeeds and reports bana.status \"unavailable\" (\"not permitted\" when this\nconnection lacks notes:write). Never creates or changes\nThings tasks or Calendar events. Reuse the idempotency key when retrying the same capture.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

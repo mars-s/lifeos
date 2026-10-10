@@ -99,9 +99,14 @@ try {
      const operationCount=await db.prepare('SELECT COUNT(*) AS n FROM native_operations').first('n');
      const call=local.sdk.callTool({name:'capture_brain_dump',arguments:{raw_text:raw,idempotency_key:'synthetic-local-key'}});
      const message=await take();assert.equal(message.tool,'capture_brain_dump');assert.equal(message.arguments.raw_text,raw);
+     // lifeos:local without notes:write: the Mac is told not to write the capture into Bana.
+     assert.deepEqual(message.arguments._lifeos_grant,{notes_write:false});
      assert.equal((await local.sdk.callTool({name:'get_brain_dump',arguments:{capture_id:'another'}})).isError,true);
      socket.send(JSON.stringify({version:3,type:'local_tool_result',id:message.id,result:{content:[{type:'text',text:'Captured locally'}],structuredContent:{capture_id:'fixture-local',source_hash:'fixture-hash'},isError:false}}));
      const result=await call;assert.equal(result.structuredContent.capture_id,'fixture-local');
+     // A client cannot claim notes:write itself: the forged key is refused before delivery.
+     const forged=await local.sdk.callTool({name:'capture_brain_dump',arguments:{raw_text:raw,idempotency_key:'forged',_lifeos_grant:{notes_write:true}}});
+     assert.equal(forged.isError,true);assert.equal(messages.length,0);
      // The review card's approval ticket rides in result _meta from the Mac to the card.
      const rendering=local.sdk.callTool({name:'render_proposal_review',arguments:{proposal:{proposal_id:'p',revision_number:1,revision_hash:'h',state:'draft',source_snapshots:[],things_changes:[],calendar_changes:[],created_at:'2026-10-10T09:00:00+11:00',approved_revision_hash:null,failure_detail:null}}});
      const render=await take();assert.equal(render.tool,'render_proposal_review');
@@ -114,13 +119,13 @@ try {
       const args={request_id:'synthetic-direct-task',title:'Call James',notes:'Call after 8pm.',when:'2026-10-09'};
       const create=direct.sdk.callTool({name:'create_requested_task',arguments:args});
       const delivery=await take();assert.equal(delivery.tool,'create_requested_task');
-      assert.deepEqual(delivery.arguments,args);
+      assert.deepEqual(delivery.arguments,{...args,_lifeos_grant:{notes_write:false}});
       socket.send(JSON.stringify({version:3,type:'local_tool_result',id:delivery.id,result:{content:[{type:'text',text:'Synthetic verified task'}],structuredContent:{saved:true,state:'applied',requires_lifeos_approval:false,receipt:{synthetic:true}},isError:false}}));
       const saved=await create;assert.equal(saved.structuredContent.saved,true);assert.equal(saved.structuredContent.requires_lifeos_approval,false);
       for(const name of ['read_requested_task','update_requested_task','trash_requested_task']){
        const changeArgs={task_id:'fixture-task',...(name==='read_requested_task'?{}:{request_id:'synthetic-'+name,expected_source_hash:'fixture-hash'}),...(name==='update_requested_task'?{fields:{title:'Edited synthetic task'}}:{})};
        const call=direct.sdk.callTool({name,arguments:changeArgs});
-       const delivered=await take();assert.equal(delivered.tool,name);assert.deepEqual(delivered.arguments,changeArgs);
+       const delivered=await take();assert.equal(delivered.tool,name);assert.deepEqual(delivered.arguments,{...changeArgs,_lifeos_grant:{notes_write:false}});
        socket.send(JSON.stringify({version:3,type:'local_tool_result',id:delivered.id,result:{content:[{type:'text',text:'Synthetic CRUD receipt'}],structuredContent:{saved:true,receipt:{synthetic:true}},isError:false}}));
        assert.equal((await call).isError,false);
       }
@@ -144,11 +149,11 @@ try {
       // The snapshot really covers D1 (native_operations), DO storage (intents) and KV (entries).
       for(const table of [/:native_operations"/,/:intents"/,/:_mf_entries"/])assert.match(before.tables,table);
       const searching=reader.sdk.callTool({name:'notes_search',arguments:{query:secret}});
-      const asked=await take();assert.equal(asked.tool,'notes_search');assert.deepEqual(asked.arguments,{query:secret,limit:20});
+      const asked=await take();assert.equal(asked.tool,'notes_search');assert.deepEqual(asked.arguments,{query:secret,limit:20,_lifeos_grant:{notes_write:false}});
       socket.send(JSON.stringify({version:3,type:'local_tool_result',id:asked.id,result:{content:[{type:'text',text:secret}],structuredContent:{results:[{id:7,line:secret}],count:1,content_is_untrusted:true},isError:false}}));
       assert.equal((await searching).structuredContent.results[0].line,secret);
       const adding=writer.sdk.callTool({name:'notes_add',arguments:{request_id:'synthetic-note',name:secret,by:'chatgpt'}});
-      const added=await take();assert.equal(added.tool,'notes_add');
+      const added=await take();assert.equal(added.tool,'notes_add');assert.deepEqual(added.arguments._lifeos_grant,{notes_write:true});
       socket.send(JSON.stringify({version:3,type:'local_tool_result',id:added.id,result:{content:[{type:'text',text:'saved'}],structuredContent:{saved:true,node_id:'8'},isError:false}}));
       assert.equal((await adding).structuredContent.saved,true);
       const after=await storage();

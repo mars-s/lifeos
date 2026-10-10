@@ -30,6 +30,7 @@ LOCAL_TOOLS = frozenset({
     "notes_move", "notes_link_task", "promote_notes_to_things",
 })
 MAX_BYTES = 256 * 1024
+GRANT_KEY = "_lifeos_grant"
 
 
 async def invoke(request: dict[str, Any], server: Any = None) -> dict[str, Any]:
@@ -37,9 +38,14 @@ async def invoke(request: dict[str, Any], server: Any = None) -> dict[str, Any]:
         raise ValueError("unsupported local tool")
     if not isinstance(request["arguments"], dict):
         raise ValueError("tool arguments must be an object")
-    server = server or create_mcp(build_default_service())
+    # The Worker states what the grant allows (it overwrites any client value). Missing means no
+    # Bana writes: captures still land in the ledger and report bana "not permitted".
+    arguments = dict(request["arguments"])
+    grant = arguments.pop(GRANT_KEY, None)
+    notes_write = isinstance(grant, dict) and grant.get("notes_write") is True
+    server = server or create_mcp(build_default_service(bana_writes=notes_write))
     async with Client(server) as client:
-        result = await client.call_tool(request["tool"], request["arguments"], raise_on_error=False)
+        result = await client.call_tool(request["tool"], arguments, raise_on_error=False)
     output: dict[str, Any] = {
         "content": [item.model_dump(mode="json", exclude_none=True) for item in result.content],
         "isError": result.is_error,

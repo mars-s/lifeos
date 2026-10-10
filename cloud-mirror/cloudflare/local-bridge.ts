@@ -1,7 +1,7 @@
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
 import {ownerSync} from './owner-sync';
-import {localScope, localToolNeedsWrite, localToolSpecs as contracts, noteToolScopes} from './bridge-contract';
+import {localScope, localToolNeedsWrite, localToolSpecs as contracts, noteToolScopes, notesWriteScope} from './bridge-contract';
 
 const tools = contracts.map(tool => ({...tool, schema: z.fromJSONSchema(
   tool.inputSchema as Parameters<typeof z.fromJSONSchema>[0]
@@ -32,7 +32,10 @@ export function registerLocalBridge(server: McpServer, env: Env, scopes: string[
           _meta: {'mcp/www_authenticate': [`Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", scope="${required.join(' ')}"`]},
         };
       }
-      return await ownerSync(env).callLocalTool(tool.name, args as Record<string, unknown>) as {
+      // The Mac writes to Bana only when this grant has notes:write (captures, interpretations,
+      // journal prose and promotions included). Set here so a client value never wins.
+      const grant = {notes_write: scopes.includes(notesWriteScope)};
+      return await ownerSync(env).callLocalTool(tool.name, {...args as Record<string, unknown>, _lifeos_grant: grant}) as {
         content: {type: 'text'; text: string}[]; isError?: boolean; structuredContent?: Record<string, unknown>;
       };
     });

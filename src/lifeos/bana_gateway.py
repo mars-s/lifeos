@@ -52,6 +52,10 @@ class BanaError(RuntimeError):
     """Bana answered but the command failed (a locked node says "not available: ...")."""
 
 
+class BanaNotPermitted(PermissionError):
+    """This caller's grant does not include notes:write, so LifeOS writes nothing to Bana."""
+
+
 class BanaRefused(BanaError):
     """Bana's own agent rules refused the command (its text starts with "refused:")."""
 
@@ -69,9 +73,13 @@ def node_hash(tree: Mapping[str, Any]) -> str:
 
 
 class BanaGateway:
-    def __init__(self, home: str | Path | None = None, *, timeout: float = 15.0) -> None:
+    def __init__(
+        self, home: str | Path | None = None, *, timeout: float = 15.0, writes: bool = True,
+    ) -> None:
+        """writes=False: the remote caller's grant lacks notes:write. Every write is refused."""
         self._home = Path(home or os.environ.get("BANA_HOME") or Path.home() / "Bana")
         self._timeout = timeout
+        self.writes = writes
         self._template_ready = False
 
     def _endpoint(self) -> tuple[int, str]:
@@ -89,6 +97,8 @@ class BanaGateway:
         """agent: who Bana records as the author of a write (X-Bana-Agent)."""
         if command not in ALLOWED_COMMANDS:
             raise PermissionError(f"LifeOS does not run the Bana command {command!r}")
+        if command in WRITE_COMMANDS and not self.writes:
+            raise BanaNotPermitted("not permitted: this connection may not write to Bana (notes:write)")
         if command == "template.install" and (params or {}).get("name") != TEMPLATE:
             raise PermissionError("LifeOS installs only the Agent notebook template")
         port, token = self._endpoint()

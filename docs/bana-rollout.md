@@ -40,7 +40,7 @@ npx wrangler deploy --dry-run
 npx wrangler deploy
 ```
 
-This adds the `notes` and `notes:write` scopes. It makes no new Cloudflare resources and stores no note text.
+This adds the `notes` and `notes:write` scopes. It makes no new Cloudflare resources and stores no note text. It also tells the Mac whether each call's grant has `notes:write`. Until this Worker is deployed, the updated LifeOS writes nothing to Bana from ChatGPT or claude.ai.
 
 Check: `npx wrangler deployments list` shows the new version at 100%.
 
@@ -51,6 +51,8 @@ Old grants do not gain the new scopes. In ChatGPT, open the LifeOS connector set
 - Include local LifeOS tools
 - Include your Bana notes (notes)
 - Let it add and edit notes (notes:write), if you want agents to add notes
+
+Without notes:write nothing reaches Bana from that connection, captures included: they stay in the LifeOS ledger and report `bana: not permitted`.
 
 Then refresh the connector's tools.
 

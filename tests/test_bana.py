@@ -22,6 +22,7 @@ from lifeos.bana_gateway import (
     NEVER_COMMANDS,
     NEVER_PREFIXES,
     BanaGateway,
+    BanaNotPermitted,
     BanaUnavailable,
 )
 from lifeos.brain_dump_store import BrainDumpStore
@@ -90,6 +91,17 @@ def test_bana_closed_is_unavailable_and_nothing_is_recorded(tmp_path):
     with pytest.raises(BanaUnavailable):
         service.notes_search("anything")
     assert service.store._connection.execute("SELECT COUNT(*) FROM proposals").fetchone()[0] == 0
+
+
+def test_without_notes_write_every_write_is_refused_before_any_request(tmp_path):
+    gateway = BanaGateway(tmp_path / "missing", writes=False)
+    for command in ("node.add", "node.setDescription", "tag.add", "field.set", "node.move"):
+        with pytest.raises(BanaNotPermitted):
+            gateway.run(command, {})
+    service = service_for(tmp_path, gateway)
+    capture = service.capture_brain_dump(raw_text=RAW, idempotency_key="c", source="chat")
+    assert capture["bana"] == {"status": "not permitted"}
+    assert service.get_brain_dump(capture["capture_id"])["raw_text"] == RAW
 
 
 @needs_bana
@@ -353,3 +365,55 @@ def test_agent_notebook_template_is_installed_once(bana, tmp_path):
     pages = [hit for hit in gateway.search("Agent notebook") if hit["line"].startswith("Agent notebook")]
     assert len(pages) == 1
     assert gateway.inspect(two)["by"] == "codex"
+
+
+@needs_bana
+@pytest.mark.asyncio
+async def test_without_notes_write_nothing_reaches_bana_but_the_ledger_keeps_it(bana, tmp_path, monkeypatch):
+    from lifeos import cloud_bridge
+
+    gateway, home = bana
+    things = FakeThings()
+    monkeypatch.setattr(
+        cloud_bridge, "build_default_service",
+        lambda *, bana_writes: service_for(tmp_path, BanaGateway(home, writes=bana_writes), things),
+    )
+
+    async def call(tool, arguments, notes_write=None):
+        grant = {} if notes_write is None else {"_lifeos_grant": {"notes_write": notes_write}}
+        return await cloud_bridge.invoke({"tool": tool, "arguments": {**arguments, **grant}})
+
+    # A lifeos:local-only grant (the Worker sends notes_write false; an old Worker sends nothing).
+    for notes_write in (False, None):
+        key = f"local-only-{notes_write}"
+        captured = (await call("capture_brain_dump", {"raw_text": RAW, "idempotency_key": key}, notes_write))
+        capture = captured["structuredContent"]
+        assert capture["bana"] == {"status": "not permitted"}
+        interpreted = (await call("submit_brain_dump_semanticization", {
+            "capture_id": capture["capture_id"], "source_hash": capture["source_hash"],
+            "idempotency_key": key, "items": [], "journal_entry": "Felt calmer after the garden today.",
+        }, notes_write))["structuredContent"]
+        assert interpreted["bana"] == {"status": "not permitted"}
+        assert interpreted["journal_written"] is True  # the prose stays in Markdown, not queued
+        added = await call("notes_add", {"request_id": key, "name": "Sneaky note", "by": "chatgpt"}, notes_write)
+        assert added["isError"] is True and "not permitted" in added["content"][0]["text"]
+    assert gateway.search("Capture:") == [] and gateway.search("Sneaky note") == []
+    assert gateway.search("Felt calmer after the garden") == []
+    ledger = service_for(tmp_path, gateway)
+    assert ledger.list_brain_dumps()["total"] == 2
+    assert ledger.store._connection.execute("SELECT COUNT(*) FROM proposals").fetchone()[0] == 0
+
+    # A promotion drafted and approved by the person still cannot be applied over that grant.
+    writer = service_for(tmp_path, gateway, things)
+    node = writer.notes_add(request_id="promo", name="Order compost", by="claude")["node_id"]
+    draft = promote(writer, node)
+    writer.approve_proposal(draft["proposal_id"], draft["revision_hash"])
+    applied = await call("apply_approved_proposal", {
+        "proposal_id": draft["proposal_id"], "revision_hash": draft["revision_hash"],
+    }, False)
+    assert applied["isError"] is True and things.created == []
+    assert writer.get_proposal(draft["proposal_id"])["state"] == "approved"
+
+    # With notes:write the same capture path writes to Bana.
+    granted = (await call("capture_brain_dump", {"raw_text": RAW, "idempotency_key": "granted"}, True))
+    assert granted["structuredContent"]["bana"]["status"] == "saved"

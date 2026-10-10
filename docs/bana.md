@@ -12,6 +12,10 @@ The gateway runs only allowlisted Bana commands: search, inspect, tags, Markdown
 
 If Bana is closed, note tools say it is not reachable and nothing is queued.
 
+## Who may write to Bana
+
+Locally (stdio, or the LifeOS HTTP server) LifeOS may write to Bana. On the remote path (ChatGPT or claude.ai through the Worker and LifeOS Sync) every Bana write needs the `notes:write` scope: note tools, captures, interpretations, journal prose and promotions. The Worker adds `_lifeos_grant: {"notes_write": true|false}` to each bridged call (a client cannot send that key itself; it is refused), and `lifeos.cloud_bridge` builds the gateway with writes off unless it says true. A missing grant counts as false. The gateway refuses every write command when writes are off, and the service checks first, so nothing is recorded. Without `notes:write` a capture still lands in the LifeOS ledger with `bana.status: "not permitted"`, journal prose stays in Markdown (it is not queued for Bana), and applying an approved promotion is refused before Things is touched.
+
 ## Tools and tiers
 
 | Tier | Tools | Rule |
@@ -28,7 +32,7 @@ The supertags come from Bana's "Agent notebook" template: `#capture`, `#interpre
 
 ## Capture and interpret
 
-1. `capture_brain_dump` saves the exact words in the LifeOS ledger first, then adds a `#capture` node to that day's page with the raw text as its note and the same `Source hash`. Bana closed: the capture still succeeds with `bana.status: "unavailable"`.
+1. `capture_brain_dump` saves the exact words in the LifeOS ledger first, then adds a `#capture` node to that day's page with the raw text as its note and the same `Source hash`. Bana closed: the capture still succeeds with `bana.status: "unavailable"`. No `notes:write` on the remote path: `"not permitted"`.
 2. `submit_brain_dump_semanticization` adds a new `#interpretation` node under the capture (`#meeting` too when `meeting_title` is given). Tasks become `#suggested-action` children and questions `#question` children, each with an `Evidence` field holding the verbatim excerpt. Earlier interpretations are never rewritten.
 3. Journal prose goes on the Bana day page. See [ADR 0002](adr/0002-bana-day-page-is-the-journal.md).
 
