@@ -12,11 +12,17 @@ Client ID: `204730760465-5q5in476f1reccljukl9o03ibgcv8ttp.apps.googleusercontent
 
 The downloaded credential JSON is stored outside the checkout at
 `~/Library/Application Support/LifeOS/credentials/google-health-desktop.json`,
-with owner-only read/write access. It has not yet been imported into the app.
+with owner-only read/write access. `GoogleOAuthConfiguration.load()` reads this
+file directly without 1Password or Keychain. The app can check it with
+`LifeOSSync --google-oauth-check`; this prints no credential values and sends
+no network requests. The file must have owner-only permissions (`chmod 600`).
 
 Keep downloaded credential files, client secrets and refresh tokens out of Git.
-The repository ignores `.env*` files. Store tokens in macOS Keychain when the
-native connection flow is implemented.
+The repository ignores `.env*` files. Google credentials use the private local
+file by preference, including when launched from Finder or at login. A shell
+environment is not needed. Future Google refresh-token storage should follow
+the same private-file preference. Existing local Convex and task-sync credentials
+are separate and their storage has not changed.
 
 The health screens currently read stored local Convex records. Creating an OAuth
 client alone does not implement sign-in, consent, health imports or background

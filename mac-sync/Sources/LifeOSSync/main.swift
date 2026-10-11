@@ -250,6 +250,16 @@ if let position = args.firstIndex(of: "--import-legacy"), args.count == position
     exit(0)
 }
 let app = NSApplication.shared
+if args.contains("--google-oauth-check") {
+    do {
+        _ = try GoogleOAuthConfiguration.load()
+        print("Google OAuth credentials loaded from the private local file. No consent or network request was made.")
+    } catch {
+        fputs("Google OAuth credential file is missing, invalid or has permissions broader than owner-only.\n", stderr)
+        exit(1)
+    }
+    exit(0)
+}
 if args.contains("--health-store-token") {
     do {
         let data = FileHandle.standardInput.readDataToEndOfFile()
