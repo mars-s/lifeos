@@ -1,8 +1,8 @@
 """Exercise the packaged Swift client with disposable synthetic health records."""
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("manage", Path(__file__).with_name("manage.py"))
 manage = importlib.util.module_from_spec(spec)
@@ -26,7 +26,7 @@ for query in ("limit=0", "limit=91", "limit=abc", "limit=1.5", "source=invalid")
 for date in dates:
     assert manage.request("GET", f"/health/day?source=synthetic&date={date}", token=token) == (200, None)
 try:
-    for date, minutes in zip(dates, [390, 420]):
+    for date, minutes in zip(dates, [390, 420], strict=True):
         value = {
             "source": "synthetic", "date": date, "timeZone": "Australia/Melbourne",
             "sleepMinutes": minutes, "sleepEfficiency": 87.5, "steps": 6123,

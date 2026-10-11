@@ -6,11 +6,11 @@ The old inventory brackets the new inventory to reject concurrent edits.
 """
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 

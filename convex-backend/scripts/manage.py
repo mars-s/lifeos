@@ -2,12 +2,12 @@
 import datetime
 import json
 import os
-from pathlib import Path
 import secrets
 import subprocess
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 os.chdir(ROOT)
@@ -125,7 +125,7 @@ def verify():
 def backup():
     directory = ROOT / "backups"
     directory.mkdir(mode=0o700, exist_ok=True)
-    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
     path = directory / f"lifeos-{stamp}.zip"
     convex("export", "--path", str(path))
     path.chmod(0o600)
@@ -140,4 +140,4 @@ if __name__ == "__main__":
         actions[sys.argv[1]]()
     except subprocess.CalledProcessError:
         # Captured command output can contain credentials. Do not echo it.
-        raise SystemExit("Command failed. No secret-bearing output was printed.")
+        raise SystemExit("Command failed. No secret-bearing output was printed.") from None
