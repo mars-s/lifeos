@@ -3,11 +3,19 @@ set -eu
 cd "$(dirname "$0")"
 swift build -c release
 APP="build/LifeOS Sync.app"
+if [ "${1:-}" = "--preview" ]; then
+  APP="build/LifeOS Preview.app"
+fi
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/LifeOSSync "$APP/Contents/MacOS/LifeOSSync"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+if [ "${1:-}" = "--preview" ]; then
+  /usr/bin/plutil -replace CFBundleIdentifier -string dev.mars.lifeos.preview "$APP/Contents/Info.plist"
+  /usr/bin/plutil -replace CFBundleName -string 'LifeOS Preview' "$APP/Contents/Info.plist"
+fi
 cp Resources/native-write.js "$APP/Contents/Resources/"
 cp ../cloud-mirror/lifeos_cache/things_read.js "$APP/Contents/Resources/"
+cp Resources/mountain.png Resources/twilight-forest.png Resources/sunny-field.png "$APP/Contents/Resources/"
 /usr/bin/osacompile -o "$APP/Contents/Resources/things_classify.scpt" ../cloud-mirror/lifeos_cache/things_classify.applescript
 /usr/bin/osacompile -o "$APP/Contents/Resources/things_bulk.scpt" Resources/things_bulk.applescript
 rm -f "$APP/Contents/Resources/native-trash.scpt"

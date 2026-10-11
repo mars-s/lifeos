@@ -10,7 +10,8 @@ let package = Package(
         .target(name: "SyncCore", dependencies: ["CSQLite"]),
         .executableTarget(name: "LifeOSSync", dependencies: ["SyncCore"],
                           swiftSettings: [.defaultIsolation(MainActor.self)]),
-        .testTarget(name: "SyncCoreTests", dependencies: ["SyncCore"])
+        .testTarget(name: "SyncCoreTests", dependencies: ["SyncCore"]),
+        .testTarget(name: "HealthUITests", dependencies: ["LifeOSSync"])
     ],
     swiftLanguageModes: [.v6]
 )

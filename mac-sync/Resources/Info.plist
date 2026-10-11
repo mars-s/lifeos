@@ -10,4 +10,5 @@
 <key>LSUIElement</key><true/>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSAppleEventsUsageDescription</key><string>LifeOS Sync reads Things and applies the task edits you request through dot.</string>
+<key>NSCalendarsFullAccessUsageDescription</key><string>LifeOS shows your calendar day using existing access. The read-only desktop view does not request access or change events.</string>
 </dict></plist>

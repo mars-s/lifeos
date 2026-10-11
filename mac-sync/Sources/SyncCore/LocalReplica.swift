@@ -24,6 +24,22 @@ import CSQLite
     public var cursor: Int { get throws { try integer("cursor") } }
     public var ready: Bool { get throws { try integer("ready") == 1 } }
     public var commandsPending: Bool { get throws { try integer("commands") == 1 } }
+    /// Reads the current committed replica without inventory, network calls or writes.
+    public func planningSnapshot() throws -> PlanningSnapshot? {
+        guard try ready else { return nil }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "SELECT payload FROM items ORDER BY id LIMIT 10001", -1, &statement, nil) == SQLITE_OK else { throw SyncError.storage }
+        defer { sqlite3_finalize(statement) }
+        var items: [JSON] = []
+        while true {
+            let step = sqlite3_step(statement)
+            if step == SQLITE_DONE { break }
+            guard step == SQLITE_ROW, items.count < 10_000,
+                  let bytes = sqlite3_column_blob(statement, 0) else { throw SyncError.storage }
+            items.append(try decoded(Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 0)))))
+        }
+        return try PlanningSnapshot.decode(items: items, revision: cursor)
+    }
     private func store(_ value: JSON, table: String, key: String) throws {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, "INSERT OR REPLACE INTO \(table) VALUES(?,?)", -1, &statement, nil) == SQLITE_OK else { throw SyncError.storage }

@@ -1,0 +1,19 @@
+{
+  "name": "lifeos-convex-backend",
+  "private": true,
+  "scripts": {
+    "deploy:local": "convex dev --once",
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "start:local": "python3 scripts/manage.py start",
+    "backup": "python3 scripts/manage.py backup",
+    "verify:local": "python3 scripts/manage.py verify"
+  },
+  "dependencies": {
+    "convex": "1.46.0"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "^22.0.0"
+  }
+}
