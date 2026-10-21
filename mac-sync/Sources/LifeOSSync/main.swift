@@ -245,6 +245,30 @@ if let position = args.firstIndex(of: "--import-legacy"), args.count == position
     exit(0)
 }
 let app = NSApplication.shared
+if args.contains("--local-tool-check") {
+    // Drives the real LocalService path with read-only tools only. Prints timings, never tool content.
+    let service = LocalService()
+    let request = try! encoded(["tool": "read_things_tags", "arguments": ["limit": 1]])
+    Task {
+        var ok = true
+        for index in 0..<4 {
+            let start = ContinuousClock.now
+            let outcome = await service.call(request)
+            let elapsed = ContinuousClock.now - start
+            var state = "uncertain"
+            if case .notSent = outcome { state = "not-sent" }
+            if case .reply(let data) = outcome, let reply = try? decoded(data) {
+                state = (reply["isError"] as? Bool) == false ? "ok" : "tool-error"
+            }
+            if state != "ok" { ok = false }
+            print("call \(index + 1): \(state) \(elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000) ms")
+        }
+        let rejected = await service.call(try! encoded(["tool": "execute", "arguments": [:] as JSON]))
+        if case .reply(let data) = rejected, (try? decoded(data))?["isError"] as? Bool == true { print("unknown tool: rejected") } else { ok = false }
+        exit(ok ? 0 : 1)
+    }
+    RunLoop.main.run()
+}
 if args.contains("--desktop-check") {
     do {
         let snapshot = args.firstIndex(of: "--snapshot").flatMap { position in

@@ -2343,7 +2343,7 @@
   },
   {
     "name": "render_proposal_review",
-    "description": "Render one exact immutable proposal revision for review.\n\nPass the exact result from propose_changes or get_proposal. The component may approve or\nreject only the proposal_id and revision_hash shown on screen. Applying remains a separate\nexplicitly confirmed tool call.",
+    "description": "Show one exact proposal revision as a compact approval card.\n\nPass the exact result from propose_changes or get_proposal. The card shows each Things,\nCalendar or Anytype change with an icon, time and status, and the person approves on it.\nFor non-destructive changes the card's button approves and then applies the same revision.\nDestructive changes are only approved on the card; apply them with\napply_approved_proposal after the person confirms in chat.\nKeep your reply to one short sentence; do not repeat the card or draw your own card.\nNever describe a change as created, applied or saved unless a LifeOS result in this\nconversation reports state \"applied\". Card outcomes arrive as model context.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -2843,11 +2843,11 @@
       "openWorldHint": false
     },
     "meta": {
-      "openai/outputTemplate": "ui://lifeos/proposal-review-v1.html",
-      "openai/toolInvocation/invoking": "Preparing the review…",
-      "openai/toolInvocation/invoked": "Proposal ready to review.",
+      "openai/outputTemplate": "ui://lifeos/proposal-review-v3.html",
+      "openai/toolInvocation/invoking": "Preparing your changes…",
+      "openai/toolInvocation/invoked": "Ready for your approval",
       "ui": {
-        "resourceUri": "ui://lifeos/proposal-review-v1.html",
+        "resourceUri": "ui://lifeos/proposal-review-v3.html",
         "visibility": [
           "model",
           "app"

@@ -11,7 +11,11 @@ DAY_PLAN_RESOURCE_URI = "ui://lifeos/day-plan-v3.html"
 DAY_PLAN_RESOURCE_MIME = "text/html;profile=mcp-app"
 WEEK_PLAN_RESOURCE_URI = "ui://lifeos/week-plan-v1.html"
 WEEK_PLAN_RESOURCE_MIME = "text/html;profile=mcp-app"
-PROPOSAL_REVIEW_RESOURCE_URI = "ui://lifeos/proposal-review-v1.html"
+PROPOSAL_REVIEW_RESOURCE_URI = "ui://lifeos/proposal-review-v3.html"
+PROPOSAL_REVIEW_LEGACY_RESOURCE_URIS = (
+    "ui://lifeos/proposal-review-v1.html",
+    "ui://lifeos/proposal-review-v2.html",
+)
 PROPOSAL_REVIEW_RESOURCE_MIME = "text/html;profile=mcp-app"
 BRAIN_DUMP_CANVAS_RESOURCE_URI = "ui://lifeos/brain-dump-canvas-v4.html"
 BRAIN_DUMP_CANVAS_LEGACY_RESOURCE_URI = "ui://lifeos/brain-dump-canvas-v1.html"
@@ -304,7 +308,7 @@ def week_plan_html() -> str:
 
 def proposal_review_html() -> str:
     """Load the versioned proposal-review ChatGPT component."""
-    return files("lifeos").joinpath("ui/proposal-review-v1.html").read_text(encoding="utf-8")
+    return files("lifeos").joinpath("ui/proposal-review-v3.html").read_text(encoding="utf-8")
 
 
 def brain_dump_canvas_html() -> str:

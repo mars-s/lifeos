@@ -14,7 +14,7 @@ export function registerLocalBridge(server: McpServer, env: Env, scopes: string[
     if (!notes.every(scope => scopes.includes(scope))) continue;
     const required = ['things:read', localScope, ...notes, ...(localToolNeedsWrite(tool.name) ? ['things:write'] : [])];
     const resourceUri = tool.name === 'review_brain_dump_memory' ? 'ui://lifeos/cloud-memory-review-v1.html'
-      : tool.name === 'render_proposal_review' ? 'ui://lifeos/cloud-proposal-review-v1.html' : undefined;
+      : tool.name === 'render_proposal_review' ? 'ui://lifeos/cloud-proposal-review-v2.html' : undefined;
     const visibility = (tool as {meta?: {ui?: {visibility?: string[]}}}).meta?.ui?.visibility;
     server.registerTool(tool.name, {
       description: `${tool.description} Runs on your awake Mac.${notes.length ? ' Notes stay in Anytype on the Mac; this service passes them through in memory only.' : ' Raw captures remain in local storage.'} A timeout is not proof that a write failed.`,

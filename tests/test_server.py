@@ -196,7 +196,7 @@ async def test_widget_resources_publish_csp_and_live_domain(monkeypatch):
 
     by_uri = {str(resource.uri): resource for resource in resources}
     day_plan = by_uri["ui://lifeos/day-plan-v3.html"]
-    proposal_review = by_uri["ui://lifeos/proposal-review-v1.html"]
+    proposal_review = by_uri["ui://lifeos/proposal-review-v3.html"]
     brain_dump = by_uri["ui://lifeos/brain-dump-canvas-v4.html"]
     week_plan = by_uri["ui://lifeos/week-plan-v1.html"]
 
@@ -221,7 +221,7 @@ async def test_proposal_review_exposes_exact_revision_actions_to_chatgpt():
         reject_tool = next(tool for tool in tools if tool.name == "reject_proposal")
         resources = await client.list_resources()
         resource = next(
-            item for item in resources if str(item.uri) == "ui://lifeos/proposal-review-v1.html"
+            item for item in resources if str(item.uri) == "ui://lifeos/proposal-review-v3.html"
         )
         contents = await client.read_resource(resource.uri)
         result = await client.call_tool(
@@ -256,21 +256,23 @@ async def test_proposal_review_exposes_exact_revision_actions_to_chatgpt():
             },
         )
 
-    assert render_tool.meta["ui"]["resourceUri"] == "ui://lifeos/proposal-review-v1.html"
-    assert render_tool.meta["openai/outputTemplate"] == "ui://lifeos/proposal-review-v1.html"
+    assert render_tool.meta["ui"]["resourceUri"] == "ui://lifeos/proposal-review-v3.html"
+    assert render_tool.meta["openai/outputTemplate"] == "ui://lifeos/proposal-review-v3.html"
     assert render_tool.annotations.readOnlyHint is True
     assert approve_tool.meta["ui"]["visibility"] == ["app"]
     assert reject_tool.meta["ui"]["visibility"] == ["app"]
     assert approve_tool.meta["openai/visibility"] == "private"
     assert approve_tool.meta["openai/widgetAccessible"] is True
     assert resource.mimeType == "text/html;profile=mcp-app"
-    assert "Approve revision" in contents[0].text
-    assert 'transition("approve_proposal"' in contents[0].text
-    assert 'transition("reject_proposal"' in contents[0].text
-    assert "approval_ticket: ticket" in contents[0].text
-    assert "toolResponseMetadata" in contents[0].text
-    assert 'method: "tools/call"' in contents[0].text
-    assert "Approval is not application" in contents[0].text
+    html = contents[0].text
+    assert 'proposalCall("approve_proposal"' in html
+    assert 'proposalCall("reject_proposal"' in html
+    assert 'proposalCall("apply_approved_proposal"' in html
+    assert "approval_ticket: ticket" in html
+    assert "toolResponseMetadata" in html
+    assert 'method: "tools/call"' in html
+    assert "result.isError" in html  # a refused call never shows as approved or applied
+    assert "ui/update-model-context" in html
     assert result.structured_content["proposal_id"] == "meeting-follow-ups"
     assert result.structured_content["revision_hash"] == "revision-1"
 

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+
 import pytest
 from fastmcp import FastMCP
 
@@ -56,6 +60,25 @@ async def test_bridge_rejects_arbitrary_tools_before_service_initialisation():
     ):
         with pytest.raises(ValueError):
             await invoke(request)
+
+
+def test_serve_mode_answers_each_line_in_order_and_keeps_framing_after_bad_input():
+    """The warm worker rejects bad and oversized lines without starting the service."""
+    lines = [
+        b'{"tool":"execute","arguments":{}}\n',
+        b"not json\n",
+        b'{"tool":"get_brain_dump","arguments":{"capture_id":"' + b"x" * (300 * 1024) + b'"}}\n',
+        b'{"tool":"get_brain_dump","arguments":[]}\n',
+    ]
+    done = subprocess.run(
+        [sys.executable, "-m", "lifeos.cloud_bridge", "--serve"],
+        input=b"".join(lines), capture_output=True, timeout=60, check=True,
+    )
+    ready, *rest = done.stdout.splitlines()
+    assert json.loads(ready) == {"worker": 1, "ready": "lifeos-cloud-bridge"}
+    replies = [json.loads(line) for line in rest]
+    assert len(replies) == len(lines)
+    assert all(reply["isError"] is True for reply in replies)
 
 
 @pytest.mark.asyncio

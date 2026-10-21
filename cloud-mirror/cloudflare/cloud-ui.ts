@@ -5,7 +5,7 @@ import rendererInputs from './ui-tool-contracts.json';
 import dayHTML from '../../src/lifeos/ui/day-plan-v1.html';
 import weekHTML from '../../src/lifeos/ui/week-plan-v1.html';
 import canvasHTML from '../../src/lifeos/ui/brain-dump-canvas-v3.html';
-import proposalHTML from '../../src/lifeos/ui/proposal-review-v1.html';
+import proposalHTML from '../../src/lifeos/ui/proposal-review-v3.html';
 import memoryHTML from '../../src/lifeos/ui/memory-review-v1.html';
 
 const mimeType = 'text/html;profile=mcp-app';
@@ -84,7 +84,8 @@ export function registerCloudUI(server: McpServer, origin: string, canPrepare = 
     {name: 'LifeOS cloud day preview', uri: 'ui://lifeos/cloud-day-plan-v1.html', html: dayHTML, domains: []},
     {name: 'LifeOS cloud week preview', uri: 'ui://lifeos/cloud-week-plan-v1.html', html: weekHTML, domains: []},
     {name: 'LifeOS cloud meeting canvas', uri: 'ui://lifeos/cloud-brain-dump-v1.html', html: canvasHTML, domains: ['https://cdn.jsdelivr.net']},
-    {name: 'LifeOS cloud proposal review', uri: 'ui://lifeos/cloud-proposal-review-v1.html', html: proposalHTML, domains: []},
+    {name: 'LifeOS cloud proposal review', uri: 'ui://lifeos/cloud-proposal-review-v2.html', html: proposalHTML, domains: []},
+    {name: 'LifeOS cloud proposal review (older chats)', uri: 'ui://lifeos/cloud-proposal-review-v1.html', html: proposalHTML, domains: []},
     {name: 'LifeOS cloud memory review', uri: 'ui://lifeos/cloud-memory-review-v1.html', html: memoryHTML, domains: []},
   ];
   for (const resource of resources) {

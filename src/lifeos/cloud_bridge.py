@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from typing import Any
 
@@ -59,7 +60,48 @@ async def invoke(request: dict[str, Any], server: Any = None) -> dict[str, Any]:
     return output
 
 
+FAILURE = {"isError": True, "content": [{"type": "text", "text": "Local tool could not complete. Check its saved state before retrying a write."}]}
+WORKER_READY = '{"worker":1,"ready":"lifeos-cloud-bridge"}'
+
+
+async def serve() -> None:
+    """Warm worker for the persistent local service: one JSON request per stdin line.
+
+    Each line gets exactly one JSON reply line. Invocation semantics are identical to main().
+    Replies use a private copy of fd 1; fd 1 itself then points at stderr, so nothing a library,
+    native extension or child process prints can reach the reply channel. WORKER_READY is
+    written once the LifeOS modules have imported, before any request is read.
+    """
+    loop = asyncio.get_running_loop()
+    sys.stdout.flush()
+    replies = os.fdopen(os.dup(1), "w", encoding="utf-8")
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
+    replies.write(WORKER_READY + "\n")
+    replies.flush()
+    while True:
+        raw = await loop.run_in_executor(None, sys.stdin.buffer.readline, MAX_BYTES + 2)
+        if not raw:
+            return
+        try:
+            if not raw.endswith(b"\n"):
+                # Oversized: discard the rest of this line so the next request stays framed.
+                while raw and not raw.endswith(b"\n"):
+                    raw = await loop.run_in_executor(None, sys.stdin.buffer.readline, MAX_BYTES)
+                raise ValueError("request too large")
+            if len(raw) - 1 > MAX_BYTES:
+                raise ValueError("request too large")
+            result = await invoke(json.loads(raw))
+        except Exception:
+            result = FAILURE
+        replies.write(json.dumps(result, ensure_ascii=False) + "\n")
+        replies.flush()
+
+
 def main() -> None:
+    if sys.argv[1:] == ["--serve"]:
+        asyncio.run(serve())
+        return
     try:
         raw = sys.stdin.buffer.read(MAX_BYTES + 1)
         if len(raw) > MAX_BYTES:
@@ -67,7 +109,7 @@ def main() -> None:
         result = asyncio.run(invoke(json.loads(raw)))
     except Exception:
         # Framework/gateway errors may contain private content. Never print them.
-        result = {"isError": True, "content": [{"type": "text", "text": "Local tool could not complete. Check its saved state before retrying a write."}]}
+        result = FAILURE
     sys.stdout.write(json.dumps(result, ensure_ascii=False))
 
 

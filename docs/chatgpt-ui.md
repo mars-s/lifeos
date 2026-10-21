@@ -52,12 +52,26 @@ The canvas is a preview surface. Its action sends a follow-up prompt that enters
 
 ## Proposal review
 
-LifeOS exposes `ui://lifeos/proposal-review-v1.html` for the immutable review boundary. After
-`propose_changes` or `get_proposal`, ChatGPT calls `render_proposal_review` with that exact result.
-The card shows every proposed Things and Calendar mutation, the source-snapshot count, and the
-revision fingerprint. Its Approve and Reject controls call the corresponding LifeOS tools with the
-exact visible `proposal_id` and `revision_hash`.
+LifeOS exposes `ui://lifeos/proposal-review-v3.html` (v1 and v2 stay as aliases for older
+conversations). After `propose_changes` or `get_proposal`, ChatGPT calls `render_proposal_review`
+with that exact result.
 
-Approval still does not change Things or Calendar. The approved card offers a separate follow-up
-action that asks ChatGPT to call `apply_approved_proposal`; ChatGPT remains responsible for the
-destructive-action confirmation before any external write.
+The card follows ChatGPT's compact inline style: one row per change with an icon picked from the
+title (meal, call, meeting, gym, study and so on), a one-line summary such as
+`Calendar · New event · Tue 13 Oct, 12:30 to 13:30 · Planned Tasks`, a status pill, and one primary
+button. Several changes share one card with a count.
+
+- Non-destructive proposals: the primary button approves the exact revision with the private card
+  ticket, then calls `apply_approved_proposal` for the same revision. The pill only says Applied
+  when LifeOS returns state `applied`.
+- Destructive proposals: the button only approves. Applying still goes through ChatGPT so the
+  host asks for confirmation.
+- Any refused or failed call keeps the previous state and shows LifeOS's error text.
+- After each action the card sends the real outcome through `ui/update-model-context`, so
+  ChatGPT's follow-up text matches the card.
+
+ChatGPT's own generated cards (Intelligent UI) are drawn by ChatGPT from the conversation. OpenAI
+does not document a way for a plugin to request or control them, and they cannot carry the private
+approval ticket, so they never approve LifeOS proposals. Open
+`src/lifeos/ui/proposal-review-v3.html?demo=task|calendar|mixed|destructive` in a browser for
+synthetic previews; demo buttons make no tool calls.

@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>LifeOS proposal</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --text: light-dark(#0d0d0d, #f3f3f3);
+      --muted: light-dark(#5d5d5d, #afafaf);
+      --line: light-dark(rgba(0,0,0,.12), rgba(255,255,255,.14));
+      --button: light-dark(#0d0d0d, #ececec);
+      --button-text: light-dark(#ffffff, #0d0d0d);
+      --amber: light-dark(#b45309, #fb923c);
+      --amber-soft: light-dark(#fff1e6, #3d2314);
+      --green: light-dark(#15803d, #4ade80);
+      --green-soft: light-dark(#e8f7ee, #12301d);
+      --red: light-dark(#b42318, #f87171);
+      --red-soft: light-dark(#fdecea, #3b1717);
+      --blue: light-dark(#2563eb, #8ab4ff);
+      --blue-soft: light-dark(#eaf1ff, #172640);
+    }
+    :root[data-theme="light"] { color-scheme: light; }
+    :root[data-theme="dark"] { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: transparent; }
+    body {
+      color: var(--text);
+      font: 15px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow-wrap: anywhere;
+    }
+    button { font: inherit; color: inherit; }
+    button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+    .card { border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+    .empty { color: var(--muted); padding: 18px; text-align: center; }
+    .summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 6px; }
+    .summary h1 { margin: 0; font-size: 15px; font-weight: 600; }
+    .rows { margin: 0; padding: 0; list-style: none; }
+    .row { display: flex; align-items: flex-start; gap: 12px; padding: 4px 2px; }
+    .rows.many .row { padding: 10px 2px; }
+    .rows.many .row + .row { border-top: 1px solid var(--line); }
+    .icon { flex: none; width: 28px; height: 28px; margin-top: 2px; }
+    .icon svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .body { flex: 1; min-width: 0; }
+    .title { font-size: 17px; font-weight: 600; line-height: 1.3; }
+    .rows.many .title { font-size: 15px; }
+    .meta { margin-top: 3px; color: var(--muted); font-size: 13.5px; }
+    .detail { margin-top: 4px; color: var(--muted); font-size: 13px; white-space: pre-line; }
+    .warn { color: var(--red); }
+    .pill { flex: none; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 500; color: var(--amber); background: var(--amber-soft); }
+    .pill[data-tone="good"] { color: var(--green); background: var(--green-soft); }
+    .pill[data-tone="bad"] { color: var(--red); background: var(--red-soft); }
+    .pill[data-tone="info"] { color: var(--blue); background: var(--blue-soft); }
+    .actions { display: flex; gap: 8px; margin-top: 12px; }
+    .primary { flex: 1; min-height: 40px; border: 0; border-radius: 999px; color: var(--button-text); background: var(--button); font-weight: 500; cursor: pointer; }
+    .secondary { min-height: 40px; padding: 0 16px; border: 1px solid var(--line); border-radius: 999px; background: transparent; cursor: pointer; }
+    .primary:disabled, .secondary:disabled { cursor: progress; opacity: .55; }
+    .note { margin: 10px 2px 0; color: var(--muted); font-size: 13px; }
+    .note[role="alert"] { color: var(--red); }
+  </style>
+</head>
+<body>
+  <main id="app" class="card empty" aria-live="polite">Loading proposal…</main>
+  <script>
+    (() => {
+      const app = document.getElementById("app");
+      const pending = new Map();
+      let requestId = 0;
+      let current;
+      let ticket = "";
+      let busy = false;
+      let note = "";
+      let noteIsError = false;
+
+      // Synthetic trial data for ?demo=task|calendar|mixed|destructive. Tool calls are disabled in demos.
+      const base = { revision_number: 1, state: "draft", source_snapshots: [], created_at: "2026-10-11T12:00:00+11:00", things_changes: [], calendar_changes: [] };
+      const demos = {
+        task: { ...base, proposal_id: "demo-task", revision_hash: "demo-task",
+          things_changes: [{ operation: "create", task_id: null, destructive: false, fields: { title: "Have lunch with Sarish", area: "Personal" } }] },
+        calendar: { ...base, proposal_id: "demo-calendar", revision_hash: "demo-calendar",
+          calendar_changes: [{ operation: "create", calendar_id: "Planned Tasks", event_id: null, destructive: false, fields: { title: "Lunch with Sarish", start: "2026-10-13T12:30:00+11:00", end: "2026-10-13T13:30:00+11:00", location: "Hardware Lane" } }] },
+        mixed: { ...base, proposal_id: "demo-mixed", revision_hash: "demo-mixed",
+          things_changes: [{ operation: "create", task_id: null, destructive: false, fields: { title: "Send FIT3143 report draft", when: "2026-10-14", area: "University" } }],
+          calendar_changes: [
+            { operation: "create", calendar_id: "Planned Tasks", event_id: null, destructive: false, fields: { title: "Deep work: FIT3143 report", start: "2026-10-14T09:00:00+11:00", end: "2026-10-14T11:00:00+11:00" } },
+            { operation: "update", calendar_id: "Personal", event_id: "evt-1", destructive: false, fields: { title: "Gym", start: "2026-10-14T18:00:00+11:00", end: "2026-10-14T19:00:00+11:00" } }
+          ] },
+        destructive: { ...base, proposal_id: "demo-delete", revision_hash: "demo-delete",
+          calendar_changes: [{ operation: "delete", calendar_id: "Personal", event_id: "evt-2", destructive: true, fields: { title: "Dentist", start: "2026-10-15T10:00:00+11:00", end: "2026-10-15T10:30:00+11:00" } }] }
+      };
+      let demoMode = false;
+
+      const paths = {
+        meal: ["M7 3v8M5 3v5a2 2 0 0 0 4 0V3M7 11v10", "M17 21V3c-2 1.5-3 4-3 7v3h3"],
+        coffee: ["M4 9h12v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z", "M16 11h1.5a2.5 2.5 0 0 1 0 5H16", "M8 3v3M12 3v3"],
+        phone: ["M5 4h3l2 5-2.5 1.5a11 11 0 0 0 6 6L15 14l5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"],
+        people: ["M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7", "M2.5 20a6.5 6.5 0 0 1 13 0", "M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14a6 6 0 0 1 3.5 6"],
+        dumbbell: ["M6 7v10M3 9v6M18 7v10M21 9v6M6 12h12"],
+        book: ["M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z", "M4 19V5M8 7h7"],
+        mail: ["M3 6h18v12H3z", "M3 7l9 6 9-6"],
+        cart: ["M3 4h2l2.5 11h10L20 8H6.5", "M9 20h.01M17 20h.01"],
+        plane: ["M10 14 3 11l1.5-1.5 7 1 4-4.5a2 2 0 0 1 3 3l-4.5 4 1 7L13.5 21l-3-7"],
+        health: ["M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10"],
+        calendar: ["M4 6h16v14H4z", "M4 10h16M8 3v4M16 3v4"],
+        task: ["M4 4h16v16H4z", "M8 12l3 3 5-6"],
+        note: ["M6 3h9l4 4v14H6z", "M15 3v4h4M9 12h6M9 16h6"],
+        trash: ["M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"]
+      };
+      const keywordIcons = [
+        [/\b(lunch|dinner|breakfast|brunch|meal|eat)\b/i, "meal"], [/\b(coffee|tea|cafe)\b/i, "coffee"],
+        [/\b(call|ring|phone)\b/i, "phone"], [/\b(meet|meeting|sync|catch ?up|1:1|standup)\b/i, "people"],
+        [/\b(gym|workout|run|training|swim)\b/i, "dumbbell"], [/\b(study|read|lecture|exam|assignment|report|fit\d+)\b/i, "book"],
+        [/\b(email|reply|send)\b/i, "mail"], [/\b(buy|shop|groceries|order)\b/i, "cart"],
+        [/\b(flight|trip|travel|airport)\b/i, "plane"], [/\b(doctor|dentist|gp|physio|health)\b/i, "health"]
+      ];
+
+      function el(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      }
+
+      function icon(name) {
+        const box = el("span", "icon");
+        box.setAttribute("aria-hidden", "true");
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        for (const d of paths[name] || paths.task) {
+          const path = document.createElementNS(svg.namespaceURI, "path");
+          path.setAttribute("d", d);
+          svg.append(path);
+        }
+        box.append(svg);
+        return box;
+      }
+
+      function iconFor(item) {
+        if (["delete", "cancel"].includes(item.change.operation)) return "trash";
+        const match = keywordIcons.find(([pattern]) => pattern.test(item.title));
+        if (match) return match[1];
+        return item.domain === "calendar" ? "calendar" : item.domain === "notes" ? "note" : "task";
+      }
+
+      function parseDate(value) {
+        if (typeof value !== "string" || !value) return null;
+        const date = new Date(/^\d{4}-\d\d-\d\d$/.test(value) ? `${value}T00:00:00` : value);
+        return Number.isNaN(date.getTime()) ? null : date;
+      }
+
+      const dayFormat = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short" });
+      const timeFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+
+      function eventTime(fields) {
+        const start = parseDate(fields.start);
+        const end = parseDate(fields.end);
+        if (!start) return "No time set";
+        if (!end) return `${dayFormat.format(start)}, ${timeFormat.format(start)}`;
+        return start.toDateString() === end.toDateString()
+          ? `${dayFormat.format(start)}, ${timeFormat.format(start)} to ${timeFormat.format(end)}`
+          : `${dayFormat.format(start)} ${timeFormat.format(start)} to ${dayFormat.format(end)} ${timeFormat.format(end)}`;
+      }
+
+      function taskWhen(fields) {
+        const when = fields.when ?? fields.start_date ?? fields.deadline;
+        if (!when) return "No scheduled date";
+        const word = String(when);
+        if (["today", "tonight", "anytime", "someday", "evening"].includes(word.toLowerCase())) return word[0].toUpperCase() + word.slice(1);
+        const date = parseDate(word);
+        return date ? dayFormat.format(date) : word;
+      }
+
+      const verbs = {
+        things: { create: "New task", update: "Edit task", complete: "Complete task", cancel: "Cancel task" },
+        calendar: { create: "New event", update: "Edit event", delete: "Delete event" },
+        notes: { add: "New note", journal: "Journal entry", tag: "Tag note", set_field: "Edit note", move: "Move note", link_task: "Link note to task" }
+      };
+      const domainNames = { things: "Things", calendar: "Calendar", notes: "Anytype" };
+
+      function items(data) {
+        const list = [];
+        (data.things_changes || []).forEach((change) => list.push({ domain: "things", change }));
+        (data.calendar_changes || []).forEach((change) => list.push({ domain: "calendar", change }));
+        (data.note_changes || []).forEach((change) => list.push({ domain: "notes", change }));
+        return list.map((item) => {
+          const fields = item.change.fields || {};
+          const title = String(fields.title || fields.name || fields.tag || item.change.task_id || item.change.event_id || item.change.object_id || "Untitled change");
+          const verb = verbs[item.domain][item.change.operation] || String(item.change.operation || "Change");
+          const meta = item.domain === "calendar" ? ["Calendar", verb, eventTime(fields), item.change.calendar_id]
+            : item.domain === "things" ? ["Things 3", verb, taskWhen(fields), fields.area || fields.project]
+            : ["Anytype", verb];
+          const extra = [fields.location, fields.notes && String(fields.notes).slice(0, 140)].filter(Boolean).join("\n");
+          return { ...item, title, meta: meta.filter(Boolean).join(" · "), extra };
+        });
+      }
+
+      function status(state) {
+        return ({
+          draft: ["Pending", "warn"], approved: ["Approved", "info"], applying: ["Applying", "info"], applied: ["Applied", "good"],
+          partial_failure: ["Needs attention", "bad"], stale: ["Out of date", "bad"], rejected: ["Rejected", "bad"], reverted: ["Reverted", "bad"]
+        })[state] || ["Unknown", "bad"];
+      }
+
+      function primaryLabel(list, destructive) {
+        if (destructive) return "Approve this version";
+        if (list.length === 1 && ["create", "add"].includes(list[0].change.operation)) {
+          return ({ things: "Approve and create task", calendar: "Approve and add to Calendar", notes: "Approve and add note" })[list[0].domain];
+        }
+        const domains = new Set(list.map((item) => item.domain));
+        const where = domains.size === 1 ? ` in ${domainNames[[...domains][0]]}` : "";
+        return `Approve and apply ${list.length === 1 ? "change" : `${list.length} changes`}${where}`;
+      }
+
+      function host(method, params) {
+        window.parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
+      }
+
+      function followUp(prompt) {
+        if (demoMode) return;
+        if (window.openai?.sendFollowUpMessage) return window.openai.sendFollowUpMessage({ prompt, scrollToBottom: true });
+        host("ui/message", { role: "user", content: [{ type: "text", text: prompt }] });
+      }
+
+      // Tell the model what really happened on the card, so its reply matches the card.
+      function shareOutcome(data, summary) {
+        if (demoMode) return;
+        const text = `LifeOS card result for proposal ${data.proposal_id} (revision ${data.revision_hash}): state is "${data.state}". ${summary}`;
+        host("ui/update-model-context", { content: [{ type: "text", text }] });
+        window.openai?.setWidgetState?.({ proposal_id: data.proposal_id, revision_hash: data.revision_hash, state: data.state, summary });
+      }
+
+      // Only this card receives the ticket (in result _meta, which the model never sees).
+      function remember(meta) {
+        const value = meta?.["lifeos/approval_ticket"] ?? meta?.mcp_tool_result?._meta?.["lifeos/approval_ticket"];
+        if (value) ticket = String(value);
+      }
+
+      function callTool(name, args) {
+        if (window.openai?.callTool) return window.openai.callTool(name, args);
+        const id = `lifeos-${++requestId}`;
+        return new Promise((resolve, reject) => {
+          pending.set(id, { resolve, reject });
+          window.parent.postMessage({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } }, "*");
+          window.setTimeout(() => {
+            if (!pending.has(id)) return;
+            pending.delete(id);
+            reject(new Error("No reply from LifeOS yet, so the result is unknown. Ask ChatGPT for the proposal's current state before trying again."));
+          }, 60_000);
+        });
+      }
+
+      function errorText(result) {
+        const text = (result?.content || []).map((part) => part?.text).filter(Boolean).join(" ");
+        return text || "LifeOS refused the request.";
+      }
+
+      // Returns the proposal LifeOS reports, or throws. Never assumes a state.
+      async function proposalCall(name, args) {
+        const result = await callTool(name, args);
+        if (!result || result.isError) throw new Error(errorText(result));
+        const output = result.structuredContent || result.structured_content || result.data || result;
+        if (!output || output.proposal_id !== current.proposal_id || output.revision_hash !== current.revision_hash || !output.state) {
+          throw new Error("LifeOS sent an unexpected reply. Ask ChatGPT for the proposal's current state.");
+        }
+        return output;
+      }
+
+      function outcomeText(data) {
+        return ({
+          applied: "Done. LifeOS checked each change after writing it.",
+          stale: "Something changed since this was prepared, so nothing was written. Ask ChatGPT to prepare it again.",
+          partial_failure: `Some changes did not finish: ${data.failure_detail || "unknown error"}`,
+          approved: "Approved. Nothing has been written yet.",
+          applying: "LifeOS is still writing these changes.",
+          rejected: "Rejected. Nothing was changed."
+        })[data.state] || "";
+      }
+
+      async function act(kind) {
+        if (busy || !current) return;
+        if (demoMode) { setNote("Demo card. Buttons are disabled.", false); return; }
+        if (!ticket && current.state === "draft") { setNote("This card is out of date. Ask ChatGPT to show the proposal again.", true); return; }
+        const ids = { proposal_id: current.proposal_id, revision_hash: current.revision_hash };
+        busy = true;
+        setNote(kind === "reject" ? "Rejecting…" : "Approving…", false);
+        try {
+          if (kind === "reject") {
+            current = await proposalCall("reject_proposal", { ...ids, approval_ticket: ticket });
+          } else {
+            if (current.state === "draft") current = await proposalCall("approve_proposal", { ...ids, approval_ticket: ticket });
+            if (kind === "apply" && current.state === "approved") {
+              setNote("Approved. Writing and checking each change…", false);
+              current = await proposalCall("apply_approved_proposal", ids);
+            }
+          }
+          note = outcomeText(current);
+          noteIsError = ["stale", "partial_failure"].includes(current.state);
+          shareOutcome(current, note);
+        } catch (error) {
+          note = error?.message || String(error);
+          noteIsError = true;
+          shareOutcome(current, `The last card action failed: ${note}`);
+        } finally {
+          busy = false;
+          render(current);
+        }
+      }
+
+      function setNote(text, isError) {
+        note = text;
+        noteIsError = isError;
+        if (current) render(current);
+      }
+
+      function button(className, label, onClick) {
+        const node = el("button", className, label);
+        node.type = "button";
+        node.disabled = busy;
+        node.addEventListener("click", onClick);
+        return node;
+      }
+
+      function render(data) {
+        if (!data?.proposal_id || !data?.revision_hash) {
+          app.className = "card empty";
+          app.textContent = "This proposal is incomplete. Ask ChatGPT to load it again.";
+          return;
+        }
+        current = data;
+        const list = items(data);
+        const destructive = list.some((item) => item.change.destructive);
+        const [label, tone] = status(data.state);
+        const pill = el("span", "pill", label);
+        pill.dataset.tone = tone;
+        app.className = "card";
+        app.replaceChildren();
+
+        if (list.length > 1) {
+          const summary = el("div", "summary");
+          summary.append(el("h1", "", `${list.length} changes`), pill);
+          app.append(summary);
+        }
+        const rows = el("ul", list.length > 1 ? "rows many" : "rows");
+        if (!list.length) rows.append(el("li", "row empty", "This proposal has no changes."));
+        list.forEach((item) => {
+          const row = el("li", "row");
+          const body = el("div", "body");
+          body.append(el("div", "title", item.title), el("div", "meta", item.meta));
+          if (item.extra) body.append(el("div", "detail", item.extra));
+          if (item.change.destructive) body.append(el("div", "detail warn", "Removes or overwrites existing data"));
+          row.append(icon(iconFor(item)), body);
+          if (list.length === 1) row.append(pill);
+          rows.append(row);
+        });
+        app.append(rows);
+
+        const actions = el("div", "actions");
+        if (data.state === "draft" && list.length) {
+          actions.append(
+            button("primary", busy ? "Working…" : primaryLabel(list, destructive), () => act(destructive ? "approve" : "apply")),
+            button("secondary", "Reject", () => act("reject"))
+          );
+        } else if (data.state === "approved" && !destructive) {
+          actions.append(button("primary", busy ? "Working…" : "Apply approved changes", () => act("apply")));
+        } else if (data.state === "approved") {
+          actions.append(button("primary", "Ask ChatGPT to apply", () => followUp(
+            `Apply the exact approved LifeOS proposal ${data.proposal_id} at revision hash ${data.revision_hash}. It removes or overwrites data, so confirm with me first.`
+          )));
+        } else if (data.state === "stale") {
+          actions.append(button("secondary", "Prepare it again", () => followUp(
+            `LifeOS proposal ${data.proposal_id} is out of date. Re-read the sources and prepare a fresh proposal.`
+          )));
+        }
+        if (actions.childElementCount) app.append(actions);
+
+        const message = note
+          || (data.state === "draft" && destructive ? "Approving locks in this exact version. ChatGPT asks you again before anything is removed." : "")
+          || (data.state !== "draft" ? outcomeText(data) : "");
+        if (message) {
+          const text = el("p", "note", message);
+          if (noteIsError) text.setAttribute("role", "alert");
+          app.append(text);
+        }
+        window.openai?.notifyIntrinsicHeight?.();
+      }
+
+      function applyTheme(theme) {
+        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      }
+
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent) return;
+        const message = event.data;
+        if (!message || message.jsonrpc !== "2.0") return;
+        if (message.method === "ui/notifications/tool-result") {
+          remember(message.params?._meta);
+          if (!busy) render(message.params?.structuredContent);
+        }
+        if (message.method === "ui/notifications/host-context-changed") applyTheme(message.params?.theme);
+        if (message.id && pending.has(message.id)) {
+          const call = pending.get(message.id);
+          pending.delete(message.id);
+          if (message.error) call.reject(new Error(message.error.message || "The tool call failed."));
+          else call.resolve(message.result);
+        }
+      }, { passive: true });
+
+      window.addEventListener("openai:set_globals", (event) => {
+        const globals = event.detail?.globals || {};
+        applyTheme(globals.theme);
+        remember(globals.toolResponseMetadata);
+        if (globals.toolOutput && !busy && !current) render(globals.toolOutput);
+      }, { passive: true });
+
+      applyTheme(window.openai?.theme);
+      remember(window.openai?.toolResponseMetadata);
+      const demo = demos[new URLSearchParams(window.location.search).get("demo")];
+      if (window.openai?.toolOutput) render(window.openai.toolOutput);
+      else if (demo) { demoMode = true; render(demo); }
+    })();
+  </script>
+</body>
+</html>
