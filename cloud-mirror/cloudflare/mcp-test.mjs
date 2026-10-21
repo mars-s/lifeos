@@ -118,7 +118,8 @@ try {
    }
    assert.ok(modelVisible.includes('render_proposal_review'));assert.ok(modelVisible.includes('apply_approved_proposal'));
    const blocked=await sdk.callTool({name:'get_brain_dump',arguments:{capture_id:'synthetic'}});assert.equal(blocked.isError,true);assert.match(blocked._meta['mcp/www_authenticate'][0],/lifeos:local/);
-   const resources=await sdk.listResources();assert.equal(resources.resources.length,5);
+   const resources=await sdk.listResources();assert.equal(resources.resources.length,6);
+   assert.ok(resources.resources.some(r=>r.uri==='ui://lifeos/cloud-proposal-review-v2.html'));assert.ok(resources.resources.some(r=>r.uri==='ui://lifeos/cloud-proposal-review-v1.html'));
    for(const tool of tools.tools.filter(t=>['render_day_plan','render_week_plan','render_brain_dump_canvas'].includes(t.name))){
      const uri=tool._meta.ui.resourceUri;assert.equal(tool._meta['openai/outputTemplate'],uri);
      const resource=(await sdk.readResource({uri})).contents[0];
