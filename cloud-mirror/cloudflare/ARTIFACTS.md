@@ -106,3 +106,26 @@ The initial public-link build was deployed from an isolated copy of `3f862b2` pl
 The existing authenticated LifeOS connection still works and reports the new document capability, but its grant does not yet contain `artifacts:write`. Refresh/reconnect the existing plugin and enable **Share documents** before testing the bot's create/preview/share flow. Private preview mounting inside the actual ChatGPT host remains a separate verification step. The local preview fixture and three widget action tests check private opening, explicit Share/Revoke, stable retries after response loss and rejection of unexpected link hosts.
 
 The private-preview release and uncertain-sharing fix were subsequently deployed as version `daffe23e-6782-47ec-9b96-d087bde38d8e`. All six Worker suites and four widget action tests passed. The latest deployment rechecked the public sample (200), revoked link (404) and expired link (404). The reviewer accepted the consent, merge and uncertain-sharing fixes at their stated scope. Actual ChatGPT private-preview mounting still needs the refreshed owner grant. The subsequent consent-origin fix publishes this sharing source alongside its regression tests; unrelated local task changes remain separate.
+
+## Inline diagrams
+
+Inline SVG diagrams work in HTML fragments and raw SVG blocks in Markdown. Wrap diagrams in `<figure class="card diagram">`. Use `viewBox="0 0 680 HEIGHT"` and `width="100%"`; typical node rectangles are 192-232 units wide, 58-74 high, with `rx="10"`. CSS sets label fonts (14px semibold and 12px subtext), fills and strokes for both themes, so do not set fill colours.
+
+Classes: `dg` SVG, `nd` node box rectangle, `bar` accent bar, `nl` node label, `nt` node subtext, `ln` connector, `ln dash` dashed connector, `hd` arrowhead path, `el` edge label, `lbg` label background.
+
+Allowed SVG elements: svg, g, rect, circle, ellipse, line, polyline, polygon, path, text, tspan, title, desc, defs and marker. Geometry, transforms, accessibility and validated presentation attributes are supported. IDs must match `[A-Za-z][\w-]{0,63}`; marker references and fill/stroke URLs must be local `url(#id)`. The SVG namespace must be `http://www.w3.org/2000/svg`. Hostile content is stripped, including scripts, event handlers, style attributes/elements, foreignObject and its contents, image, use, animation, href/xlink attributes, external URLs and javascript:/data: values.
+
+Mermaid is not supported. Its DOM, text measurement and large runtime dependencies do not suit a Worker, and document pages allow no client scripts. Mermaid fences remain readable code blocks. Supply inline SVG instead.
+
+```html
+<figure class="card diagram"><svg class="dg" viewBox="0 0 680 106" width="100%" role="img" aria-label="Capture to review to save" xmlns="http://www.w3.org/2000/svg">
+<path class="ln" d="M204 65 L238 65"/><path class="hd" d="M232 60 L238 65 L232 70"/>
+<path class="ln dash" d="M434 65 L468 65"/><path class="hd" d="M462 60 L468 65 L462 70"/>
+<rect class="nd" x="12" y="36" width="192" height="58" rx="10"/><rect class="bar" x="22" y="46" width="3" height="38" rx="1.5"/><text class="nl" x="36" y="61">Capture</text><text class="nt" x="36" y="80">Collect notes</text>
+<rect class="nd" x="242" y="36" width="192" height="58" rx="10"/><rect class="bar" x="252" y="46" width="3" height="38" rx="1.5"/><text class="nl" x="266" y="61">Review</text><text class="nt" x="266" y="80">Check and tag</text>
+<rect class="nd" x="472" y="36" width="192" height="58" rx="10"/><rect class="bar" x="482" y="46" width="3" height="38" rx="1.5"/><text class="nl" x="496" y="61">Save</text><text class="nt" x="496" y="80">Immutable snapshot</text>
+<rect class="lbg" x="428" y="12" width="48" height="16" rx="3"/><text class="el" x="452" y="24" text-anchor="middle">approve</text>
+</svg></figure>
+```
+
+For a local light/dark comparison against the supplied reference, run `node artifact-diagram-preview.mjs /workspace/diagram-verify /workspace/lifeos-diagram-ref/example-ontology.html` from `cloud-mirror/cloudflare`. It renders the first reference diagram through `artifactMarkup` and the real stylesheet, then captures matching regions with headless Chrome and builds side-by-side images using Pillow. The output directory must be writable.

@@ -6,22 +6,54 @@ type Document = {title:string;summary:string;format:'markdown'|'html';body:strin
 const escape = (value:string)=>value.replace(/[&<>"']/g,character=>`&#${character.charCodeAt(0)};`);
 const allowedClasses = ['section','subsection','stack','bullets','numbered','checks','compact','callout','info','success','warning','danger','neutral','callout-body','callout-title','callout-text','table-wrap','data','dense','zebra','no-grid','num','label','pill','status','outline','lg','dot','text-muted','text-sm','text-small','code-block','tok-k','tok-s','tok-c','tok-n','link-list','link-card','link-text','link-title','link-sub','accordion','panel'];
 
+const svgTags = ['svg','g','rect','circle','ellipse','line','polyline','polygon','path','text','tspan','title','desc','defs','marker'];
+// htmlparser2 keeps camelCase for known SVG tags (foreignObject), so list both spellings.
+const svgDropped = ['foreignObject','foreignobject','image','use','animate','animateMotion','animatemotion','animateTransform','animatetransform','set','feImage','feimage'];
+const svgClasses = ['dg','nd','bar','nl','nt','ln','dash','hd','el','lbg'];
+const svgCommon = 'class role id transform fill stroke stroke-width stroke-dasharray stroke-linecap stroke-linejoin opacity fill-opacity stroke-opacity aria-label aria-hidden'.split(' ');
+const svgGeometry:Record<string,string> = {svg:'x y width height viewbox xmlns preserveaspectratio',g:'',rect:'x y width height rx ry',circle:'cx cy r',ellipse:'cx cy rx ry',line:'x1 y1 x2 y2 marker-end marker-start marker-mid',polyline:'points marker-end marker-start marker-mid',polygon:'points marker-end marker-start marker-mid',path:'d marker-end marker-start marker-mid',text:'x y dx dy text-anchor dominant-baseline font-size font-weight',tspan:'x y dx dy text-anchor dominant-baseline font-size font-weight',title:'',desc:'',defs:'',marker:'refx refy markerwidth markerheight markerunits orient viewbox preserveaspectratio'};
+const svgAttributes = Object.fromEntries(svgTags.map(tag=>[tag,[...svgCommon,...svgGeometry[tag].split(' ').filter(Boolean)]]));
+const svgCase:Record<string,string> = {viewbox:'viewBox',refx:'refX',refy:'refY',markerwidth:'markerWidth',markerheight:'markerHeight',markerunits:'markerUnits',preserveaspectratio:'preserveAspectRatio'};
+const localReference = /^url\(#[A-Za-z][\w-]{0,63}\)$/;
+const svgColours = new Set(('aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow yellowgreen transparent none currentcolor').split(' '));
+function safeSvg(tagName:string, attributes:Record<string,string>) {
+  const attribs:Record<string,string> = {};
+  for(const [name,value] of Object.entries(attributes)) {
+    if(!svgAttributes[tagName].includes(name) || /javascript\s*:|data\s*:/i.test(value)) continue;
+    if(name==='xmlns' && value!=='http://www.w3.org/2000/svg') continue;
+    if(name==='id' && !/^[A-Za-z][\w-]{0,63}$/.test(value)) continue;
+    if(name.startsWith('marker-') && !localReference.test(value)) continue;
+    if((name==='fill' || name==='stroke') && !svgColours.has(value.toLowerCase()) && !/^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i.test(value) && !localReference.test(value)) continue;
+    if(/url\s*\(/i.test(value) && (!['fill','stroke','marker-end','marker-start','marker-mid'].includes(name) || !localReference.test(value))) continue;
+    attribs[name] = name==='class'?value.split(/\s+/).filter(name=>svgClasses.includes(name)).join(' '):value;
+  }
+  return {tagName,attribs};
+}
+
 export function renderDocument(document:Document) {
   const source = document.format==='markdown'?marked.parse(document.body,{async:false,gfm:true}):document.body;
+  let svgDepth = 0;
   let html = sanitizeHtml(source,{
-    allowedTags:['h1','h2','h3','h4','p','div','section','span','strong','b','em','i','s','del','br','hr','ul','ol','li','blockquote','pre','code','kbd','mark','abbr','a','table','thead','tbody','tfoot','tr','th','td','caption','details','summary'],
-    allowedAttributes:{'*':['class'],'a':['href','title','rel'],'abbr':['title'],'th':['colspan','rowspan','scope'],'td':['colspan','rowspan'],'details':['open'],'ol':['start']},
-    allowedClasses:{'*':allowedClasses,code:[/^language-[a-z0-9-]+$/]},
+    onOpenTag:tag=>{if(tag==='svg')svgDepth++;},
+    onCloseTag:tag=>{if(tag==='svg')svgDepth--;},
+    allowedTags:['h1','h2','h3','h4','p','div','section','span','strong','b','em','i','s','del','br','hr','ul','ol','li','blockquote','pre','code','kbd','mark','abbr','a','table','thead','tbody','tfoot','tr','th','td','caption','details','summary','figure','figcaption',...svgTags,...svgDropped],
+    // Active SVG elements are admitted only so exclusiveFilter can drop them with everything inside.
+    exclusiveFilter:frame=>svgDropped.includes(frame.tag),
+    allowedAttributes:{...Object.fromEntries(svgTags.map(tag=>[tag,svgAttributes[tag]])),'*':['class'],'a':['href','title','rel'],'abbr':['title'],'th':['colspan','rowspan','scope'],'td':['colspan','rowspan'],'details':['open'],'ol':['start']},
+    allowedClasses:{...Object.fromEntries(svgTags.map(tag=>[tag,svgClasses])),'*':[...allowedClasses,'diagram','card','b','fig'],code:[/^language-[a-z0-9-]+$/]},
     allowedSchemes:['https','http','mailto'],allowProtocolRelative:false,
-    nonTextTags:['style','script','textarea','option','noscript','iframe','object','template','svg','math'],
+    nonTextTags:['style','script','textarea','option','noscript','iframe','object','template','math','foreignobject','image','use','animate','set'],
     transformTags:{
+      ...Object.fromEntries(svgTags.map(tag=>[tag,safeSvg])),
       h1:'h2',
-      a:(_tag,attributes)=>({tagName:'a',attribs:{...attributes,rel:'noreferrer noopener'}}),
+      a:(_tag,attributes)=>({tagName:'a',attribs:svgDepth?{}:{...attributes,rel:'noreferrer noopener'}}),
       table:()=>({tagName:'table',attribs:{class:'data'}}),
       pre:()=>({tagName:'pre',attribs:{class:'code-block'}}),
     },
     enforceHtmlBoundary:false,
   });
+  // Restore SVG spelling after htmlparser2's HTML-mode attribute normalisation.
+  html = html.replace(/<(?:svg|g|rect|circle|ellipse|line|polyline|polygon|path|text|tspan|title|desc|defs|marker)\b[^>]*>/g,tag=>tag.replace(/\s(viewbox|refx|refy|markerwidth|markerheight|markerunits|preserveaspectratio)=/g,(_match,name:string)=>` ${svgCase[name]}=`));
   const headings:{id:string;text:string;depth:number}[] = [];
   html = html.replace(/<(h[23])(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g,(_whole,tag:string,content:string)=>{
     const id = `section-${headings.length+1}`;

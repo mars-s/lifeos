@@ -312,3 +312,26 @@ html{scrollbar-color:var(--border-strong) var(--bg)}
   .accordion details > .panel{display:block}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-shadow:none!important}
 }
+
+/* diagram card */
+figure{margin:0}
+.diagram.card{border:1px solid var(--border);border-radius:16px;padding:20px;background:var(--bg)}
+.dg{display:block;width:100%;height:auto;font-family:var(--font-sans)}
+.dg .nd{fill:var(--bg);stroke:var(--border);stroke-width:1}
+.dg .bar{fill:var(--diagram-bar)}
+.dg .nl{fill:var(--text-1);font-size:14px;font-weight:600}
+.dg .nt{fill:var(--text-2);font-size:12px}
+.dg .ln{fill:none;stroke:var(--text-3);stroke-width:1.5}
+.dg .ln.dash{stroke-dasharray:5 4}
+.dg .hd{fill:none;stroke:var(--text-3);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.dg .el{fill:var(--text-2);font-size:12px}
+.dg .lbg{fill:var(--bg)}
+@media (max-width:640px){
+  .diagram.card{padding:14px}
+  .diagram{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .diagram .dg{min-width:600px;max-width:none}
+}
+@media print{
+  .diagram{break-inside:avoid;max-width:150mm;margin-left:auto;margin-right:auto;overflow:visible}
+  .diagram .dg{min-width:0;width:100%;height:auto}
+}
