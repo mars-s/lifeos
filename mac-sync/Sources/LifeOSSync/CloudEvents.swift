@@ -35,6 +35,7 @@ final class CloudEvents {
                 var request = URLRequest(url: URL(string: "wss://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev/api/native/events")!)
                 request.setValue(try Credential.read(), forHTTPHeaderField: "X-LifeOS-Agent-Key")
                 request.setValue("3", forHTTPHeaderField: "X-LifeOS-Protocol")
+                request.setValue("1", forHTTPHeaderField: "X-LifeOS-Things-Ops")
                 let connection = session.webSocketTask(with: request)
                 socket = connection; connection.resume(); status = "Connecting"
                 try await connection.send(.string(String(decoding: encoded(["version": 3, "type": "local_tools", "enabled": localToolsEnabled?() ?? false]), as: UTF8.self)))

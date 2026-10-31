@@ -70,6 +70,7 @@ final class HTTPSCloud: CloudTransport {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("LifeOSNativeSync/2.0", forHTTPHeaderField: "User-Agent")
         request.setValue("3", forHTTPHeaderField: "X-LifeOS-Protocol")
+        request.setValue("1", forHTTPHeaderField: "X-LifeOS-Things-Ops")
         if let body { request.httpBody = try encoded(body) }
         // Stream responses and abort above the known queue/snapshot response budget.
         let (bytes, response) = try await session.bytes(for: request)
@@ -130,6 +131,15 @@ final class PublicThings: ThingsAutomation {
         return try decoded(output)
     }
     func apply(_ payload: JSON) async throws -> JSON {
+        if payload["version"] as? Int == 4 {
+            if !NSWorkspace.shared.runningApplications.contains(where: { $0.bundleURL?.path == appPath }) {
+                let configuration = NSWorkspace.OpenConfiguration()
+                configuration.activates = false; configuration.hides = true
+                _ = try await NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: appPath), configuration: configuration)
+            }
+            return try decoded(await AutomationProcess.run(["-l", "JavaScript", resource("things-ops", "js")],
+                input: encoded(["payload": payload, "app_path": appPath, "allow_write": true])))
+        }
         if payload["conflict_policy"] as? String == "smart_merge_v1", payload["field"] as? String == "in_trash_list" {
             let inspection = try decoded(await AutomationProcess.run(["-l", "JavaScript", resource("native-write", "js")], input: encoded(["payload": payload.merging(["prepare_only": true]) { _, new in new }, "app_path": appPath, "allow_write": true])))
             if payload["prepare_only"] as? Bool == true || payload["recovering"] as? Bool == true { return inspection }

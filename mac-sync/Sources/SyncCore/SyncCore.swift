@@ -47,6 +47,8 @@ public struct Intent: Codable, Equatable, Sendable {
     public var observedBefore: Data? = nil
     public var verifiedAfter: Data? = nil
     public var mergeDecision: Data? = nil
+    public var resolvedRefs: Data? = nil
+    public var createdID: String? = nil
 }
 public struct JournalState: Codable, Sendable {
     public var sequence: Int = 0
@@ -229,7 +231,8 @@ public struct JournalState: Codable, Sendable {
         if let value = intent.verifiedAfter { body["verified_after"] = try decoded(value) }
         if let value = intent.mergeDecision { body["merge_decision"] = try decoded(value) }
         let response = try await cloud.request("ack", body: body)
-        let confirmation = try (response["receipt_confirmation"] as? JSON).map { try encoded($0) }
+        let v4 = try decoded(intent.payload)["version"] as? Int == 4
+        let confirmation = v4 ? nil : try (response["receipt_confirmation"] as? JSON).map { try encoded($0) }
         let uncertain = try decoded(data)["state"] as? String == "uncertain"
         try journal.update {
             if uncertain { $0.uncertainOperationIDs.insert(intent.id) }
@@ -241,6 +244,7 @@ public struct JournalState: Codable, Sendable {
         var intent = saved
         if intent.result != nil { try await acknowledge(intent); return }
         let payload = try decoded(intent.payload)
+        if payload["version"] as? Int == 4 { try await executeThingsOperation(intent); return }
         let interrupted = intent.phase == "writing"
         let recoverable = payload["conflict_policy"] as? String == "cloud_wins" && payload["version"] as? Int == 2
         let smart = payload["conflict_policy"] as? String == "smart_merge_v1" && payload["version"] as? Int == 3
@@ -346,6 +350,96 @@ public struct JournalState: Codable, Sendable {
         try journal.update { $0.intents[intent.id] = intent; $0.localGeneration += 1; if (recoverable || smart) && ["applied", "satisfied"].contains(status) { $0.confirmationNeeded = true } }
         try await acknowledge(intent)
     }
+    // V4 has no receipt confirmation token. A subsequent snapshot above this
+    // operation's sequence fence confirms its effect, including after ack loss.
+    private func executeThingsOperation(_ saved: Intent) async throws {
+        var intent = saved
+        let original = try ThingsOperation(decoded(intent.payload))
+        if intent.phase == "prepared" {
+            let claimed: JSON
+            do { claimed = try await cloud.request("claim", body: ["id": intent.id, "claim": intent.claim]) }
+            catch SyncError.http(409) {
+                let remote = try await cloud.request("operation", body: ["id": intent.id])
+                if let state = remote["state"] as? String, ["superseded", "skipped", "failed"].contains(state) {
+                    try journal.update { $0.intents.removeValue(forKey: intent.id) }; return
+                }
+                throw SyncError.http(409)
+            }
+            guard claimed["state"] as? String == "executing", claimed["claim"] as? String == intent.claim,
+                  let payload = claimed["payload"] as? JSON, try encoded(payload) == intent.payload else { throw SyncError.invalid }
+            intent.resolvedRefs = try encoded(claimed["resolved_refs"] as? JSON ?? [:])
+            intent.phase = "claimed"
+            try journal.update { $0.intents[intent.id] = intent }
+        }
+        guard let operation = try original.resolving(intent.resolvedRefs.map { try decoded($0) } ?? [:]) else { return }
+        guard !journal.state.paused else { return }
+        let recovering = intent.phase == "writing"
+        guard recovering || intent.phase == "claimed" else { throw SyncError.invalid }
+        if intent.appliedAfterSequence == nil { intent.appliedAfterSequence = journal.state.sequence }
+        func automation(_ action: String) async throws -> JSON {
+            var request = operation.payload; request["v4_action"] = action
+            if let id = intent.createdID { request["created_id"] = id }
+            if action == "write", let before = intent.observedBefore { request["expected_before"] = try decoded(before) }
+            return try await things.apply(request)
+        }
+        var result: JSON
+        if recovering && operation.op == "create" && intent.createdID == nil {
+            result = ["state": "uncertain", "reason": "interrupted_write"]
+        } else {
+            do {
+                let inspection = try await automation("read")
+                if let reason = inspection["reason"] as? String {
+                    result = ["state": "failed", "reason": reason]
+                } else {
+                    let readFields = inspection["fields"] as? JSON ?? [:]
+                    let auditKeys = Set(operation.verify + Array((operation.payload["base"] as? JSON ?? [:]).keys))
+                    let before = readFields.filter { auditKeys.contains($0.key) }
+                    if intent.observedBefore == nil { intent.observedBefore = try encoded(before) }
+                    if operation.payload["conflict_policy"] as? String == "smart_merge_v1", intent.mergeDecision == nil {
+                        intent.mergeDecision = try encoded(operation.decision(before, interrupted: recovering))
+                    }
+                    if recovering {
+                        let after = operation.verified(before)
+                        intent.verifiedAfter = try encoded(after)
+                        result = operation.matches(after) ? ["state": "satisfied"] : ["state": "uncertain", "reason": operation.op == "trash" ? "interrupted_delete" : "interrupted_write"]
+                    } else if operation.payload["conflict_policy"] as? String == "things_wins" && operation.conflicts(before) {
+                        result = ["state": "skipped", "reason": "things_changed"]
+                    } else if operation.op != "create" && operation.matches(before) {
+                        intent.verifiedAfter = try encoded(operation.verified(before)); result = ["state": "satisfied"]
+                    } else {
+                        // Save the before image, policy decision and fence before any
+                        // write. A crash from here must never repeat a create.
+                        intent.phase = "writing"
+                        try journal.update { $0.intents[intent.id] = intent }
+                        let written = try await automation("write")
+                        if let id = written["created_id"] as? String {
+                            guard operation.op == "create", ThingsOperation.realID(id) else { throw SyncError.invalid }
+                            intent.createdID = id
+                            // Separate durable checkpoint BEFORE read-back or ack.
+                            try journal.update { $0.intents[intent.id] = intent }
+                        }
+                        if operation.op == "create", intent.createdID != nil {
+                            _ = try await automation("finish_create")
+                        }
+                        if let reason = written["reason"] as? String { result = ["state": written["state"] as? String ?? "failed", "reason": reason] }
+                        else {
+                            let readback = try await automation("read")
+                            let after = operation.verified(readback["fields"] as? JSON ?? [:])
+                            intent.verifiedAfter = try encoded(after)
+                            result = operation.matches(after) ? ["state": "applied"] : ["state": "uncertain", "reason": "verification_failed"]
+                        }
+                    }
+                }
+            } catch SyncError.storage { throw SyncError.storage }
+            catch { result = ["state": "uncertain", "reason": intent.phase == "writing" ? "verification_failed" : "automation_denied"] }
+        }
+        if ["applied", "satisfied"].contains(result["state"] as? String ?? ""), operation.op == "create" {
+            guard let id = intent.createdID else { throw SyncError.invalid }; result["created_id"] = id
+        }
+        intent.result = try encoded(result); intent.phase = "receipt"
+        try journal.update { $0.intents[intent.id] = intent; $0.localGeneration += 1; $0.confirmationNeeded = true }
+        try await acknowledge(intent)
+    }
     private func upload() async throws {
         if journal.state.pendingUpload == nil {
             message = "Reading Things inventory"
@@ -405,9 +499,11 @@ public struct JournalState: Codable, Sendable {
             for op in operations {
                 if journal.state.paused { break }
                 guard let id = op["id"] as? String, let payload = op["payload"] as? JSON else { throw SyncError.invalid }
+                if payload["version"] as? Int == 4, try ThingsOperation(payload).resolving(op["resolved_refs"] as? JSON ?? [:]) == nil { blocked = true; continue }
                 if !visited.insert(id).inserted { blocked = true; continue }
                 if op["state"] as? String == "executing" { blocked = true; continue }
-                let intent = Intent(id: id, claim: UUID().uuidString, payload: try encoded(payload), phase: "prepared", result: nil)
+                var intent = Intent(id: id, claim: UUID().uuidString, payload: try encoded(payload), phase: "prepared", result: nil)
+                if payload["version"] as? Int == 4 { intent.resolvedRefs = try encoded(op["resolved_refs"] as? JSON ?? [:]) }
                 try journal.update { $0.intents[id] = intent }
                 try await execute(intent)
                 progressed = true
