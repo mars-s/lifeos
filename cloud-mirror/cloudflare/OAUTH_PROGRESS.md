@@ -61,3 +61,39 @@ The owner completed the repaired consent and returned to ChatGPT. An authenticat
 A fresh disposable task was confirmed in the mirror, then the native agent was stopped. `queue_things_trash` through this authenticated MCP connection returned accepted, queued, recoverable and not applied. A read while the agent remained stopped showed confirmed Trash membership false and effective pending membership true. After restarting the native agent, its immutable receipt reported applied and a later confirmed MCP snapshot showed Trash membership true. Sequence 46, last sync `2026-10-01T11:39:40Z` (9:39:40 pm Melbourne), 62 records. Three disposable verification tasks remain in recoverable Trash; the original 59 records were not modified by these tests. Native status is Synced.
 
 This verifies the connected MCP write grant and cloud queue through native Things write-back and confirmed cloud read-back. Physical sleep/wake, Things iPhone delivery and dot's conversational selection of these tools were not independently tested in this checkpoint.
+
+## Sign-in hardening, consent redesign and client-neutral MCP (31 October 2026)
+
+**The failure.** One real sign-in returned `{stage:'callback_session', reason:'browser_session_missing'}` and an immediate retry worked. That reason maps the library message "This authorization was not started in this browser; start again" from `finishUpstream()`.
+
+**What the library does** (`@cloudflare/workers-oauth-provider` 1.2.1, `dist/oauth-provider.js`, consent region):
+
+- `beginConsent()` and `beginUpstream()` each create a random 256-bit handle and store the encrypted request in KV under its SHA-256 for 600 seconds. Each sets its own binding cookie, `__Host-oauth-consent-<first 16 hex of the hash>` or `__Host-oauth-upstream-<...>`, holding the full hash, with `Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600`.
+- `approveConsent()`, `denyConsent()` and `finishUpstream()` look for that cookie first, then compare it with the hash, then read KV. A missing cookie reports `browser_session_missing` before KV is consulted, so an expired cookie reads as "not started in this browser", not as "expired".
+- The first successful `finishUpstream()` deletes the KV record and clears the cookie (`Max-Age=0`). Any later load of the same callback URL in that browser therefore reports `browser_session_missing`.
+- The upstream `state` is the handle, so the cookie is bound to one transaction.
+
+**Ruled out.** `SameSite=Lax` cookies are sent on a top-level GET navigation from github.com, which is how GitHub returns to `/callback`. `Path=/` covers `/callback`. Cookie names are per transaction, so a second or repeated `/authorize` from the client, or two tabs, cannot overwrite the first. A new test completes two interleaved sign-ins in one browser.
+
+**Likely causes, most likely first.** There are no production logs for the failed attempt, so these are ranked by fit, not proven:
+
+1. The callback URL loaded twice. The first load consumed the state and cleared the cookie; the second load is the one the browser showed. Ways this happens: a prefetch or prerender, or a link scanner, followed the "Continue to GitHub" link through GitHub's redirect while GitHub was already signed in; a double tap on that manual link; a reload or back navigation onto the callback.
+2. More than 10 minutes passed between Allow and the return from GitHub, so the browser dropped the cookie. The manual interstitial added a wait, and a GitHub sign-in with two-factor adds more.
+3. Sign-in changed cookie jar part way through: an in-app browser handing off to the system browser, a link router opening github.com in another browser or profile, or a private window.
+
+An immediate successful retry fits causes 1 and 2 best: the second attempt was quick and GitHub was already signed in.
+
+**Changes** (commit `1d2f24b`):
+
+- GET `/callback` and GET `/authorize` refuse loads marked `Sec-Purpose`, `Purpose` or `X-Moz` prefetch or prerender with a 503 and no state change. Browsers discard a failed prefetch and make the real request on navigation. Test: four prefetch variants leave the transaction intact, make no GitHub call, and the real callback then succeeds. With the guard removed, that test fails.
+- The post-consent page still ends the form POST with a 200, because Chromium applies `form-action` to every hop of a form's redirect chain, but it now continues to GitHub by itself with a meta refresh. That is a plain navigation, not a form submission. The link stays as the fallback. This removes the idle wait and the second tap that could race two GitHub round trips.
+- A browser request (Accept `text/html`) that still fails gets a self-contained HTML page with a "Start again" section and the fixed stage and reason codes. It never echoes handles, state, codes, cookies or URLs. API callers keep the existing JSON.
+- Unchanged: browser binding, single use, S256 PKCE, same-origin consent POST, approved-scope limits, the owner GitHub ID check and the empty upstream scope.
+
+**Not possible within the library.** The 600-second lifetime is a library constant. Recovering a consumed or cookie-less transaction would mean finishing a sign-in in a browser that cannot prove it started it, which defeats the binding, so it was not attempted.
+
+**Consent redesign** (commit `ce169a0`). The consent, continue and error pages live in `consent-page.ts`. They use system fonts and one `<style>` element allowed by a per-response nonce (`style-src 'nonce-...'`, no `unsafe-inline`), with `default-src 'none'`, `base-uri 'none'`, `frame-ancestors 'none'` and the existing `form-action` lists. They support light and dark modes, are phone first, use labelled checkboxes with descriptions, 44px targets, visible focus, reduced motion and `lang="en-AU"`. Form field names, values and hidden inputs are unchanged.
+
+**Client-neutral MCP** (commit `62303c9`). A server-side MCP client that sends no `Origin` header is served on its bearer token alone, with the owner and scope checks unchanged; a test drives initialize, tools/list and a read that way. Browser origins are still checked. `LIFEOS_MCP_ALLOWED_ORIGINS` (space or comma separated https origins) replaces the built-in list, which defaults to `https://chatgpt.com https://chat.openai.com`. The Worker's own origin is always allowed; wildcards, `http:` and malformed entries are ignored. The server instructions and tool descriptions already named no client. The `openai/*` `_meta` keys stay beside the standard `ui` keys, for compatibility with ChatGPT's Apps SDK.
+
+**Verification.** `npm run test:oauth` (new, 12 tests), `test:mcp`, `test:native`, `test:events`, `test:smart`, `npm test` and `npm run typecheck` pass locally on synthetic fixtures. Not deployed. Real-browser prefetch headers, meta refresh in each client's in-app browser, and a production sign-in with the new pages remain unverified.
