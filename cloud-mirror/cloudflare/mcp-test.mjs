@@ -147,6 +147,17 @@ try {
    let cursor=0,ids=[];do {const page=await sdk.callTool({name:'read_things_mirror',arguments:{cursor}});assert.equal(page.isError,undefined);const state=JSON.parse(page.content[0].text);ids.push(...state.confirmed.map(i=>i.id));assert.equal(state.total_items,205);cursor=state.next_cursor;}while(cursor!==null);assert.equal(ids.length,205);assert.ok(!ids.includes('private-other-owner'));
    assert.equal((await sdk.callTool({name:'approve',arguments:{}})).isError,true);
    await sdk.close();
+   // A server-side client (no Origin header at all) works with the bearer token alone.
+   const rpc=(id,method,params={},extra={})=>mf.dispatchFetch(resource,{method:'POST',headers:{Authorization:'Bearer '+access.access_token,'Content-Type':'application/json',Accept:'application/json, text/event-stream',...extra},body:JSON.stringify({jsonrpc:'2.0',id,method,params})});
+   const init=await rpc(1,'initialize',{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'Server-side fixture',version:'1.0.0'}});assert.equal(init.status,200);
+   const initBody=await init.json();assert.equal(initBody.result.serverInfo.name,'LifeOS');assert.doesNotMatch(initBody.result.instructions,/ChatGPT|OpenAI/i);
+   const listed=await rpc(2,'tools/list');assert.equal(listed.status,200);const listedTools=(await listed.json()).result.tools;assert.ok(listedTools.some(t=>t.name==='read_things_mirror'));
+   for(const t of listedTools)assert.doesNotMatch(t.description,/ChatGPT|OpenAI/i);
+   const read=await rpc(3,'tools/call',{name:'read_things_mirror',arguments:{cursor:0}});assert.equal(read.status,200);assert.equal(JSON.parse((await read.json()).result.content[0].text).total_items,205);
+   // Browser origins: the Worker itself and the configured defaults pass; others are refused.
+   assert.equal((await rpc(4,'tools/list',{},{Origin:'https://chatgpt.com'})).status,200);
+   assert.equal((await rpc(5,'tools/list',{},{Origin:origin})).status,200);
+   for(const denied of ['https://claude.ai','null','http://chatgpt.com','https://chatgpt.com.attacker.invalid'])assert.equal((await rpc(6,'tools/list',{},{Origin:denied})).status,403,denied);
    assert.equal((await request('/mcp',{headers:{Authorization:'Bearer '+access.access_token,Origin:'https://attacker.invalid'}})).status,403);
    const refresh=await request('/oauth/token',{method:'POST',body:new URLSearchParams({grant_type:'refresh_token',client_id:clientId,refresh_token:access.refresh_token,resource})});assert.equal(refresh.status,200);assert.ok((await refresh.json()).access_token);
    assert.equal((await request('/oauth/token',{method:'POST',body:new URLSearchParams({grant_type:'refresh_token',client_id:clientId,refresh_token:access.refresh_token,resource:'https://attacker.invalid/mcp'})})).status,400);
