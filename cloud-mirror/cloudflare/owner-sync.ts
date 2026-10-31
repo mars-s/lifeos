@@ -84,7 +84,7 @@ export class OwnerSync extends DurableObject<Env> {
   private policy():Policy{return this.env.LIFEOS_SMART_SYNC_ENABLED==='true'?'smart_merge_v1':this.env.LIFEOS_CLOUD_WINS_ENABLED==='true'?'cloud_wins':'things_wins';}
   // Version 4 Things operations: one all-or-nothing request, each operation keeping its own ID.
   async enqueueThings(operations:unknown[]){
-    const saved=await this.mutate('things',{operations}) as NativeOperation[];
+    const saved=await this.mutate('things',{operations}) as Array<{id:string}>;
     return this.queue().getMany(saved.map(o=>o.id));
   }
   async mutate(action:Mutation,input:Record<string,unknown>):Promise<unknown>{
@@ -107,7 +107,7 @@ export class OwnerSync extends DurableObject<Env> {
         try{
           if(head.policy==='claim')result=await this.queue().claim(input.id,input.claim);
           else if(head.policy==='ack')result=await this.queue().ack(input.id,input.claim,input.result,input.applied_after_sequence!==undefined?{applied_after_sequence:input.applied_after_sequence,...input.observed_before!==undefined?{observed_before:input.observed_before}:{},...input.verified_after!==undefined?{verified_after:input.verified_after}:{},...input.merge_decision!==undefined?{merge_decision:input.merge_decision}:{}}:undefined);
-          else if(head.policy==='things')result=await this.queue().enqueueThings(input.operations,this.policy());
+          else if(head.policy==='things')result=(await this.queue().enqueueThings(input.operations,this.policy())).map(o=>({id:o.id}));
           else result=await new MirrorStore(new BulkD1(this.env.DB),this.env.LIFEOS_OWNER_ID).commit(input.sequence);
         }catch(error){if(!(error instanceof DemoError)){await this.ctx.storage.setAlarm(Date.now()+5000);return;}result={mutation_rejected:true,...head.policy==='things'?{reason:error.message.slice(0,300)}:{}};}
         const revision=await this.queue().revision(),feed=await this.feed().revision();
