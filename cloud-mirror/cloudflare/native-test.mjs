@@ -18,6 +18,7 @@ const hash=s=>createHash('sha256').update(s).digest('hex');
 const allLocalNames=JSON.parse(await readFile('local-tool-contracts.json','utf8')).map(tool=>tool.name);
 // Note tools are listed only for grants with the notes scopes.
 const isNoteTool=name=>/^notes_|^promote_notes_/.test(name);
+const thingsTools=['queue_things_create','queue_things_update','queue_things_move','queue_things_status','queue_things_restore','queue_things_batch','read_things_operations'];
 const localNames=allLocalNames.filter(name=>!isNoteTool(name)),noteNames=allLocalNames.filter(isNoteTool);
 const mf=new Miniflare({...convertV4MiniflareOptions({modules:true,script:await readFile('.test-native.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],durableObjects:{OWNER_SYNC:{className:'OwnerSync',useSQLite:true}},kvNamespaces:['OAUTH_KV'],d1Databases:{DB:'native'},bindings:{LIFEOS_OWNER_ID:'fixture-owner',LIFEOS_ADAPTER_ID:'fixture-mac',LIFEOS_GITHUB_OWNER_ID:'42',GITHUB_CLIENT_ID:'SYNTHETIC-client',GITHUB_CLIENT_SECRET:'SYNTHETIC-secret',LIFEOS_AGENT_KEY_SHA256:hash(agent),LIFEOS_SYNC_KEY_SHA256:hash(sync),LIFEOS_WRITES_ENABLED:'true'},outboundService:async req=>new URL(req.url).hostname==='api.github.com'?Response.json({id:42}):Response.json({access_token:'SYNTHETIC-upstream',token_type:'bearer',scope:''})}),resourcePersistencePath:dir});
 async function native(path,body,key=agent,extra={}) {return mf.dispatchFetch(origin+'/api/native/'+path,{method:body?'POST':'GET',headers:{'X-LifeOS-Agent-Key':key,'Content-Type':'application/json',...extra},body:body?JSON.stringify(body):undefined});}
@@ -174,13 +175,13 @@ try {
    });
    await t.test('read grants remain read-only after activation and cannot expand on refresh',async()=>{
     const tools=(await read.sdk.listTools()).tools;
-    assert.deepEqual(tools.map(t=>t.name),['render_day_plan','render_week_plan','render_brain_dump_canvas',...localNames,'get_lifeos_capabilities','read_things_mirror','queue_things_trash','queue_things_edit']);
+    assert.deepEqual(tools.map(t=>t.name),['render_day_plan','render_week_plan','render_brain_dump_canvas',...localNames,'get_lifeos_capabilities','read_things_mirror','queue_things_trash','queue_things_edit',...thingsTools]);
     assert.deepEqual(tools.find(t=>t.name==='queue_things_edit')._meta.securitySchemes,[{type:'oauth2',scopes:['things:read','things:write']}]);
     assert.equal((await read.sdk.callTool({name:'queue_things_edit',arguments:{}})).isError,true);
     const refresh=await read.req('/oauth/token',new URLSearchParams({grant_type:'refresh_token',client_id:read.client,refresh_token:read.access.refresh_token,scope:'things:read things:write offline_access',resource}));
     if(refresh.status===200)assert.ok(!(await refresh.json()).scope.split(' ').includes('things:write'));
     else assert.equal(refresh.status,400);
-    assert.deepEqual((await write.sdk.listTools()).tools.map(t=>t.name),['render_day_plan','render_week_plan','render_brain_dump_canvas',...localNames,'get_lifeos_capabilities','read_things_mirror','queue_things_trash','queue_things_edit']);
+    assert.deepEqual((await write.sdk.listTools()).tools.map(t=>t.name),['render_day_plan','render_week_plan','render_brain_dump_canvas',...localNames,'get_lifeos_capabilities','read_things_mirror','queue_things_trash','queue_things_edit',...thingsTools]);
    });
    const edit=async(operation_id,value,field='title',base_revision=1)=>write.sdk.callTool({name:'queue_things_edit',arguments:{operation_id,target:'task',field,value,base_revision}});
    await t.test('durable retry, latest queued title, pending overlay and ID immutability',async()=>{

@@ -183,6 +183,35 @@ export class NativeQueue {
   async pending(thingsOps=false){return this.withRefs(boundedOperations((await this.stmt(`SELECT * FROM native_operations WHERE owner=? AND ${thingsOps?depsReady('native_operations'):"COALESCE(json_extract(payload,'$.version'),0)<>4"} AND (state='executing' OR (state='queued' AND NOT EXISTS(SELECT 1 FROM native_operations other WHERE other.owner=native_operations.owner AND other.state='executing' AND json_extract(other.payload,'$.target')=json_extract(native_operations.payload,'$.target')))) ORDER BY CASE state WHEN 'queued' THEN 0 ELSE 1 END,ordinal LIMIT 20`,this.owner).all<Row>()).results.map(decode)));}
   // Version 4 operations whose effect is not yet confirmed by a later Things snapshot.
   async thingsOverlays(){return this.withRefs((await this.stmt(`SELECT o.* FROM native_operations o LEFT JOIN native_receipt_audit a ON a.owner=o.owner AND a.operation_id=o.id WHERE o.owner=? AND json_extract(o.payload,'$.version')=4 AND (o.state IN ('queued','executing') OR ${unconfirmed('o','a')}) ORDER BY o.ordinal LIMIT 500`,this.owner).all<Row>()).results.map(decode));}
+  // Owner-facing status for up to 50 operations in a bounded number of D1 queries.
+  async statusMany(ids:string[]){
+    const rows=(await this.stmt('SELECT o.*,a.metadata AS audit FROM native_operations o LEFT JOIN native_receipt_audit a ON a.owner=o.owner AND a.operation_id=o.id WHERE o.owner=? AND o.id IN(SELECT value FROM json_each(?))',this.owner,canonical(ids)).all<Row&{audit:string|null}>()).results;
+    const ops=await this.withRefs(rows.map(r=>({...decode(r),audit:r.audit?JSON.parse(r.audit) as Record<string,unknown>:null})));
+    const deps=[...new Set(ops.flatMap(o=>isThings(o)?(o.payload as unknown as ThingsPayload).depends_on:[]))];
+    const ready=new Set((await this.stmt("SELECT o.id FROM native_operations o JOIN native_temp_ids t ON t.owner=o.owner AND t.operation_id=o.id WHERE o.owner=? AND o.id IN(SELECT value FROM json_each(?)) AND o.state IN ('applied','satisfied') AND t.real_id IS NOT NULL",this.owner,canonical(deps)).all<{id:string}>()).results.map(r=>r.id));
+    const byId=new Map(ops.map(o=>[o.id,o]));
+    return ids.map(id=>{
+      const o=byId.get(id);if(!o)return {id,state:'not_found'};
+      const common={id,state:o.state,result:o.result,ordinal:o.ordinal,created_at:o.created_at,updated_at:o.updated_at};
+      if(!isThings(o))return {...common,target:o.payload.target,field:o.payload.field,value:o.payload.value,conflict_policy:o.payload.conflict_policy};
+      const p=o.payload as unknown as ThingsPayload,refs=(o as typeof o&{resolved_refs:Record<string,string|null>}).resolved_refs;
+      return {...common,op:p.op,kind:p.kind,target:p.target,...p.temp_id?{temp_id:p.temp_id,created_id:refs[p.temp_id]??(o.result as {created_id?:string}|null)?.created_id??null}:{},resolved_refs:refs,conflict_policy:p.conflict_policy,
+        waiting_for:o.state==='queued'?p.depends_on.filter(d=>!ready.has(d)):[],unverified_fields:(o.audit?.unverified_fields as string[]|undefined)??[]};
+    });
+  }
+  // Areas, projects, tags and headings from the confirmed mirror, plus which task fields the Mac reports.
+  async catalog(){
+    const rows=(await this.stmt("SELECT id,kind,fields FROM mirror_items WHERE owner=? AND deleted=0 AND kind IN ('area','project','tag','heading') ORDER BY kind,id LIMIT 4000",this.owner).all<{id:string;kind:string;fields:string}>()).results.map(r=>({...r,cells:JSON.parse(r.fields) as Record<string,Cell>}));
+    const v=(c:Record<string,Cell>,k:string)=>c[k]?.state==='value'?c[k].value:null;
+    const support=new Map((await this.stmt("SELECT f.key AS field,MAX(json_extract(f.value,'$.state')='value') AS reported FROM mirror_items i,json_each(i.fields) f WHERE i.owner=? AND i.deleted=0 AND i.kind IN ('todo','project') GROUP BY f.key",this.owner).all<{field:string;reported:number}>()).results.map(r=>[r.field,!!r.reported]));
+    return {
+      areas:rows.filter(r=>r.kind==='area').map(r=>({id:r.id,title:v(r.cells,'title')})),
+      projects:rows.filter(r=>r.kind==='project').map(r=>({id:r.id,title:v(r.cells,'title'),area_id:v(r.cells,'area_id'),status:v(r.cells,'status'),in_trash:v(r.cells,'in_trash_list')===true})),
+      tags:rows.filter(r=>r.kind==='tag').map(r=>({id:r.id,title:v(r.cells,'title'),parent_tag_id:v(r.cells,'parent_tag_id')})),
+      headings:rows.filter(r=>r.kind==='heading').map(r=>({id:r.id,title:v(r.cells,'title'),project_id:v(r.cells,'project_id')})),
+      field_support:Object.fromEntries(['title','notes','activation_date','when','evening','deadline','tags','checklist','area_id','project_id','heading_id','status','in_trash_list'].map(k=>[k,support.get(k)?'reported':'not_reported_by_mac']))
+    };
+  }
   async tempIds(){return (await this.stmt('SELECT t.temp_id,t.operation_id,t.kind,t.real_id,t.resolved_at,o.state FROM native_temp_ids t JOIN native_operations o ON o.owner=t.owner AND o.id=t.operation_id WHERE t.owner=? ORDER BY t.created_at DESC,t.temp_id LIMIT 200',this.owner).all<Record<string,unknown>>()).results;}
   async revision(){return (await this.stmt('SELECT COALESCE(MAX(ordinal),0) AS revision FROM native_operations WHERE owner=?',this.owner).first<{revision:number}>())!.revision;}
   async overlays(){return (await this.stmt(`SELECT o.* FROM native_operations o WHERE o.owner=? AND (EXISTS(SELECT 1 FROM native_desired_fields d WHERE d.owner=o.owner AND d.operation_id=o.id) OR (json_extract(o.payload,'$.conflict_policy')='things_wins' AND o.state IN ('queued','executing'))) ORDER BY ordinal`,this.owner).all<Row>()).results.map(decode);}

@@ -128,6 +128,24 @@ export function validateThingsReceipt(p:ThingsPayload,result:Record<string,unkno
   return unverified;
 }
 
+type EffectiveItem={id:string;kind:string;fields:Record<string,Cell>;pending_operations:unknown[];verification:string;temp_id?:string;resolved_id?:string|null};
+// Apply version 4 overlays to the effective page. Pending creates appear under their temporary id
+// until a snapshot confirms the real item; returns those synthetic items.
+export function applyThingsOverlays(effective:EffectiveItem[],ops:Array<{id:string;state:string;payload:unknown;resolved_refs?:Record<string,string|null>}>,includeCreates:boolean){
+  const byId=new Map(effective.map(i=>[i.id,i])),creates:EffectiveItem[]=[];
+  for(const o of ops){
+    const p=o.payload as ThingsPayload,refs=o.resolved_refs??{},real=TEMP.test(p.target)?refs[p.target]??null:p.target;
+    let item=(real?byId.get(real):undefined)??byId.get(p.target);
+    if(!item&&p.op==='create'&&includeCreates){
+      item={id:p.target,temp_id:p.target,resolved_id:real,kind:p.kind,fields:{status:{state:'value',value:'open'},in_trash_list:{state:'value',value:false}},pending_operations:[],verification:'pending'};
+      creates.push(item);byId.set(p.target,item);
+    }
+    if(!item)continue;
+    for(const [k,c] of Object.entries(overlayCells(p,refs)))item.fields[k]={...c,...item.fields[k]?.revision!==undefined?{revision:item.fields[k].revision}:{}};
+    item.pending_operations.push({id:o.id,op:p.op,fields:p.verify,state:o.state});item.verification='pending';
+  }
+  return creates;
+}
 // Effective cells an operation implies, keyed by mirror field.
 export function overlayCells(p:ThingsPayload,refs:Record<string,string|null>):Record<string,Cell>{
   const cells:Record<string,Cell>={},v=(value:unknown):Cell=>({state:'value',value});
