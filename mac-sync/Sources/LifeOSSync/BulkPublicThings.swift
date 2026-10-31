@@ -227,8 +227,15 @@ enum BulkThingsInventory {
             if var membership = fields["list_memberships"] as? JSON, let entries = membership["value"] as? [JSON] {
                 membership["value"] = entries.sorted { ($0["list_id"] as? String ?? "").compare($1["list_id"] as? String ?? "", locale: .current) == .orderedAscending }
                 fields["list_memberships"] = membership
+                let memberships = Set(entries.compactMap { $0["list_id"] as? String })
+                fields["when"] = thingsWhen(activation: fields["activation_date"] as? JSON ?? [:], lists: memberships, today: civil.string(from: Date()))
                 fields["in_logbook_list"] = value(entries.contains { $0["list_id"] as? String == "TMLogbookListSource" })
                 fields["in_trash_list"] = value(entries.contains { $0["list_id"] as? String == "TMTrashListSource" })
+            }
+            if var tags = fields["tags"] as? JSON, let ids = tags["value"] as? [String] {
+                let names = ids.compactMap { id in ((rows[id]?["fields"] as? JSON)?["title"] as? JSON)?["value"] as? String }
+                tags = names.count == ids.count ? value(names) : state("unknown")
+                fields["tags"] = tags
             }
             row["fields"] = fields
             // Retain the old UTF-16 length times three estimate as well as

@@ -42,7 +42,7 @@ import CSQLite
     public func resetBootstrap() throws { try sql("DELETE FROM bootstrap_items") }
     private func itemID(_ item: JSON) throws -> String {
         guard let id = item["id"] as? String, id.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil,
-              let kind = item["kind"] as? String, ["todo", "project", "area", "tag"].contains(kind),
+              let kind = item["kind"] as? String, ["todo", "project", "area", "tag", "heading"].contains(kind),
               let deleted = item["deleted"] as? Int, [0, 1].contains(deleted), let fields = item["fields"] as? JSON else { throw SyncError.invalid }
         for value in fields.values {
             guard let cell = value as? JSON, let state = cell["state"] as? String,

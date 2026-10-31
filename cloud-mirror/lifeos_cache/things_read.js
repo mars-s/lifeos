@@ -20,11 +20,11 @@ function run(argv) {
       notes:cell(()=>o.notes()),deadline:cell(()=>o.dueDate(),civil),activation_date:cell(()=>o.activationDate(),civil),
       status:cell(()=>o.status()),creation_date:cell(()=>o.creationDate(),instant),modification_date:cell(()=>o.modificationDate(),instant),
       completion_date:cell(()=>o.completionDate(),instant),cancellation_date:cell(()=>o.cancellationDate(),instant),
-      area_id:cell(()=>o.area(),idOf),tags:cell(()=>o.tags(),a=>a.map(idOf)),
+      area_id:cell(()=>o.area(),idOf),tags:cell(()=>o.tags(),a=>a.map(t=>t.name())),
       checklist:unsupported(),reminder:unsupported(),recurrence:unsupported(),heading_id:unsupported(),evening:unsupported(),
     });
     if(kind==='todo')f.project_id=cell(()=>o.project(),idOf);
-    if(kind==='area')f.tags=cell(()=>o.tags(),a=>a.map(idOf));
+    if(kind==='area')f.tags=cell(()=>o.tags(),a=>a.map(t=>t.name()));
     if(kind==='tag')f.parent_tag_id=cell(()=>o.parentTag(),idOf);
     return f;
   }
@@ -86,6 +86,8 @@ function run(argv) {
     for(const row of items) {
       const membership=row.fields.list_memberships;
       if(membership) {
+        const ids=new Set(membership.value.map(m=>m.list_id)), a=row.fields.activation_date;
+        row.fields.when=ids.has("TMSomedayListSource")?{state:"value",value:"someday"}:ids.has("TMTodayListSource")?{state:"value",value:"today"}:a.state==="value"?{state:"value",value:a.value===civil(new Date())?"today":a.value}:a.state==="absent"?{state:"value",value:"anytime"}:{state:"unknown"};
         membership.value.sort((a,b)=>a.list_id.localeCompare(b.list_id));
         row.fields.in_logbook_list={state:'value',value:membership.value.some(m=>m.list_id==='TMLogbookListSource')};
         row.fields.in_trash_list={state:'value',value:membership.value.some(m=>m.list_id==='TMTrashListSource')};

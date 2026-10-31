@@ -44,7 +44,7 @@ import SyncCore
                 array([string("todo"), array(objects), array(tags)]),
                 array([string("project"), array([]), array([])]),
                 array([string("area"), array([area]), array([array([])])]),
-                array([string("tag"), array([object("tag", kind: "tstg", extra:["ptag":reference("parent")])]), array([])])
+                array([string("tag"), array([object("tag", kind: "tstg", extra:["pnam":string("Home"), "ptag":reference("parent")])]), array([])])
             ])
             var lists = BulkThingsInventory.builtins.map { id in array([string(id), array(id == "TMInboxListSource" ? objects : []), array(id == "TMInboxListSource" ? tags : [])]) }
             if duplicateList { lists.append(lists[0]) }
@@ -89,7 +89,7 @@ import SyncCore
         try require(cell("deadline")["value"] as? String == formatter.string(from:date), "civil date conversion")
         try require(cell("completion_date")["state"] as? String == "absent", "missing date")
         try require(cell("checklist")["state"] as? String == "unsupported", "unsupported property")
-        try require(cell("tags")["value"] as? [String] == ["tag"], "tag ordering")
+        try require(cell("tags")["value"] as? [String] == ["Home"], "tag names instead of IDs")
         try require((cell("list_memberships")["value"] as? [JSON])?.first?["index"] as? Int == 0, "list ordering")
         let childFields = rows.first { $0["id"] as? String == "child" }!["fields"] as! JSON
         try require((childFields["collection_index"] as? JSON)?["value"] as? Int == 0, "child fallback index")

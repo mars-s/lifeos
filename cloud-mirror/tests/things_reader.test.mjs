@@ -54,3 +54,11 @@ test('oversized snapshot aborts without truncating',()=>{
 test('duplicate stable ID within a single list aborts instead of claiming an ordering',()=>{
   const f=fixture();f.lists[5].toDos=collection([f.all[1],f.all[1]]);assert.throws(()=>run(f),/duplicate stable ID/);
 });
+test('upload reports tag names and public when placement with explicit unsupported automation fields',()=>{
+ const f=fixture(),tag=record('tag-opaque','Home');f.app.tags=collection([tag]);f.all[0].tags=()=>[tag];
+ const rows=Object.fromEntries(run(f).items.map(x=>[x.id,x]));
+ assert.deepEqual(rows.open.fields.tags,{state:'value',value:['Home']});
+ assert.deepEqual(rows.open.fields.when,{state:'value',value:'today'});
+ assert.deepEqual(rows.child.fields.when,{state:'value',value:'anytime'});
+ for(const key of ['checklist','heading_id','evening'])assert.equal(rows.open.fields[key].state,'unsupported');
+});
