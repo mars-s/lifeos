@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public enum NativeEventProtocol {
     public static func acknowledgement(revision: Int, version: Int = 1) throws -> URLSessionWebSocketTask.Message {

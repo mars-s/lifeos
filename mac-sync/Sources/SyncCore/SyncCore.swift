@@ -1,7 +1,13 @@
 import Foundation
 import CSQLite
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
+#if canImport(CryptoKit)
 import CryptoKit
+#endif
 
 public typealias JSON = [String: Any]
 
