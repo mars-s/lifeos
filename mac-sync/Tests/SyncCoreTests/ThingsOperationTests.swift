@@ -240,3 +240,19 @@ private func operation(_ op: String = "update", policy: String = "things_wins") 
         }
     }
 }
+
+@Test func thingsTodayReadbackMatchesOnlyTheRequestedLocalCivilDate() throws {
+    // Both public readers report a today's activation date as the Today placement.
+    let readback = thingsWhen(activation: value("2026-10-31"), lists: [], today: "2026-10-31")
+    #expect(readback["value"] as? String == "today")
+    for requested in ["2026-10-30", "2026-10-31", "2026-11-01", "today"] {
+        var p = operation(); p["fields"] = ["when": requested]; p["verify"] = ["when"]
+        let op = try ThingsOperation(p), fields = ["when": readback]
+        #expect(op.matches(fields, today: "2026-10-31") == (requested == "2026-10-31" || requested == "today"))
+        if requested == "2026-10-31" {
+            #expect(try encoded(op.verified(fields, today: "2026-10-31")) == encoded(["when": value(requested)]))
+            #expect(!op.matches(fields, today: "2026-11-01"))
+        }
+    }
+    #expect(thingsWhen(activation: value("2026-10-31"), lists: ["TMTodayListSource"], today: "2026-10-31")["value"] as? String == "today")
+}

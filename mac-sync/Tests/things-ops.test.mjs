@@ -66,3 +66,12 @@ test('a changed before image prevents a setter after Swift policy evaluation',()
  const result=f.run({v4_action:'write',fields:{title:'Cloud'},expected_before:expected,conflict_policy:'things_wins'});
  assert.deepEqual(result,{state:'skipped',reason:'things_changed'});assert.equal(f.writes.length,0);
 });
+
+test('a local-today activation reads as today, including Today list membership',()=>{
+ const f=fixture(),now=new Date(),civil=[now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),String(now.getDate()).padStart(2,'0')].join('-');
+ f.run({v4_action:'write',fields:{when:civil}});
+ assert.equal(f.run({}).fields.when.value,'today');
+ assert.equal(f.run({}).fields.activation_date.value,civil);
+ f.membership.TMTodayListSource=true;
+ assert.equal(f.run({}).fields.when.value,'today');
+});

@@ -289,6 +289,19 @@ try{
    assert.equal((await request('/api/native/ack',{...body,merge_decision:{...merge_decision,fields:{title:'cloud_only',notes:'cloud_only'}}})).status,409,'Receipt audit is immutable');
    const status=await operation(op.id);assert.equal(status.audit.merge_decision.fields.title,'cloud_fallback');assert.equal(status.current_desired_revision,op.ordinal);
   });
+  await t.test('date receipts use the Mac canonical date rather than Worker or retry time',async()=>{
+   const mac={'X-LifeOS-Things-Ops':'1'};
+   const [op]=await ok('/__smart_test/things',{operations:[{op:'create',operation_id:'date-today-contract',kind:'todo',temp_id:'tmp-date-today-contract',fields:{title:'Date contract',when:'2026-10-31'}}]});
+   await ok('/api/native/claim',{id:op.id,claim:'date-claim'},mac);
+   const body={id:op.id,claim:'date-claim',result:{state:'applied',created_id:'RealDateContract'},applied_after_sequence:sequence,
+    verified_after:{title:value('Date contract'),when:value('today')},merge_decision:{algorithm:'things_fields_v1',fields:{title:'created',when:'created'}}};
+   assert.equal((await request('/api/native/ack',body,mac)).status,409,'Ambiguous today alone cannot attest a civil date');
+   body.verified_after.when=value('2026-11-01');
+   assert.equal((await request('/api/native/ack',body,mac)).status,409,'A different civil date is refused');
+   body.verified_after.when=value('2026-10-31');
+   assert.equal((await ok('/api/native/ack',body,mac)).state,'applied');
+   assert.equal((await ok('/api/native/ack',body,mac)).state,'applied','Canonical receipt retry is independent of the current date');
+  });
   await t.test('version 4 receipts share exact payloads and Mac ack bodies across languages',async()=>{
    const fixtures=JSON.parse(await readFile('../../mac-sync/Tests/Fixtures/things-v4-receipts.json','utf8'));
    const items=[{id:'contract-project',kind:'project',fields:{title:value('Contract project'),in_trash_list:value(false)}},...fixtures.flatMap(f=>f.item?[f.item]:[])];

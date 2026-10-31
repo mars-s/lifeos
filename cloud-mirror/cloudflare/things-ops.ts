@@ -123,6 +123,8 @@ export function validateThingsReceipt(p:ThingsPayload,result:Record<string,unkno
   for(const key of keys){
     const cell=verified[key];
     if(cell.state==='unsupported'&&unverifiable(p,key)){unverified.push(key);continue;}
+    // The Mac canonicalises a local-today read-back to the requested date.
+    // Keep this comparison date-exact: Worker time and receipt retry time can differ.
     if(canonical(comparable(key,cell))!==canonical(comparable(key,expectedCell(p,key,refs))))throw new DemoError('Verified result does not match desired value.');
   }
   return unverified;

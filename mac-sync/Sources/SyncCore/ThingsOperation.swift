@@ -69,12 +69,26 @@ public struct ThingsOperation {
         guard let left = try? encoded(normal(lhs)), let right = try? encoded(normal(rhs)) else { return false }
         return left == right
     }
-    public func verified(_ fields: JSON) -> JSON {
-        Dictionary(uniqueKeysWithValues: verify.map { ($0, fields[$0] as? JSON ?? ["state": "unknown"]) })
+    public func verified(_ fields: JSON, today: String? = nil) -> JSON {
+        Dictionary(uniqueKeysWithValues: verify.map { key in
+            var cell = fields[key] as? JSON ?? ["state": "unknown"]
+            // All public readers call today's activation date "today". Preserve
+            // the requested civil date in the receipt, so the Worker need not
+            // guess the Mac's timezone (or the date when a receipt is retried).
+            if key == "when", cell["state"] as? String == "value", cell["value"] as? String == "today",
+               let requested = (payload["fields"] as? JSON)?["when"] as? String,
+               requested.range(of: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", options: .regularExpression) != nil {
+                let civil = DateFormatter(); civil.calendar = Calendar(identifier: .gregorian)
+                civil.locale = Locale(identifier: "en_US_POSIX"); civil.timeZone = .current; civil.dateFormat = "yyyy-MM-dd"
+                if requested == (today ?? civil.string(from: Date())) { cell = ["state": "value", "value": requested] }
+            }
+            return (key, cell)
+        })
     }
-    public func matches(_ fields: JSON) -> Bool {
-        verify.allSatisfy { key in
-            let cell = fields[key] as? JSON ?? [:]
+    public func matches(_ fields: JSON, today: String? = nil) -> Bool {
+        let readback = verified(fields, today: today)
+        return verify.allSatisfy { key in
+            let cell = readback[key] as? JSON ?? [:]
             let unsupportedAllowed = key == "checklist" || key == "when" && (payload["fields"] as? JSON)?["when"] as? String == "evening" || key == "container" && (payload["container"] as? JSON)?["type"] as? String == "heading"
             return cell["state"] as? String == "unsupported" && unsupportedAllowed || Self.equal(key, cell, desired(key))
         }
@@ -89,7 +103,7 @@ public struct ThingsOperation {
         let base = payload["base"] as? JSON ?? [:]
         var fields: [String: String] = [:]
         for key in verify {
-            let local = before[key] as? JSON ?? ["state": "unknown"]
+            let local = verified(before)[key] as? JSON ?? ["state": "unknown"]
             let baseKey = key == "when" ? "activation_date" : key
             let baseKeys = key == "container" ? (payload["kind"] as? String == "project" ? ["area_id"] : ["area_id", "project_id", "heading_id"]) : [baseKey]
             let unchanged = baseKeys.filter { base[$0] != nil }.allSatisfy { name in
