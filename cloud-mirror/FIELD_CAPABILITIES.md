@@ -1,4 +1,10 @@
-# Things automation capability matrix · September 30, 2026
+# Things automation capability matrix
+
+Current implementation note, 31 October 2026: the Cloudflare queue supports create, field updates, move, status, recoverable Trash and restore under the configured write policy. The Mac uploads tag names and `when`, and implements version 4, pending an app rebuild and restart. Current Mac checklist writes and `when: evening` fail with `unsupported_by_things`; heading containers fail with `container_unavailable`, before any change. Restore moves the to-do to the Inbox, without recovering its previous project or area. The Worker keeps these fields for future Mac support. See the [version 4 contract](cloudflare/README.md) and [deploy steps](cloudflare/DEPLOYMENT.md), including remote migration 0005 and pending GitHub OAuth client secret rotation.
+
+## Historical dictionary evidence and first phase, 30 September 2026
+
+The matrix below records the initial implementation, not the current queue capabilities.
 
 Things is running from `/Users/avi/Documents/apps/Things3.app`. Its public scripting dictionary was inspected at `Contents/Resources/Things.sdef`, without sending an Apple event or reading tasks. Standard application locations, Spotlight and NSWorkspace did not resolve it; those checks were incomplete, not evidence that Things was absent. Hidden/private experimental JSON and reorder commands in the dictionary are excluded.
 

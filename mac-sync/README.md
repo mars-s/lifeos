@@ -1,6 +1,6 @@
 # LifeOS native sync
 
-Swift6.3 menu-bar agent for the existing Cloudflare mirror. This version applies queued version 4 Things operations as well as the older title, completion and Trash operations on an awake Mac. New cloud_wins operations prefer explicit cloud intent for their specific supported fields and retain displaced values in immutable audit receipts. Historical operations retain their original policy. Newer unclaimed title edits supersede older queued titles. Unsupported writes are rejected.
+Swift 6.3 menu-bar agent for the existing Cloudflare mirror. This version applies queued version 4 Things operations as well as the older title, completion and Trash operations on an awake Mac. New cloud_wins operations prefer explicit cloud intent for their specific supported fields and retain displaced values in immutable audit receipts. Historical operations retain their original policy. Newer unclaimed title edits supersede older queued titles. Unsupported writes are rejected.
 
 ## What is built
 

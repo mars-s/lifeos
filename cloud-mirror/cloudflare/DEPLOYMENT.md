@@ -1,4 +1,23 @@
-# Verified Cloudflare deployment — October 1, 2026
+# Cloudflare deployment handoff
+
+## Current status, 31 October 2026
+
+Queued Things writes and OAuth hardening are implemented. `LIFEOS_WRITES_ENABLED=true` and a `things:write` grant enable the queue; `LIFEOS_CLOUD_WINS_ENABLED=true` selects cloud intent, and `LIFEOS_SMART_SYNC_ENABLED=true` selects smart sync ahead of it. Historical receipts keep their original policy. Set `LIFEOS_MCP_ALLOWED_ORIGINS` to the intended browser MCP origins; native clients need no Origin header. Version 4 Mac execution is implemented but needs a rebuild and restart. GitHub OAuth client secret rotation is still pending through the secure provisioning flow; never print or commit its value.
+
+Apply migration `0005_things_ops.sql` remotely before deploying the new Worker. The steps below are a handoff, not evidence that deployment or a live Things write has occurred.
+
+## Deploy steps
+
+1. In `cloud-mirror/cloudflare`, run `npm ci`.
+2. Run `npm test`, `npm run test:mcp`, `npm run test:native`, `npm run test:events`, `npm run test:smart`, `npm run test:oauth` and `npm run typecheck`. From the repo root, also run `/workspace/claude-runs/swift-test.sh` on the Linux verification host and `node --test cloud-mirror/tests/*.mjs mac-sync/Tests/*.mjs`.
+3. Run `npx wrangler d1 migrations apply lifeos-read-mirror --remote` (applies 0005 and any earlier pending migrations).
+4. Run `npx wrangler deploy` with the intended write, conflict-policy and origin settings.
+5. On the Mac, rebuild LifeOS Sync with `mac-sync/build-app.sh` and restart it.
+6. Smoke test an explicitly requested queued create while the Mac sleeps. Confirm it stays queued, then wake the Mac and check `read_things_operations` for a verified receipt and real `created_id`, followed by snapshot confirmation. Use a supported create without checklist, evening or heading placement.
+
+## Historical verified deployment, 1 October 2026
+
+Everything below records the initial read-only deployment and activation handoff, not the current write or OAuth capabilities. Later activation evidence is in [ACTIVATION.md](ACTIVATION.md).
 
 Cloudflare OAuth succeeded through the user's normal browser Allow grants. Final scope is account/user metadata, Workers, Workers script publishing, D1, plus native offline renewal. No unrelated product scopes or exported token were used. The user separately confirmed **Workers Free**; the CLI does not expose the billing plan. No plan was upgraded.
 

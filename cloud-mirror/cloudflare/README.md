@@ -1,12 +1,16 @@
-# Cloudflare read-only mirror handoff
+# Cloudflare Things mirror and offline write queue
 
 User selected Workers + D1 on September 30, 2026, superseding Railway. Exact source directory:
 `/Users/avi/Documents/Codex/2026-09-30/task-3/lifeos-cloud-cache-prototype/cloudflare`.
 Original LifeOS and existing private Site remain unchanged. No Railway resource was created or deleted, and subscription cancellation is the user's action.
 
-Current status: **read-only gateway deployed and 59 supported records synced on October 1**; [activation evidence](ACTIVATION.md) supersedes the empty-cache checkpoint. Wrangler 4.144.0 is installed locally. The user completed normal OAuth, confirmed Workers Free, and ran secure credential setup. One Worker, one D1 database and the five-minute helper exist; real task writes and dot OAuth MCP remain disabled/unconnected. Native credentials stay in the vault/runtime and managed CLI flow; no anonymous preview account is used.
+Current status (31 October 2026): **authenticated MCP and durable queued Things writes are implemented**, gated by `LIFEOS_WRITES_ENABLED=true` and a `things:write` OAuth grant. New operations use `cloud_wins` with `LIFEOS_CLOUD_WINS_ENABLED=true`, or smart sync (`smart_merge_v1`) with `LIFEOS_SMART_SYNC_ENABLED=true`; otherwise `things_wins` applies. Queuing works while the Mac sleeps; execution waits for an awake connected Mac. Version 4 Mac support is in `mac-sync/`, pending an app rebuild and restart, not a verified live Things write.
 
-Read-only dot MCP/OAuth is now staged and tested; [the connection handoff](DOT_CONNECTION.md) names the remaining GitHub OAuth app, KV browser permission and dot grant. No additional auth resource was provisioned, no app secret was entered by the agent, and the deployed main is unchanged.
+OAuth hardening and the redesigned consent page are implemented and tested locally. `LIFEOS_MCP_ALLOWED_ORIGINS` permits explicitly configured browser origins for MCP; native clients need no Origin header. The GitHub OAuth client secret rotation remains pending. Do not put secret values in docs or chat. Apply migration `0005_things_ops.sql` remotely **before deploying** version 4. See [deploy steps](DEPLOYMENT.md) and [OAuth progress](OAUTH_PROGRESS.md). No remote deployment, migration or live write is implied by these local checks.
+
+## Historical gateway evidence (September to October 1, 2026)
+
+The following implementation, verification and activation checkpoints describe the initial read-only gateway. They are history, superseded for current capabilities by the status above and the version 4 contract below. The [activation evidence](ACTIVATION.md) records 59 supported records synced on October 1. Native credentials stay in the vault/runtime and managed CLI flow.
 
 Ready implementation:
 
@@ -36,11 +40,11 @@ Free-tier assessment: [Workers limits](https://developers.cloudflare.com/workers
 
 Backup guidance: D1 Time Travel is short recovery, not a three-month backup. Use supported D1 export for periodic owner-private off-platform backups; protect task contents and test a restore to a separate database. Do not copy a live SQLite file or export private data into chat. Backups/retention must be checked before travel. The Mac journal stays durable locally for reconnect; the cloud cache cannot independently refresh while the Mac sleeps or is offline.
 
-Local checks from this directory: `npm test`, `npm run typecheck`, `node benchmark.mjs`, `npm run dry-run` (Wrangler logs/metrics may be redirected/disabled for workspace sandbox restrictions). No `.dev.vars` production secrets are needed for synthetic tests.
+Current local checks from this directory: `npm test`, `npm run test:mcp`, `npm run test:native`, `npm run test:events`, `npm run test:smart`, `npm run test:oauth`, `npm run typecheck` (Wrangler logs/metrics may be redirected/disabled for workspace sandbox restrictions). No `.dev.vars` production secrets are needed for synthetic tests.
 
 ## Offline Things operations (payload version 4, `things_ops_v1`)
 
-Added October 31, 2026 (Worker side only). The Mac side is not implemented yet; this section is the contract it must follow. Nothing here was run against real Things.
+Added 31 October 2026. Worker and Mac implementations now share this contract and committed cross-language receipt fixtures in `mac-sync/Tests/Fixtures/things-v4-receipts.json`. The Mac app must be rebuilt and restarted to execute version 4. Synthetic verification does not establish real Things behaviour.
 
 ### Gating old Macs
 
@@ -88,11 +92,11 @@ Enqueue rules enforced by the Worker:
 - `pending` and `claim` hold an op until every `depends_on` create is `applied` or `satisfied` with a real ID. Each version 4 op in `pending`, `claim` and `operation` responses carries `resolved_refs: {"tmp-...": "<real id>"}`. The Mac substitutes those IDs when executing; it must not expect the payload to change.
 - If a create finishes as skipped, failed or uncertain, its dependants (recursively) become `skipped` with reason `dependency_unresolved`, and new references to that temp id are rejected.
 
-### Mac execution (to implement in run 2)
+### Mac execution
 
 1. Read `pending` with the header; execute queued version 4 ops in the order returned, after claiming each (`{id, claim}`), as today. Skip any whose `resolved_refs` contains a null.
 2. Read before write. Compare each `base` field with the current Things value. `things_wins`: if any differs, skip with `things_changed`. `cloud_wins` and `smart_merge_v1`: apply anyway; smart receipts classify each verify key.
-3. Apply through fixed bundled automation only (no cloud-supplied script). Expected, unverified mapping: title/notes/deadline/tag names/status through AppleScript properties; `when` through the `schedule` command or Today/Someday list moves; containers through `move` and the area/project properties; Trash through `delete`; restore by moving the to-do out of the Trash list; checklist and heading placement through the Things URL scheme (needs the owner's auth token for updates).
+3. Apply through fixed bundled automation only (no cloud-supplied script). Current mapping: title/notes/deadline/tag names/status through dictionary properties; `when` through `schedule` or Today/Someday/Anytime list moves; containers through `move` and area/project properties; Trash through `delete`; restore by moving the to-do to the Inbox. Checklist writes and `when: evening` report `unsupported_by_things`; heading containers report `container_unavailable`. These checks happen before any mutation, including create. The current Mac does not use the Things URL scheme for these writes. Restore does not recover the previous project or area.
 4. Persist the created Things ID in the local journal before acknowledging, so a retried create is never repeated. An interrupted create with no recorded ID must be acknowledged `uncertain` with `interrupted_write`.
 5. Read back and acknowledge.
 
@@ -109,25 +113,26 @@ Receipt (`POST /api/native/ack`):
 - `applied_after_sequence` is required on every version 4 receipt (the journal sequence when the write began).
 - `result.state`: applied, satisfied, skipped, failed or uncertain. `reason` is one of things_changed, target_unavailable, automation_denied, verification_failed, interrupted_write, interrupted_delete, newer_cloud_edit, container_unavailable, unsupported_by_things, dependency_unresolved.
 - `created_id` is required exactly when a create is applied or satisfied. It must be a real ID (not `tmp-`) that no other temp id already maps to.
-- Applied or satisfied receipts need `verified_after` with exactly the `verify` keys, each equal to the desired value: `deadline: null` reads back as `{"state":"absent"}`; tags compare as a case-insensitive set; `container` reads back as the container with resolved real IDs; `in_trash_list` is true for trash and false for restore. Only `checklist`, `when: evening` and heading containers may read back as `{"state":"unsupported"}`; they are recorded as `unverified_fields`.
+- Applied or satisfied receipts need `verified_after` with exactly the `verify` keys, each equal to the desired value: `deadline: null` reads back as `{"state":"absent"}`; tags compare as a case-insensitive set; when a requested date equals the Mac's current local date and public readers report `today`, Swift verifies that equivalence and sends the requested date in `verified_after.when`. The Worker compares that canonical date exactly, without using its own clock or timezone; `container` reads back as the container with resolved real IDs; `in_trash_list` is true for trash and false for restore. Only `checklist`, `when: evening` and heading containers may read back as `{"state":"unsupported"}`; they are recorded as `unverified_fields`.
 - `observed_before` cells may name base or verify keys. `merge_decision` is required for applied or satisfied smart receipts, must classify every verify key (`cloud_only`, `same_value`, `cloud_fallback`, `created`, `unavailable`, `interrupted`), and is refused under other policies.
 - Receipts are immutable; an identical retry returns the stored result.
 - No `receipt_confirmation` is returned for version 4. Do not put version 4 IDs in `receipt_confirmations`; the upload would be rejected. A version 4 effect is confirmed by the first committed snapshot whose sequence is greater than `applied_after_sequence`. Until then `pending.overlaysNeedConfirmation` is true, so the Mac should upload after applying.
 
 ### Upload contract additions for the Mac
 
-The current upload already carries notes, activation_date, deadline, tags (names), status (open, completed, canceled), area_id, project_id, in_trash_list, areas and tags. Still reported as unsupported, to add in run 2 where Things allows:
+The current upload carries notes, activation_date, deadline, tags (names), status (open, completed, canceled), area_id, project_id, in_trash_list, areas, tags and `when` (`today`, `anytime`, `someday` or a date). Public readers report an activation date equal to today as `today`; verification canonicalises requested dates as described above. Remaining unsupported reads, for a future Mac where Things allows:
 
 - `checklist`: `[{"title","completed"}]` per to-do (enables checklist edits on existing to-dos).
-- `evening` (boolean) and `when` (`today`, `evening`, `anytime`, `someday` or a date) per to-do, so `when` can be compared directly.
-- `heading_id` per to-do, plus heading items (`kind: "heading"`, fields `title`, `project_id`) with `heading` added to `manifest.scopes`. The Worker accepts the scope set with or without `heading`; the Mac's `LocalReplica` must accept the `heading` kind first.
+- `evening` (boolean) and the evening subsection of `when`.
+- `heading_id` per to-do, plus heading items (`kind: "heading"`, fields `title`, `project_id`) with `heading` added to `manifest.scopes`. The Worker accepts the scope set with or without `heading`; the Mac's `LocalReplica` already accepts the `heading` kind.
 
 ### MCP tools
 
-`queue_things_create`, `queue_things_update`, `queue_things_move`, `queue_things_status`, `queue_things_restore`, `queue_things_batch` (all ops including `trash`) and the read-only `read_things_operations` (state, receipt, `created_id`, `waiting_for`, `unverified_fields`). `queue_things_edit` and `queue_things_trash` are unchanged. `read_things_mirror` adds `catalog` (areas, projects, tags, headings, `field_support`), `temp_ids`, version 4 entries in `pending_overlay`, and pending creates on the first `effective` page under their temporary id.
+`queue_things_create`, `queue_things_update`, `queue_things_move`, `queue_things_status`, `queue_things_restore`, `queue_things_batch` (all ops including `trash`) and the read-only `read_things_operations` (state, receipt, `created_id`, `waiting_for`, `unverified_fields`). `queue_things_edit` and `queue_things_trash` are unchanged. `read_things_mirror` adds `catalog` (areas, projects, tags, headings, `field_support`, including `current_mac_writes` limitations), `temp_ids`, version 4 entries in `pending_overlay`, and pending creates on the first `effective` page under their temporary id.
 
 ### Known limitations
 
-- Things automation cannot read checklists or headings, and has no put-back command for Trash. Restore is a move out of Trash; if Things refuses, the Mac reports `failed` with `unsupported_by_things`.
+- Current Mac checklist writes and `when: evening` fail with `unsupported_by_things`; heading containers fail with `container_unavailable`. No fields are changed in these cases. The Worker retains these payload fields for a future Mac that can apply them. Its protocol still permits unsupported verification cells, recorded as `unverified_fields`; this is not a claim that the current Mac writes them.
+- Restore moves a to-do to the Inbox, without restoring its previous project or area. If Things refuses, the Mac reports `failed` with `unsupported_by_things`.
 - Areas and headings are never created. Projects cannot be trashed through the queue.
-- Operations queue while the Mac sleeps but only apply once a Mac with this support is awake. Until run 2 ships they stay queued.
+- Operations queue while the Mac sleeps but only apply once a Mac with this support is awake. Until the updated Mac app is rebuilt and restarted they stay queued.
