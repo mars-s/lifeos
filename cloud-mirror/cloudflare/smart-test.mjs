@@ -289,5 +289,20 @@ try{
    assert.equal((await request('/api/native/ack',{...body,merge_decision:{...merge_decision,fields:{title:'cloud_only',notes:'cloud_only'}}})).status,409,'Receipt audit is immutable');
    const status=await operation(op.id);assert.equal(status.audit.merge_decision.fields.title,'cloud_fallback');assert.equal(status.current_desired_revision,op.ordinal);
   });
+  await t.test('version 4 receipts share exact payloads and Mac ack bodies across languages',async()=>{
+   const fixtures=JSON.parse(await readFile('../../mac-sync/Tests/Fixtures/things-v4-receipts.json','utf8'));
+   const items=[{id:'contract-project',kind:'project',fields:{title:value('Contract project'),in_trash_list:value(false)}},...fixtures.flatMap(f=>f.item?[f.item]:[])];
+   await snapshot(items);
+   const mac={'X-LifeOS-Things-Ops':'1'};
+   for(const f of fixtures){
+    const [op]=await ok('/__smart_test/contract_things',{operations:[f.request],policy:f.payload.conflict_policy});
+    assert.deepEqual(op.payload,f.payload,f.name+' payload');
+    await ok('/api/native/claim',{id:f.ack.id,claim:f.ack.claim},mac);
+    const ack=await ok('/api/native/ack',f.ack,mac);
+    assert.equal(ack.state,f.ack.result.state,f.name);
+    assert.deepEqual((await operation(op.id)).result,f.ack.result,f.name+' result');
+    assert.equal((await ok('/api/native/ack',f.ack,mac)).state,f.ack.result.state,'Identical retry');
+   }
+  });
  });
 }finally{await mf.dispose();await rm(dir,{recursive:true,force:true});await rm(output,{force:true});}

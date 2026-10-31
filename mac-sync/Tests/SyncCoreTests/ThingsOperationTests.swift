@@ -190,3 +190,53 @@ private func operation(_ op: String = "update", policy: String = "things_wins") 
     #expect(result?["reason"] as? String == "interrupted_write")
     #expect(result?["created_id"] == nil)
 }
+
+// Shared with the Worker smart suite. Use the source path so the Linux harness's
+// Tests symlink and a normal macOS swift test both read the same committed bytes.
+@Test @MainActor func thingsReceiptsMatchCrossLanguageFixtures() async throws {
+    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Fixtures/things-v4-receipts.json")
+    let fixtures = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [JSON]
+    for f in fixtures {
+        let p = f["payload"] as! JSON, expected = f["ack"] as! JSON
+        let op = try ThingsOperation(p), before = f["before"] as! JSON, after = f["after"] as! JSON
+        if let verified = expected["verified_after"] as? JSON {
+            #expect(try encoded(op.verified(after)) == encoded(verified))
+            #expect(op.matches(after))
+        }
+        if let decision = expected["merge_decision"] as? JSON {
+            #expect(try encoded(op.decision(before)) == encoded(decision))
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let journal = try Journal(url: root.appendingPathComponent("journal.json")), cloud = FixtureCloud()
+        let things = ContractThings(before: before, after: after, createdID: (expected["result"] as? JSON)?["created_id"] as? String)
+        let id = expected["id"] as! String, claim = expected["claim"] as! String
+        cloud.sequence = 3
+        cloud.operations = [["id": id, "ordinal": 1, "state": "executing", "claim": claim, "payload": p]]
+        try journal.update {
+            $0.sequence = 3
+            $0.intents[id] = Intent(id: id, claim: claim, payload: try encoded(p), phase: f["interrupted"] as? Bool == true ? "writing" : "claimed", result: nil)
+        }
+        let engine = SyncEngine(journal: journal, cloud: cloud, things: things); try engine.pause(false)
+        await engine.cycle(force: true)
+        #expect(cloud.ackBodies.count == 1)
+        if let body = cloud.ackBodies.first { #expect(body == (try encoded(expected)), "Fixture: \(f["name"]!)") }
+        if f["interrupted"] as? Bool == true { #expect(things.writes == 0) }
+    }
+}
+
+@MainActor private final class ContractThings: ThingsAutomation {
+    let before: JSON, after: JSON, createdID: String?
+    var writes = 0
+    init(before: JSON, after: JSON, createdID: String?) { self.before = before; self.after = after; self.createdID = createdID }
+    func inventory() async throws -> JSON { try await FixtureThings().inventory() }
+    func apply(_ p: JSON) async throws -> JSON {
+        switch p["v4_action"] as? String {
+        case "read": return ["fields": writes == 0 ? before : after]
+        case "write": writes += 1; return createdID.map { ["created_id": $0] } ?? [:]
+        case "finish_create": return [:]
+        default: throw SyncError.invalid
+        }
+    }
+}

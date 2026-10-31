@@ -1,0 +1,964 @@
+[
+  {
+    "name": "create-smart_merge_v1",
+    "request": {
+      "op": "create",
+      "operation_id": "contract-create-smart_merge_v1",
+      "kind": "todo",
+      "temp_id": "tmp-create-smart_merge_v1",
+      "fields": {
+        "title": "Contract todo",
+        "notes": "Literal notes"
+      },
+      "container": {
+        "type": "project",
+        "id": "contract-project"
+      }
+    },
+    "payload": {
+      "version": 4,
+      "protocol": "things_ops_v1",
+      "op": "create",
+      "kind": "todo",
+      "target": "tmp-create-smart_merge_v1",
+      "base": {},
+      "base_revisions": {},
+      "conflict_policy": "smart_merge_v1",
+      "intent_kind": "explicit_set",
+      "depends_on": [],
+      "refs": [],
+      "verify": [
+        "container",
+        "notes",
+        "title"
+      ],
+      "temp_id": "tmp-create-smart_merge_v1",
+      "fields": {
+        "title": "Contract todo",
+        "notes": "Literal notes"
+      },
+      "container": {
+        "type": "project",
+        "id": "contract-project"
+      }
+    },
+    "before": {
+      "title": {
+        "state": "value",
+        "value": ""
+      },
+      "notes": {
+        "state": "value",
+        "value": ""
+      },
+      "container": {
+        "state": "value",
+        "value": {
+          "type": "inbox"
+        }
+      }
+    },
+    "after": {
+      "title": {
+        "state": "value",
+        "value": "Contract todo"
+      },
+      "notes": {
+        "state": "value",
+        "value": "Literal notes"
+      },
+      "container": {
+        "state": "value",
+        "value": {
+          "type": "project",
+          "id": "contract-project"
+        }
+      }
+    },
+    "interrupted": false,
+    "ack": {
+      "id": "contract-create-smart_merge_v1",
+      "claim": "claim-contract-create-smart_merge_v1",
+      "result": {
+        "state": "applied",
+        "created_id": "Real-create-smart_merge_v1"
+      },
+      "applied_after_sequence": 3,
+      "observed_before": {
+        "title": {
+          "state": "value",
+          "value": ""
+        },
+        "notes": {
+          "state": "value",
+          "value": ""
+        },
+        "container": {
+          "state": "value",
+          "value": {
+            "type": "inbox"
+          }
+        }
+      },
+      "verified_after": {
+        "container": {
+          "state": "value",
+          "value": {
+            "type": "project",
+            "id": "contract-project"
+          }
+        },
+        "notes": {
+          "state": "value",
+          "value": "Literal notes"
+        },
+        "title": {
+          "state": "value",
+          "value": "Contract todo"
+        }
+      },
+      "merge_decision": {
+        "algorithm": "things_fields_v1",
+        "fields": {
+          "container": "created",
+          "notes": "created",
+          "title": "created"
+        }
+      }
+    }
+  },
+  {
+    "name": "create-cloud_wins",
+    "request": {
+      "op": "create",
+      "operation_id": "contract-create-cloud_wins",
+      "kind": "todo",
+      "temp_id": "tmp-create-cloud_wins",
+      "fields": {
+        "title": "Contract todo",
+        "notes": "Literal notes"
+      },
+      "container": {
+        "type": "project",
+        "id": "contract-project"
+      }
+    },
+    "payload": {
+      "version": 4,
+      "protocol": "things_ops_v1",
+      "op": "create",
+      "kind": "todo",
+      "target": "tmp-create-cloud_wins",
+      "base": {},
+      "base_revisions": {},
+      "conflict_policy": "cloud_wins",
+      "intent_kind": "explicit_set",
+      "depends_on": [],
+      "refs": [],
+      "verify": [
+        "container",
+        "notes",
+        "title"
+      ],
+      "temp_id": "tmp-create-cloud_wins",
+      "fields": {
+        "title": "Contract todo",
+        "notes": "Literal notes"
+      },
+      "container": {
+        "type": "project",
+        "id": "contract-project"
+      }
+    },
+    "before": {
+      "title": {
+        "state": "value",
+        "value": ""
+      },
+      "notes": {
+        "state": "value",
+        "value": ""
+      },
+      "container": {
+        "state": "value",
+        "value": {
+          "type": "inbox"
+        }
+      }
+    },
+    "after": {
+      "title": {
+        "state": "value",
+        "value": "Contract todo"
+      },
+      "notes": {
+        "state": "value",
+        "value": "Literal notes"
+      },
+      "container": {
+        "state": "value",
+        "value": {
+          "type": "project",
+          "id": "contract-project"
+        }
+      }
+    },
+    "interrupted": false,
+    "ack": {
+      "id": "contract-create-cloud_wins",
+      "claim": "claim-contract-create-cloud_wins",
+      "result": {
+        "state": "applied",
+        "created_id": "Real-create-cloud_wins"
+      },
+      "applied_after_sequence": 3,
+      "observed_before": {
+        "title": {
+          "state": "value",
+          "value": ""
+        },
+        "notes": {
+          "state": "value",
+          "value": ""
+        },
+        "container": {
+          "state": "value",
+          "value": {
+            "type": "inbox"
+          }
+        }
+      },
+      "verified_after": {
+        "container": {
+          "state": "value",
+          "value": {
+            "type": "project",
+            "id": "contract-project"
+          }
+        },
+        "notes": {
+          "state": "value",
+          "value": "Literal notes"
+        },
+        "title": {
+          "state": "value",
+          "value": "Contract todo"
+        }
+      }
+    }
+  },
+  {
+    "name": "update",
+    "request": {
+      "op": "update",
+      "operation_id": "contract-update",
+      "target": "contract-task-update",
+      "base_revisions": {
+        "title": 1,
+        "notes": 1,
+        "deadline": 1,
+        "tags": 1
+      },
+      "fields": {
+        "title": "New title",
+        "notes": "New notes",
+        "deadline": null,
+        "tags": [
+          "Home",
+          "Errand"
+        ]
+      }
+    },
+    "payload": {
+      "version": 4,
+      "protocol": "things_ops_v1",
+      "op": "update",
+      "kind": "todo",
+      "target": "contract-task-update",
+      "base": {
+        "title": {
+          "state": "value",
+          "value": "Old title"
+        },
+        "notes": {
+          "state": "value",
+          "value": "Old notes"
+        },
+        "deadline": {
+          "state": "value",
+          "value": "2026-11-02"
+        },
+        "tags": {
+          "state": "value",
+          "value": [
+            "Home"
+          ]
+        }
+      },
+      "base_revisions": {
+        "title": 1,
+        "notes": 1,
+        "deadline": 1,
+        "tags": 1
+      },
+      "conflict_policy": "smart_merge_v1",
+      "intent_kind": "explicit_set",
+      "depends_on": [],
+      "refs": [],
+      "verify": [
+        "deadline",
+        "notes",
+        "tags",
+        "title"
+      ],
+      "fields": {
+        "title": "New title",
+        "notes": "New notes",
+        "deadline": null,
+        "tags": [
+          "Home",
+          "Errand"
+        ]
+      }
+    },
+    "before": {
+      "title": {
+        "state": "value",
+        "value": "Old title"
+      },
+      "notes": {
+        "state": "value",
+        "value": "Old notes"
+      },
+      "deadline": {
+        "state": "value",
+        "value": "2026-11-02"
+      },
+      "tags": {
+        "state": "value",
+        "value": [
+          "Home"
+        ]
+      }
+    },
+    "after": {
+      "title": {
+        "state": "value",
+        "value": "New title"
+      },
+      "notes": {
+        "state": "value",
+        "value": "New notes"
+      },
+      "deadline": {
+        "state": "absent"
+      },
+      "tags": {
+        "state": "value",
+        "value": [
+          "errand",
+          "HOME"
+        ]
+      }
+    },
+    "interrupted": false,
+    "ack": {
+      "id": "contract-update",
+      "claim": "claim-contract-update",
+      "result": {
+        "state": "applied"
+      },
+      "applied_after_sequence": 3,
+      "observed_before": {
+        "title": {
+          "state": "value",
+          "value": "Old title"
+        },
+        "notes": {
+          "state": "value",
+          "value": "Old notes"
+        },
+        "deadline": {
+          "state": "value",
+          "value": "2026-11-02"
+        },
+        "tags": {
+          "state": "value",
+          "value": [
+            "Home"
+          ]
+        }
+      },
+      "verified_after": {
+        "deadline": {
+          "state": "absent"
+        },
+        "notes": {
+          "state": "value",
+          "value": "New notes"
+        },
+        "tags": {
+          "state": "value",
+          "value": [
+            "errand",
+            "HOME"
+          ]
+        },
+        "title": {
+          "state": "value",
+          "value": "New title"
+        }
+      },
+      "merge_decision": {
+        "algorithm": "things_fields_v1",
+        "fields": {
+          "deadline": "cloud_only",
+          "notes": "cloud_only",
+          "tags": "cloud_only",
+          "title": "cloud_only"
+        }
+      }
+    },
+    "item": {
+      "id": "contract-task-update",
+      "kind": "todo",
+      "fields": {
+        "title": {
+          "state": "value",
+          "value": "Old title"
+        },
+        "notes": {
+          "state": "value",
+          "value": "Old notes"
+        },
+        "deadline": {
+          "state": "value",
+          "value": "2026-11-02"
+        },
+        "tags": {
+          "state": "value",
+          "value": [
+            "Home"
+          ]
+        },
+        "in_trash_list": {
+          "state": "value",
+          "value": false
+        }
+      }
+    }
+  },
+  {
+    "name": "move",
+    "request": {
+      "op": "move",
+      "operation_id": "contract-move",
+      "target": "contract-task-move",
+      "base_revisions": {
+        "area_id": 1,
+        "project_id": 1,
+        "heading_id": 1
+      },
+      "container": {
+        "type": "project",
+        "id": "contract-project"
+      }
+    },
+    "payload": {
+      "version": 4,
+      "protocol": "things_ops_v1",
+      "op": "move",
+      "kind": "todo",
+      "target": "contract-task-move",
+      "base": {
+        "area_id": {
+          "state": "absent"
+        },
+        "project_id": {
+          "state": "absent"
+        },
+        "heading_id": {
+          "state": "unsupported"
+        }
+      },
+      "base_revisions": {
+        "area_id": 1,
+        "project_id": 1,
+        "heading_id": 1
+      },
+      "conflict_policy": "smart_merge_v1",
+      "intent_kind": "explicit_set",
+      "depends_on": [],
+      "refs": [],
+      "verify": [
+        "container"
+      ],
+      "container": {
+        "type": "project",
+        "id": "contract-project"
+      }
+    },
+    "before": {
+      "area_id": {
+        "state": "absent"
+      },
+      "project_id": {
+        "state": "absent"
+      },
+      "heading_id": {
+        "state": "unsupported"
+      },
+      "container": {
+        "state": "value",
+        "value": {
+          "type": "inbox"
+        }
+      }
+    },
+    "after": {
+      "container": {
+        "state": "value",
+        "value": {
+          "type": "project",
+          "id": "contract-project"
+        }
+      }
+    },
+    "interrupted": false,
+    "ack": {
+      "id": "contract-move",
+      "claim": "claim-contract-move",
+      "result": {
+        "state": "applied"
+      },
+      "applied_after_sequence": 3,
+      "observed_before": {
+        "area_id": {
+          "state": "absent"
+        },
+        "project_id": {
+          "state": "absent"
+        },
+        "heading_id": {
+          "state": "unsupported"
+        },
+        "container": {
+          "state": "value",
+          "value": {
+            "type": "inbox"
+          }
+        }
+      },
+      "verified_after": {
+        "container": {
+          "state": "value",
+          "value": {
+            "type": "project",
+            "id": "contract-project"
+          }
+        }
+      },
+      "merge_decision": {
+        "algorithm": "things_fields_v1",
+        "fields": {
+          "container": "cloud_only"
+        }
+      }
+    },
+    "item": {
+      "id": "contract-task-move",
+      "kind": "todo",
+      "fields": {
+        "area_id": {
+          "state": "absent"
+        },
+        "project_id": {
+          "state": "absent"
+        },
+        "heading_id": {
+          "state": "unsupported"
+        },
+        "in_trash_list": {
+          "state": "value",
+          "value": false
+        }
+      }
+    }
+  },
+  {
+    "name": "cancel",
+    "request": {
+      "op": "set_status",
+      "operation_id": "contract-cancel",
+      "target": "contract-task-cancel",
+      "base_revisions": {
+        "status": 1
+      },
+      "status": "canceled"
+    },
+    "payload": {
+      "version": 4,
+      "protocol": "things_ops_v1",
+      "op": "set_status",
+      "kind": "todo",
+      "target": "contract-task-cancel",
+      "base": {
+        "status": {
+          "state": "value",
+          "value": "open"
+        }
+      },
+      "base_revisions": {
+        "status": 1
+      },
+      "conflict_policy": "smart_merge_v1",
+      "intent_kind": "explicit_set",
+      "depends_on": [],
+      "refs": [],
+      "verify": [
+        "status"
+      ],
+      "status": "canceled"
+    },
+    "before": {
+      "status": {
+        "state": "value",
+        "value": "open"
+      }
+    },
+    "after": {
+      "status": {
+        "state": "value",
+        "value": "canceled"
+      }
+    },
+    "interrupted": false,
+    "ack": {
+      "id": "contract-cancel",
+      "claim": "claim-contract-cancel",
+      "result": {
+        "state": "applied"
+      },
+      "applied_after_sequence": 3,
+      "observed_before": {
+        "status": {
+          "state": "value",
+          "value": "open"
+        }
+      },
+      "verified_after": {
+        "status": {
+          "state": "value",
+          "value": "canceled"
+        }
+      },
+      "merge_decision": {
+        "algorithm": "things_fields_v1",
+        "fields": {
+          "status": "cloud_only"
+        }
+      }
+    },
+    "item": {
+      "id": "contract-task-cancel",
+      "kind": "todo",
+      "fields": {
+        "status": {
+          "state": "value",
+          "value": "open"
+        },
+        "in_trash_list": {
+          "state": "value",
+          "value": false
+        }
+      }
+    }
+  },
+  {
+    "name": "trash",
+    "request": {
+      "op": "trash",
+      "operation_id": "contract-trash",
+      "target": "contract-task-trash",
+      "base_revisions": {
+        "in_trash_list": 1
+      }
+    },
+    "payload": {
+      "version": 4,
+      "protocol": "things_ops_v1",
+      "op": "trash",
+      "kind": "todo",
+      "target": "contract-task-trash",
+      "base": {
+        "in_trash_list": {
+          "state": "value",
+          "value": false
+        }
+      },
+      "base_revisions": {
+        "in_trash_list": 1
+      },
+      "conflict_policy": "smart_merge_v1",
+      "intent_kind": "explicit_set",
+      "depends_on": [],
+      "refs": [],
+      "verify": [
+        "in_trash_list"
+      ]
+    },
+    "before": {
+      "in_trash_list": {
+        "state": "value",
+        "value": false
+      }
+    },
+    "after": {
+      "in_trash_list": {
+        "state": "value",
+        "value": true
+      }
+    },
+    "interrupted": false,
+    "ack": {
+      "id": "contract-trash",
+      "claim": "claim-contract-trash",
+      "result": {
+        "state": "applied"
+      },
+      "applied_after_sequence": 3,
+      "observed_before": {
+        "in_trash_list": {
+          "state": "value",
+          "value": false
+        }
+      },
+      "verified_after": {
+        "in_trash_list": {
+          "state": "value",
+          "value": true
+        }
+      },
+      "merge_decision": {
+        "algorithm": "things_fields_v1",
+        "fields": {
+          "in_trash_list": "cloud_only"
+        }
+      }
+    },
+    "item": {
+      "id": "contract-task-trash",
+      "kind": "todo",
+      "fields": {
+        "in_trash_list": {
+          "state": "value",
+          "value": false
+        }
+      }
+    }
+  },
+  {
+    "name": "restore",
+    "request": {
+      "op": "restore",
+      "operation_id": "contract-restore",
+      "target": "contract-task-restore",
+      "base_revisions": {
+        "in_trash_list": 1
+      }
+    },
+    "payload": {
+      "version": 4,
+      "protocol": "things_ops_v1",
+      "op": "restore",
+      "kind": "todo",
+      "target": "contract-task-restore",
+      "base": {
+        "in_trash_list": {
+          "state": "value",
+          "value": true
+        }
+      },
+      "base_revisions": {
+        "in_trash_list": 1
+      },
+      "conflict_policy": "smart_merge_v1",
+      "intent_kind": "explicit_set",
+      "depends_on": [],
+      "refs": [],
+      "verify": [
+        "in_trash_list"
+      ]
+    },
+    "before": {
+      "in_trash_list": {
+        "state": "value",
+        "value": true
+      }
+    },
+    "after": {
+      "in_trash_list": {
+        "state": "value",
+        "value": false
+      }
+    },
+    "interrupted": false,
+    "ack": {
+      "id": "contract-restore",
+      "claim": "claim-contract-restore",
+      "result": {
+        "state": "applied"
+      },
+      "applied_after_sequence": 3,
+      "observed_before": {
+        "in_trash_list": {
+          "state": "value",
+          "value": true
+        }
+      },
+      "verified_after": {
+        "in_trash_list": {
+          "state": "value",
+          "value": false
+        }
+      },
+      "merge_decision": {
+        "algorithm": "things_fields_v1",
+        "fields": {
+          "in_trash_list": "cloud_only"
+        }
+      }
+    },
+    "item": {
+      "id": "contract-task-restore",
+      "kind": "todo",
+      "fields": {
+        "in_trash_list": {
+          "state": "value",
+          "value": true
+        }
+      }
+    }
+  },
+  {
+    "name": "things-changed",
+    "request": {
+      "op": "update",
+      "operation_id": "contract-things-changed",
+      "target": "contract-task-things-changed",
+      "base_revisions": {
+        "title": 1
+      },
+      "fields": {
+        "title": "Cloud"
+      }
+    },
+    "payload": {
+      "version": 4,
+      "protocol": "things_ops_v1",
+      "op": "update",
+      "kind": "todo",
+      "target": "contract-task-things-changed",
+      "base": {
+        "title": {
+          "state": "value",
+          "value": "Base"
+        }
+      },
+      "base_revisions": {
+        "title": 1
+      },
+      "conflict_policy": "things_wins",
+      "intent_kind": "explicit_set",
+      "depends_on": [],
+      "refs": [],
+      "verify": [
+        "title"
+      ],
+      "fields": {
+        "title": "Cloud"
+      }
+    },
+    "before": {
+      "title": {
+        "state": "value",
+        "value": "Local"
+      }
+    },
+    "after": {},
+    "interrupted": false,
+    "ack": {
+      "id": "contract-things-changed",
+      "claim": "claim-contract-things-changed",
+      "result": {
+        "state": "skipped",
+        "reason": "things_changed"
+      },
+      "applied_after_sequence": 3,
+      "observed_before": {
+        "title": {
+          "state": "value",
+          "value": "Local"
+        }
+      }
+    },
+    "item": {
+      "id": "contract-task-things-changed",
+      "kind": "todo",
+      "fields": {
+        "title": {
+          "state": "value",
+          "value": "Base"
+        },
+        "in_trash_list": {
+          "state": "value",
+          "value": false
+        }
+      }
+    }
+  },
+  {
+    "name": "interrupted-create",
+    "request": {
+      "op": "create",
+      "operation_id": "contract-interrupted-create",
+      "kind": "todo",
+      "temp_id": "tmp-interrupted-create",
+      "fields": {
+        "title": "Never repeat"
+      }
+    },
+    "payload": {
+      "version": 4,
+      "protocol": "things_ops_v1",
+      "op": "create",
+      "kind": "todo",
+      "target": "tmp-interrupted-create",
+      "base": {},
+      "base_revisions": {},
+      "conflict_policy": "smart_merge_v1",
+      "intent_kind": "explicit_set",
+      "depends_on": [],
+      "refs": [],
+      "verify": [
+        "title"
+      ],
+      "temp_id": "tmp-interrupted-create",
+      "fields": {
+        "title": "Never repeat"
+      }
+    },
+    "before": {},
+    "after": {},
+    "interrupted": true,
+    "ack": {
+      "id": "contract-interrupted-create",
+      "claim": "claim-contract-interrupted-create",
+      "result": {
+        "state": "uncertain",
+        "reason": "interrupted_write"
+      },
+      "applied_after_sequence": 3
+    }
+  }
+]
