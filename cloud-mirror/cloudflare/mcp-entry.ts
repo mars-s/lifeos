@@ -17,6 +17,8 @@ type OAuthEnv=Env & {
   OAUTH_KV?:KVNamespace; OAUTH_PROVIDER?:OAuthHelpers;
   GITHUB_CLIENT_ID?:string; GITHUB_CLIENT_SECRET?:string;
   LIFEOS_GITHUB_OWNER_ID?:string;
+  // Extra browser origins allowed to call /mcp, space or comma separated https origins.
+  LIFEOS_MCP_ALLOWED_ORIGINS?:string;
 };
 const origin='https://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev';
 const resource=origin+'/mcp';
@@ -27,6 +29,10 @@ const writeSecurity={securitySchemes:[{type:'oauth2',scopes:[scope,writeScope]}]
 const policyDescription=(env:Env)=>env.LIFEOS_SMART_SYNC_ENABLED==='true'?'Supported fields merge automatically from the exact observed base. Explicit cloud commands resolve same-field conflicts; conflicting alternatives remain in the journal.':env.LIFEOS_CLOUD_WINS_ENABLED==='true'?'Explicit cloud edits take priority for the requested field until a later Things snapshot confirms them.':'Things wins if the edited field changed; skipped edits remain in the journal.';
 const writeConsent=()=>({content:[{type:'text' as const,text:'Reconnect LifeOS and approve things:write before queuing changes.'}],isError:true,_meta:{'mcp/www_authenticate':[`Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", scope="things:read things:write"`]}});
 type Identity={owner:string;github_id:string;role:'reader'};
+// Server-side MCP clients send no Origin and rely on the bearer token alone. Browser-hosted
+// clients send one; only this Worker and the listed https origins may use a token from a page.
+const defaultBrowserOrigins='https://chatgpt.com https://chat.openai.com';
+const browserOrigins=(env:OAuthEnv)=>[origin,...(env.LIFEOS_MCP_ALLOWED_ORIGINS??defaultBrowserOrigins).split(/[\s,]+/).filter(o=>{try{const u=new URL(o);return u.protocol==='https:'&&u.origin===o;}catch{return false;}})];
 const json=(body:unknown,status:number)=>Response.json(body,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 const escape=(value:string)=>value.replace(/[&<>"']/g,c=>`&#${c.charCodeAt(0)};`);
 function owner(identity:unknown,env:OAuthEnv):identity is Identity {
@@ -127,8 +133,9 @@ async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Re
   if(!c.auth?.scope.includes(scope))return json({error:'Read scope required.'},403);
   if(new URL(request.url).pathname!=='/mcp')return json({error:'MCP route not found.'},404);
   // HTTP Origin is checked without trusting identity headers or static role keys.
+  // An absent Origin is a non-browser client; the bearer token and owner check above still apply.
   const source=request.headers.get('origin');
-  if(source&&![origin,'https://chatgpt.com','https://chat.openai.com'].includes(source))return json({error:'Origin denied.'},403);
+  if(source!==null&&!browserOrigins(env).includes(source))return json({error:'Origin denied.'},403);
   const server=new McpServer({name:'LifeOS',version:'0.5.2'},{
     instructions:'For ONE task the user explicitly asks to add, use create_requested_task directly. For an explicit single-task edit or deletion, use update_requested_task or trash_requested_task. First resolve the exact task and source_hash with local search_things/read_things_list, not the potentially stale cloud mirror. If ambiguous, ask which task. Deletion means recoverable Trash only. The request is permission: do not prepare a proposal or ask for a second LifeOS approval. Resolve relative dates in the user timezone to YYYY-MM-DD; put timing constraints such as "after 8pm" in notes. These tools do not set a timed alarm. Reuse the same request_id and arguments after a timeout; only report saved when saved is true with a receipt. An awake connected Mac and existing things:write plus lifeos:local permissions are required. Never bypass platform permissions. Inferred meeting follow-ups, batches and Calendar changes still require a reviewed exact-revision proposal and verified apply.',
   });
