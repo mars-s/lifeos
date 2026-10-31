@@ -8,7 +8,7 @@ import {readFile,rm,mkdtemp} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-await build({entryPoints:['mcp-entry.ts'],outfile:'.test-oauth.mjs',bundle:true,platform:'node',format:'esm',loader:{'.html':'text'},external:['cloudflare:workers']});
+await build({entryPoints:['mcp-entry.ts'],outfile:'.test-oauth.mjs',bundle:true,platform:'node',format:'esm',banner:{js:"import {createRequire} from 'node:module';const require=createRequire('/');"},loader:{'.html':'text','.css':'text'},external:['cloudflare:workers']});
 const origin='https://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev',resource=origin+'/mcp';
 const redirectUri='https://claude.ai/api/mcp/auth_callback';
 const dir=await mkdtemp(join(tmpdir(),'lifeos-oauth-fixture-'));
@@ -72,6 +72,36 @@ try {
    assert.ok(jar.set.some(c=>c.startsWith(consentCookie.split('=')[0]+'=;')&&/Max-Age=0/.test(c)),'consent cookie cleared on approval');
    assert.equal((await request(jar,callback)).status,302);
   });
+  await t.test('consent accepts null or missing Origin only with same-origin fetch metadata and bound cookies',async()=>{
+   for(const originHeaders of [{Origin:'null'},{}]){
+    for(const decision of ['allow','deny']){
+     const jar=new Jar(),{html}=await consent(jar);
+     const body=new URLSearchParams({handle:handleOf(html),decision});
+     const headers={...originHeaders,'Sec-Fetch-Site':'same-origin'};
+     const response=await request(jar,'/authorize',{method:'POST',body,headers});
+     assert.equal(response.status,decision==='allow'?200:302,JSON.stringify({originHeaders,decision,status:response.status,error:response.status===403?await response.text():undefined}));
+     if(decision==='deny')assert.equal(new URL(response.headers.get('location')).searchParams.get('error'),'access_denied');
+     const replay=await request(jar,'/authorize',{method:'POST',body,headers});assert.equal(replay.status,400,'one-time consent still applies');
+    }
+   }
+   const ownerJar=new Jar(),{html}=await consent(ownerJar);
+   const unbound=await request(new Jar(),'/authorize',{method:'POST',body:new URLSearchParams({handle:handleOf(html),decision:'allow'}),headers:{Origin:'null','Sec-Fetch-Site':'same-origin'}});
+   assert.equal(unbound.status,400);assert.equal((await unbound.json()).reason,'browser_session_missing');
+  });
+  await t.test('consent rejects foreign origins and unproven null or missing origins without consuming consent',async()=>{
+   const jar=new Jar(),{html}=await consent(jar),body=new URLSearchParams({handle:handleOf(html),decision:'allow'});
+   const before=upstreamCalls;
+   for(const headers of [
+    {Origin:'null'},{},
+    {Origin:'null','Sec-Fetch-Site':'cross-site'},{Origin:'null','Sec-Fetch-Site':'same-site'},
+    {'Sec-Fetch-Site':'cross-site'},{'Sec-Fetch-Site':'none'},
+    {Origin:'https://attacker.invalid','Sec-Fetch-Site':'same-origin'},
+    {Origin:origin+'.attacker.invalid','Sec-Fetch-Site':'same-origin'},
+   ]){
+    const denied=await request(jar,'/authorize',{method:'POST',body,headers});assert.equal(denied.status,403,JSON.stringify(headers));assert.deepEqual(await denied.json(),{error:'Same-origin consent required.'});
+   }
+   assert.equal(upstreamCalls,before);await approve(jar,html);
+  });
   await t.test('root cause: a second load of the callback finds its cookie already cleared',async()=>{
    // Reload, back/forward, a double tap on the old manual link, or a scanner that followed the
    // GitHub redirect: the first load consumes the state and clears the cookie, the second fails.
@@ -91,7 +121,7 @@ try {
   });
   await t.test('fix: the continue page goes on to GitHub by itself',async()=>{
    const jar=new Jar(),{html}=await consent(jar),{r,page,github,callback}=await approve(jar,html);
-   assertStrictCsp(r,page);assert.deepEqual(cspOf(r)['form-action'],["'none'"]);assert.equal(r.headers.get('referrer-policy'),'no-referrer');assert.equal(r.headers.get('location'),null);
+   assertStrictCsp(r,page);assert.deepEqual(cspOf(r)['form-action'],["'none'"]);assert.equal(r.headers.get('referrer-policy'),'same-origin');assert.equal(r.headers.get('location'),null);
    const refresh=page.match(/<meta http-equiv="refresh" content="0;url=([^"]+)">/);assert.ok(refresh,'meta refresh');assert.equal(new URL(decode(refresh[1])).href,github.href);
    assert.equal(github.searchParams.get('code_challenge_method'),'S256');assert.equal(github.searchParams.get('scope'),'');assert.equal(github.searchParams.get('redirect_uri'),origin+'/callback');
    assert.match(page,/Continue to GitHub/);assert.match(page,/<main id="main">/);
@@ -123,14 +153,14 @@ try {
   await t.test('consent page: strict CSP, labelled fields, escaped values, no em dash',async()=>{
    const jar=new Jar(),{r,html}=await consent(jar);assert.equal(r.status,200);
    const nonce=assertStrictCsp(r,html),again=assertStrictCsp(...Object.values(await consent(new Jar())));assert.notEqual(nonce,again,'fresh nonce per response');
-   assert.equal(r.headers.get('x-frame-options'),'DENY');assert.equal(r.headers.get('cache-control'),'no-store');
+   assert.equal(r.headers.get('x-frame-options'),'DENY');assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('referrer-policy'),'same-origin');
    assert.match(html,/<meta name="viewport" content="width=device-width,initial-scale=1">/);assert.match(html,/prefers-color-scheme:dark/);assert.match(html,/prefers-reduced-motion:reduce/);assert.match(html,/:focus-visible\{outline:3px/);
    assert.match(html,/<main id="main">/);assert.match(html,/<h1>Allow access to LifeOS\?<\/h1>/);
    assert.ok(html.includes('Synthetic &#34;Claude&#34; &#60;b&#62;client&#60;/b&#62;'));assert.ok(!html.includes('<b>client'));
    assert.equal(html.match(/<form /g).length,1);assert.match(html,/<form method="post" action="\/authorize">/);
    assert.match(html,/<input type="hidden" name="handle" value="[^"]+">/);
    const boxes=[...html.matchAll(/<input type="checkbox" id="([^"]+)" name="([^"]+)" value="allow" aria-describedby="([^"]+)"( checked)?>/g)].map(([,id,name,described,checked])=>({id,name,described,checked:!!checked}));
-   assert.deepEqual(boxes.map(b=>[b.name,b.checked]),[['queued_writes',true],['local_tools',false],['notes',false],['notes_write',false]]);
+   assert.deepEqual(boxes.map(b=>[b.name,b.checked]),[['queued_writes',true],['local_tools',false],['notes',false],['notes_write',false],['artifacts',false]]);
    for(const b of boxes){assert.match(html,new RegExp(`<label class="row" for="${b.id}"><input type="checkbox" id="${b.id}"`));assert.match(html,new RegExp(`<p id="${b.described}">[^<]{20,}</p>`));}
    assert.equal([...html.matchAll(/ id="([^"]+)"/g)].map(m=>m[1]).length,new Set([...html.matchAll(/ id="([^"]+)"/g)].map(m=>m[1])).size,'unique ids');
    assert.match(html,/<button class="primary" name="decision" value="allow">Allow with GitHub<\/button><button class="secondary" name="decision" value="deny">Deny<\/button>/);

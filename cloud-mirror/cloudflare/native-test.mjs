@@ -10,7 +10,7 @@ import {createHash} from 'node:crypto';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-await build({entryPoints:['mcp-entry.ts'],outfile:'.test-native.mjs',bundle:true,platform:'node',format:'esm',loader:{'.html':'text'},external:['cloudflare:workers']});
+await build({entryPoints:['mcp-entry.ts'],outfile:'.test-native.mjs',bundle:true,platform:'node',format:'esm',banner:{js:"import {createRequire} from 'node:module'; const require=createRequire('/');"},loader:{'.html':'text','.css':'text'},external:['cloudflare:workers']});
 const dir=await mkdtemp(join(tmpdir(),'native-sync-fixture-'));
 const origin='https://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev',resource=origin+'/mcp';
 const agent='SYNTHETIC-native-agent-at-least-32-characters',sync='SYNTHETIC-old-upload-at-least-32-characters';
@@ -45,7 +45,8 @@ async function connect(scope,includeWrites=false,includeLocal=false,extra={}){
  const page=await req('/authorize?'+new URLSearchParams({response_type:'code',client_id:client,redirect_uri:'https://chatgpt.com/connector/oauth/callback',scope,state:'fixture',resource,code_challenge: createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256'}));assert.equal(page.status,200);const html=await page.text();
  if(scope.includes('things:write'))assert.match(html,/Things wins/);
  if(includeWrites)assert.match(html,/name="queued_writes"/);
- const upstream=await req('/authorize',new URLSearchParams({handle:html.match(/name="handle" value="([^"]+)"/)[1],decision:'allow',...(includeWrites?{queued_writes:'allow'}:{}),...(includeLocal?{local_tools:'allow'}:{}),...extra}),{Origin:origin});assert.equal(upstream.status,200);
+ // Match the browser's hidden input when a write scope is already requested.
+ const upstream=await req('/authorize',new URLSearchParams({handle:html.match(/name="handle" value="([^"]+)"/)[1],decision:'allow',...(includeWrites||scope.split(' ').includes('things:write')?{queued_writes:'allow'}:{}),...(includeLocal?{local_tools:'allow'}:{}),...extra}),{Origin:origin});assert.equal(upstream.status,200);
  const continuation=await upstream.text(),github=new URL(continuation.match(/href="([^"]+)"/)[1].replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n))));assert.equal(github.origin,'https://github.com');
  const callback=await req('/callback?'+new URLSearchParams({code:'fixture-code',state:github.searchParams.get('state')}));
  const code=new URL(callback.headers.get('location')).searchParams.get('code');
@@ -175,13 +176,13 @@ try {
    });
    await t.test('read grants remain read-only after activation and cannot expand on refresh',async()=>{
     const tools=(await read.sdk.listTools()).tools;
-    assert.deepEqual(tools.map(t=>t.name),['render_day_plan','render_week_plan','render_brain_dump_canvas',...localNames,'get_lifeos_capabilities','read_things_mirror','queue_things_trash','queue_things_edit',...thingsTools]);
+    assert.deepEqual(tools.map(t=>t.name),['render_day_plan','render_week_plan','render_brain_dump_canvas',...localNames,'create_artifact','read_artifact','list_artifacts','share_artifact','list_artifact_shares','revoke_artifact_share','get_lifeos_capabilities','read_things_mirror','queue_things_trash','queue_things_edit',...thingsTools]);
     assert.deepEqual(tools.find(t=>t.name==='queue_things_edit')._meta.securitySchemes,[{type:'oauth2',scopes:['things:read','things:write']}]);
     assert.equal((await read.sdk.callTool({name:'queue_things_edit',arguments:{}})).isError,true);
     const refresh=await read.req('/oauth/token',new URLSearchParams({grant_type:'refresh_token',client_id:read.client,refresh_token:read.access.refresh_token,scope:'things:read things:write offline_access',resource}));
     if(refresh.status===200)assert.ok(!(await refresh.json()).scope.split(' ').includes('things:write'));
     else assert.equal(refresh.status,400);
-    assert.deepEqual((await write.sdk.listTools()).tools.map(t=>t.name),['render_day_plan','render_week_plan','render_brain_dump_canvas',...localNames,'get_lifeos_capabilities','read_things_mirror','queue_things_trash','queue_things_edit',...thingsTools]);
+    assert.deepEqual((await write.sdk.listTools()).tools.map(t=>t.name),['render_day_plan','render_week_plan','render_brain_dump_canvas',...localNames,'create_artifact','read_artifact','list_artifacts','share_artifact','list_artifact_shares','revoke_artifact_share','get_lifeos_capabilities','read_things_mirror','queue_things_trash','queue_things_edit',...thingsTools]);
    });
    const edit=async(operation_id,value,field='title',base_revision=1)=>write.sdk.callTool({name:'queue_things_edit',arguments:{operation_id,target:'task',field,value,base_revision}});
    await t.test('durable retry, latest queued title, pending overlay and ID immutability',async()=>{

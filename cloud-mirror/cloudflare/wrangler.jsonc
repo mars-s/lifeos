@@ -9,7 +9,7 @@
   ],
   "workers_dev": true,
   "preview_urls": false,
-  "rules": [{"type": "Text", "globs": ["**/*.html"], "fallthrough": true}],
+  "rules": [{"type": "Text", "globs": ["**/*.html", "**/*.css"], "fallthrough": true}],
   "observability": {
     "enabled": false
   },

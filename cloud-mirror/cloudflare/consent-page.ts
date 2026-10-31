@@ -13,7 +13,7 @@ export function pageHeaders(headers: Headers, nonce: string, formAction = "'none
   headers.set('Content-Type', 'text/html; charset=utf-8');
   headers.set('Cache-Control', 'no-store');
   headers.set('X-Content-Type-Options', 'nosniff');
-  headers.set('Referrer-Policy', 'no-referrer');
+  headers.set('Referrer-Policy', 'same-origin');
   headers.set('X-Frame-Options', 'DENY');
   headers.set('Content-Security-Policy', `default-src 'none'; style-src 'nonce-${nonce}'; form-action ${formAction}; base-uri 'none'; frame-ancestors 'none'`);
   return headers;
@@ -105,6 +105,7 @@ export type ConsentModel = {
   /** Writes are enabled but not requested; offered as a checkbox, ticked by default. */
   writeOffered: boolean;
   localRequested: boolean; notesRequested: boolean; notesWriteRequested: boolean;
+  artifactsRequested?: boolean;
   /** The conflict policy sentence for queued edits. */
   policy: string;
 };
@@ -138,6 +139,7 @@ export function consentPage(m: ConsentModel, nonce: string) {
     m.localRequested ? '' : option('opt-local', 'local_tools', 'Local LifeOS tools', 'lifeos:local', copy.local, false),
     option('opt-notes', 'notes', 'Anytype notes', 'notes', copy.notes, m.notesRequested),
     option('opt-notes-write', 'notes_write', 'Add and edit notes', 'notes:write', copy.notesWrite, m.notesWriteRequested),
+    option('opt-artifacts', 'artifacts', 'Share documents', 'artifacts:write', 'Save document snapshots in Cloudflare and create or revoke read-only public links. Anyone holding a link can read and forward the document without signing in. Works while your Mac is asleep.', m.artifactsRequested??false),
   ].join('');
   const hidden = `<input type="hidden" name="handle" value="${escape(m.handle)}">`
     + (m.writeRequested ? '<input type="hidden" name="queued_writes" value="allow">' : '')

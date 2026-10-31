@@ -8,7 +8,7 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-await build({entryPoints:['mcp-entry.ts'],outfile:'.test-mcp.mjs',bundle:true,platform:'node',format:'esm',loader:{'.html':'text'},external:['cloudflare:workers']});
+await build({entryPoints:['mcp-entry.ts'],outfile:'.test-mcp.mjs',bundle:true,platform:'node',format:'esm',banner:{js:"import {createRequire} from 'node:module'; const require=createRequire('/');"},loader:{'.html':'text','.css':'text'},external:['cloudflare:workers']});
 const origin='https://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev',resource=origin+'/mcp';
 const dir=await mkdtemp(join(tmpdir(),'lifeos-mcp-fixture-'));
 const hash=s=>createHash('sha256').update(s).digest('hex');
@@ -36,9 +36,9 @@ async function consent(extra={}) {
   const r=await request('/authorize?'+args);return {r,html:await r.text()};
 }
 const handle=html=>html.match(/name="handle" value="([^"]+)"/)[1];
-async function start() {
-  const {r,html}=await consent();assert.equal(r.status,200);
-  const next=await request('/authorize',{method:'POST',body:new URLSearchParams({handle:handle(html),decision:'allow'}),headers:{Origin:origin}});assert.equal(next.status,200);
+async function start({artifacts=false,requestedArtifacts=false}={}) {
+  const {r,html}=await consent(requestedArtifacts?{scope:'things:read artifacts:write offline_access'}:{});assert.equal(r.status,200);
+  const next=await request('/authorize',{method:'POST',body:new URLSearchParams({handle:handle(html),decision:'allow',...(artifacts?{artifacts:'allow'}:{})}),headers:{Origin:origin}});assert.equal(next.status,200);
   assert.equal(next.headers.get('location'),null);
   assert.match(next.headers.get('content-security-policy'),/form-action 'none'/);
   const continuation=await next.text();assert.match(continuation,/Continue to GitHub/);
@@ -47,7 +47,7 @@ async function start() {
 }
 try {
  const db=await mf.getD1Database('DB');
- for(const file of ['0000_equal_spyke.sql','0001_hard_katie_power.sql'])await db.batch((await readFile('../site/drizzle/'+file,'utf8')).split('--> statement-breakpoint').map(s=>db.prepare(s.trim())));
+ for(const file of ['0000_equal_spyke.sql','0001_hard_katie_power.sql','0006_artifacts.sql'])await db.batch((await readFile('../site/drizzle/'+file,'utf8')).split('--> statement-breakpoint').map(s=>db.prepare(s.trim())));
  await db.batch(Array.from({length:205},(_,n)=>db.prepare('INSERT INTO mirror_items VALUES(?,?,?,?,?,?)').bind('fixture-owner','fixture-'+n,'todo',JSON.stringify({title:{state:'value',value:'Synthetic task',revision:1},recurrence:{state:'unsupported'}}),0,'2026-10-01T00:00:00Z')));
  await db.prepare('INSERT INTO mirror_items VALUES(?,?,?,?,?,?)').bind('different-owner','private-other-owner','todo','{}',0,'2026-10-01T00:00:00Z').run();
  await test('read-only MCP OAuth on workerd/D1/KV with synthetic GitHub',async t=>{
@@ -90,7 +90,7 @@ try {
    assert.match(sdk.getInstructions(),/use create_requested_task directly/);
    assert.match(sdk.getInstructions(),/do not prepare a proposal or ask for a second LifeOS approval/);
    assert.match(sdk.getInstructions(),/Never bypass platform permissions/);
-   const tools=await sdk.listTools();assert.deepEqual(tools.tools.map(t=>t.name),['render_day_plan','render_week_plan','render_brain_dump_canvas',...localNames,'get_lifeos_capabilities','read_things_mirror']);
+   const tools=await sdk.listTools();assert.deepEqual(tools.tools.map(t=>t.name),['render_day_plan','render_week_plan','render_brain_dump_canvas',...localNames,'create_artifact','read_artifact','list_artifacts','share_artifact','list_artifact_shares','revoke_artifact_share','get_lifeos_capabilities','read_things_mirror']);
    assert.equal(noteNames.length,10);assert.ok(tools.tools.every(t=>!isNoteTool(t.name)));assert.equal(tools.tools.find(tool=>tool.name==='read_things_mirror').annotations.readOnlyHint,true);
    const capabilities=(await sdk.callTool({name:'get_lifeos_capabilities',arguments:{}})).structuredContent;
    assert.equal(capabilities.local_tools_available,false);
@@ -118,7 +118,12 @@ try {
    }
    assert.ok(modelVisible.includes('render_proposal_review'));assert.ok(modelVisible.includes('apply_approved_proposal'));
    const blocked=await sdk.callTool({name:'get_brain_dump',arguments:{capture_id:'synthetic'}});assert.equal(blocked.isError,true);assert.match(blocked._meta['mcp/www_authenticate'][0],/lifeos:local/);
-   const resources=await sdk.listResources();assert.equal(resources.resources.length,6);
+   const noPublishing=await sdk.callTool({name:'create_artifact',arguments:{request_id:'denied',title:'Private',body:'Not saved'}});
+   assert.equal(noPublishing.isError,true);assert.match(noPublishing._meta['mcp/www_authenticate'][0],/artifacts:write/);
+   assert.equal(await db.prepare('SELECT count(*) AS n FROM artifacts').first('n'),0);
+   const resources=await sdk.listResources();assert.equal(resources.resources.length,7);
+   const viewer=tools.tools.find(tool=>tool.name==='read_artifact');assert.equal(viewer._meta.ui.resourceUri,'ui://lifeos/private-document-v1.html');
+   const privateResource=(await sdk.readResource({uri:viewer._meta.ui.resourceUri})).contents[0];assert.match(privateResource.text,/Create share link/);assert.deepEqual(privateResource._meta.ui.csp.connectDomains,[]);
    assert.ok(resources.resources.some(r=>r.uri==='ui://lifeos/cloud-proposal-review-v2.html'));assert.ok(resources.resources.some(r=>r.uri==='ui://lifeos/cloud-proposal-review-v1.html'));
    for(const tool of tools.tools.filter(t=>['render_day_plan','render_week_plan','render_brain_dump_canvas'].includes(t.name))){
      const uri=tool._meta.ui.resourceUri;assert.equal(tool._meta['openai/outputTemplate'],uri);
@@ -166,6 +171,66 @@ try {
    assert.equal((await request('/mcp',{headers:{Authorization:'Bearer '+access.access_token}})).status,401);
    // The provider revokes a grant when a used authorization code is replayed.
    const replay=await request('/oauth/token',{method:'POST',body:new URLSearchParams({grant_type:'authorization_code',client_id:clientId,code,redirect_uri:'https://chatgpt.com/connector/oauth/callback',code_verifier:verifier,resource})});assert.equal(replay.status,400);
+  });
+  await t.test('unchecking client-requested document permission removes it from the grant',async()=>{
+   const callback=await request(await start({requestedArtifacts:true}));
+   const code=new URL(callback.headers.get('location')).searchParams.get('code');
+   const exchanged=await request('/oauth/token',{method:'POST',body:new URLSearchParams({grant_type:'authorization_code',client_id:clientId,code,redirect_uri:'https://chatgpt.com/connector/oauth/callback',code_verifier:verifier,resource})});
+   assert.equal(exchanged.status,200);const access=await exchanged.json();assert.ok(!access.scope.split(' ').includes('artifacts:write'));
+   const sdk=new Client({name:'Unchecked document consent',version:'1'});
+   await sdk.connect(new StreamableHTTPClientTransport(new URL(resource),{requestInit:{headers:{Authorization:'Bearer '+access.access_token}},fetch:(url,init)=>mf.dispatchFetch(url,init)}));
+   try{assert.equal((await sdk.callTool({name:'create_artifact',arguments:{request_id:'unchecked-consent',title:'Not saved',body:'Private'}})).isError,true);}finally{await sdk.close();}
+   const refreshed=await request('/oauth/token',{method:'POST',body:new URLSearchParams({grant_type:'refresh_token',client_id:clientId,refresh_token:access.refresh_token,scope:'things:read artifacts:write offline_access',resource})});
+   if(refreshed.status===200)assert.ok(!(await refreshed.json()).scope.split(' ').includes('artifacts:write'));else assert.equal(refreshed.status,400);
+  });
+  await t.test('document OAuth opt-in, private snapshots, public links, expiry and revocation',async()=>{
+   const callback=await request(await start({artifacts:true}));
+   const code=new URL(callback.headers.get('location')).searchParams.get('code');
+   const exchanged=await request('/oauth/token',{method:'POST',body:new URLSearchParams({grant_type:'authorization_code',client_id:clientId,code,redirect_uri:'https://chatgpt.com/connector/oauth/callback',code_verifier:verifier,resource})});
+   assert.equal(exchanged.status,200);const access=await exchanged.json();assert.ok(access.scope.split(' ').includes('artifacts:write'));
+   const sdk=new Client({name:'Document fixture bot',version:'1'});
+   await sdk.connect(new StreamableHTTPClientTransport(new URL(resource),{requestInit:{headers:{Authorization:'Bearer '+access.access_token}},fetch:(url,init)=>mf.dispatchFetch(url,init)}));
+   const call=async(name,args)=>{const result=await sdk.callTool({name,arguments:args});assert.notEqual(result.isError,true,JSON.stringify({name,result}));return result.structuredContent.result;};
+   try {
+    const doc={request_id:'synthetic-document',title:'A shared research note',summary:'Synthetic example only.',format:'markdown',body:'## Findings\n\nA clear **document**, with a [source](https://example.com).\n\n| Area | State |\n| --- | --- |\n| Sharing | Ready |\n\n## Next steps\n\n- Read the note\n- Discuss it\n\n<div class="callout info"><div class="callout-body"><p class="callout-title">A useful detail</p><p>This is a synthetic sharing test.</p></div></div>\n\n<script>window.stolen=true</script><img src="https://attacker.invalid/pixel"><a href="javascript:alert(1)" onclick="alert(1)">Unsafe link</a><style>body{display:none}</style><iframe src="https://attacker.invalid"></iframe>'};
+    const saved=await call('create_artifact',doc);assert.equal(saved.shared,false);assert.equal(saved.visibility,'private');assert.equal(saved.active_share_count,0);
+    assert.deepEqual(await call('create_artifact',doc),saved);
+    assert.equal((await sdk.callTool({name:'create_artifact',arguments:{...doc,body:'Changed'}})).isError,true);
+    assert.equal((await call('read_artifact',{artifact_id:saved.artifact_id})).body,doc.body);
+    const privatePreview=await sdk.callTool({name:'read_artifact',arguments:{artifact_id:saved.artifact_id}});
+    assert.match(privatePreview._meta.artifact_markup,/Private preview/);assert.ok(!privatePreview._meta.artifact_markup.includes('Anyone with this link can view'));
+    assert.equal(await db.prepare('SELECT COUNT(*) AS n FROM artifact_shares').first('n'),0);
+    assert.equal((await call('list_artifacts',{})).length,1);
+    assert.equal((await request('/s/'+saved.artifact_id,{cookie:false})).status,404);
+    const args={request_id:'synthetic-share',artifact_id:saved.artifact_id,label:'Private invite label'};
+    const link=await call('share_artifact',args);assert.equal(link.active,true);assert.match(link.url,/\/s\/[a-f0-9]{64}$/);
+    assert.equal((await call('read_artifact',{artifact_id:saved.artifact_id})).visibility,'shared');
+    assert.equal((await call('create_artifact',doc)).shared,true);
+    assert.deepEqual(await call('share_artifact',args),link);
+    assert.equal((await sdk.callTool({name:'share_artifact',arguments:{...args,label:'Changed'}})).isError,true);
+    const publicPage=await request(new URL(link.url).pathname,{cookie:false});assert.equal(publicPage.status,200);
+    const html=await publicPage.text();assert.match(html,/<h1>A shared research note<\/h1>/);assert.match(html,/Contents/);assert.match(html,/class="data"/);assert.match(html,/class="callout info"/);
+    for(const unsafe of ['<script','<img','<iframe','onclick=','javascript:','attacker.invalid','Private invite label','window.stolen','body{display:none}'])assert.ok(!html.includes(unsafe),unsafe);
+    assert.match(publicPage.headers.get('cache-control'),/no-store/);assert.equal(publicPage.headers.get('referrer-policy'),'no-referrer');assert.match(publicPage.headers.get('x-robots-tag'),/noindex/);assert.match(publicPage.headers.get('content-security-policy'),/default-src 'none'/);assert.match(publicPage.headers.get('content-security-policy'),/style-src 'sha256-/);
+    const head=await request(new URL(link.url).pathname,{method:'HEAD',cookie:false});assert.equal(head.status,200);assert.equal(await head.text(),'');
+    assert.equal((await request(new URL(link.url).pathname,{method:'POST',cookie:false})).status,405);
+    const second=await call('share_artifact',{...args,request_id:'second-invite',label:'Another reader',expires_at:new Date(Date.now()+86400000).toISOString()});
+    assert.notEqual(second.url,link.url);assert.equal((await call('list_artifact_shares',{artifact_id:saved.artifact_id})).length,2);
+    await call('revoke_artifact_share',{share_id:link.share_id});await call('revoke_artifact_share',{share_id:link.share_id});
+    const revoked=await request(new URL(link.url).pathname,{cookie:false});assert.equal(revoked.status,404);const unavailable=await revoked.text();assert.ok(!unavailable.includes(doc.title));
+    assert.equal((await request(new URL(second.url).pathname,{cookie:false})).status,200);
+    assert.equal((await call('share_artifact',args)).active,false);
+    await db.prepare('UPDATE artifact_shares SET expires_at=? WHERE id=?').bind('2020-01-01T00:00:00Z',second.share_id).run();
+    const expired=await request(new URL(second.url).pathname,{cookie:false});assert.equal(expired.status,404);assert.equal(await expired.text(),unavailable);
+    assert.equal((await call('read_artifact',{artifact_id:saved.artifact_id})).visibility,'private');
+    assert.equal((await call('list_artifacts',{}))[0].visibility,'private');
+    assert.equal((await sdk.callTool({name:'share_artifact',arguments:{...args,request_id:'past-expiry',expires_at:'2020-01-01T00:00:00Z'}})).isError,true);
+    const otherId=crypto.randomUUID();await db.prepare('INSERT INTO artifacts VALUES(?,?,?,?,?,?,?,?,?)').bind('other-owner',otherId,'other-private','hash','Private other document','','html','<h2>Secret</h2>',new Date().toISOString()).run();
+    assert.equal((await sdk.callTool({name:'read_artifact',arguments:{artifact_id:otherId}})).isError,true);
+    assert.equal((await sdk.callTool({name:'share_artifact',arguments:{...args,request_id:'wrong-owner',artifact_id:otherId}})).isError,true);
+    assert.equal((await call('list_artifacts',{})).length,1);
+    assert.equal((await sdk.callTool({name:'create_artifact',arguments:{...doc,request_id:'oversize',body:'a'.repeat(140001)}})).isError,true);
+   } finally {await sdk.close();}
   });
   await t.test('wrong PKCE verifier cannot exchange a code',async()=>{
    const r=await request(await start()),code=new URL(r.headers.get('location')).searchParams.get('code');

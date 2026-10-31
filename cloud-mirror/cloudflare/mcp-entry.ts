@@ -13,6 +13,7 @@ import {registerCloudUI} from './cloud-ui';
 import {registerLocalBridge} from './local-bridge';
 import {localScope,notesScope,notesWriteScope} from './bridge-contract';
 import {newNonce,pageHeaders,consentPage,continuePage,errorPage} from './consent-page';
+import {artifactScope,registerArtifacts,publicArtifact} from './artifacts';
 
 // OAuth grants explicitly gate read access and queued writes.
 type OAuthEnv=Env & {
@@ -25,7 +26,7 @@ type OAuthEnv=Env & {
 const origin='https://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev';
 const resource=origin+'/mcp';
 const scope='things:read';
-const supportedScopes=['things:read','things:write','lifeos:local',notesScope,notesWriteScope,'offline_access'];
+const supportedScopes=['things:read','things:write','lifeos:local',notesScope,notesWriteScope,artifactScope,'offline_access'];
 const writeScope='things:write';
 const writeSecurity={securitySchemes:[{type:'oauth2',scopes:[scope,writeScope]}]};
 const policyDescription=(env:Env)=>env.LIFEOS_SMART_SYNC_ENABLED==='true'?'Supported fields merge automatically from the exact observed base. Explicit cloud commands resolve same-field conflicts; conflicting alternatives remain in the journal.':env.LIFEOS_CLOUD_WINS_ENABLED==='true'?'Explicit cloud edits take priority for the requested field until a later Things snapshot confirms them.':'Things wins if the edited field changed; skipped edits remain in the journal.';
@@ -85,19 +86,30 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       const clientOrigin=new URL(req.redirectUri).origin,nonce=newNonce();
       return new Response(consentPage({clientName:facts.clientName,redirectHost:facts.redirectHost,loopback:facts.redirectIsLoopback,handle:consent.handle,
         writeRequested:req.scope.includes(writeScope),writeOffered:!req.scope.includes(writeScope)&&writesEnabled(env),
-        localRequested:req.scope.includes(localScope),notesRequested:req.scope.includes(notesScope),notesWriteRequested:req.scope.includes(notesWriteScope),
+        localRequested:req.scope.includes(localScope),notesRequested:req.scope.includes(notesScope),notesWriteRequested:req.scope.includes(notesWriteScope),artifactsRequested:req.scope.includes(artifactScope),
         policy:policyDescription(env)},nonce),{headers:pageHeaders(consent.headers,nonce,`'self' https://github.com ${clientOrigin}`)});
     }
     if(url.pathname==='/authorize'&&request.method==='POST') {
       stage='consent_session';
-      if(request.headers.get('origin')!==origin)return json({error:'Same-origin consent required.'},403);
+      const requestOrigin=request.headers.get('origin');
+      // Older consent pages can hide Origin. Browser fetch metadata can establish
+      // same-origin navigation; the transaction-bound cookie is still mandatory.
+      const sameOrigin=requestOrigin===origin||
+        ((requestOrigin===null||requestOrigin==='null')&&request.headers.get('sec-fetch-site')==='same-origin');
+      if(!sameOrigin)return json({error:'Same-origin consent required.'},403);
       const form=await request.formData(),handle=String(form.get('handle')??'');
       if(form.get('decision')==='deny') {const denied=await oauth.denyConsent(request,handle);return new Response(null,{status:302,headers:denied.headers});}
       if(form.get('decision')!=='allow')return json({error:'Consent required.'},400);
-      // Only the fixed optional write permission can be added by owner consent.
+      // An explicit list removes unchecked permissions even if the client requested them.
       // Client identity, redirect and PKCE remain recovered from the bound transaction.
-      const approved=await oauth.approveConsent(request,handle,
-        form.get('local_tools')==='allow'?{scope:[scope,...form.get('queued_writes')==='allow'&&writesEnabled(env)?[writeScope]:[],localScope,...form.get('notes')==='allow'?[notesScope,...form.get('notes_write')==='allow'?[notesWriteScope]:[]]:[],'offline_access']}:form.get('queued_writes')==='allow'&&writesEnabled(env)?{scope:[scope,writeScope,'offline_access']}:{});
+      const approvedScopes=[
+        scope,
+        ...form.get('queued_writes')==='allow'&&writesEnabled(env)?[writeScope]:[],
+        ...form.get('local_tools')==='allow'?[localScope,...form.get('notes')==='allow'?[notesScope,...form.get('notes_write')==='allow'?[notesWriteScope]:[]]:[]]:[],
+        ...form.get('artifacts')==='allow'?[artifactScope]:[],
+        'offline_access',
+      ];
+      const approved=await oauth.approveConsent(request,handle,{scope:approvedScopes});
       if(approved.request.scope.includes(writeScope)&&!writesEnabled(env))return json({error:'Write activation pending.'},403);
       const verifier=crypto.randomUUID()+crypto.randomUUID();
       stage='github_redirect';
@@ -164,14 +176,16 @@ async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Re
   const source=request.headers.get('origin');
   if(source!==null&&!browserOrigins(env).includes(source))return json({error:'Origin denied.'},403);
   const server=new McpServer({name:'LifeOS',version:'0.5.2'},{
-    instructions:'For ONE task the user explicitly asks to add, use create_requested_task directly. For an explicit single-task edit or deletion, use update_requested_task or trash_requested_task. First resolve the exact task and source_hash with local search_things/read_things_list, not the potentially stale cloud mirror. If ambiguous, ask which task. Deletion means recoverable Trash only. The request is permission: do not prepare a proposal or ask for a second LifeOS approval. Resolve relative dates in the user timezone to YYYY-MM-DD; put timing constraints such as "after 8pm" in notes. These tools do not set a timed alarm. Reuse the same request_id and arguments after a timeout; only report saved when saved is true with a receipt. An awake connected Mac and existing things:write plus lifeos:local permissions are required. Never bypass platform permissions. Inferred meeting follow-ups, batches and Calendar changes still require a reviewed exact-revision proposal and verified apply. When local tools are unavailable or the Mac may be asleep, explicitly requested Things changes can be queued with the queue_things_* tools instead; they wait durably for the Mac and report progress through read_things_operations.',
+    instructions:'For documents, create_artifact saves a private immutable snapshot. Use read_artifact after saving to show a private preview with an optional Share button. Only call share_artifact when the user asks to share that specific document. Anyone holding its URL can read and forward it without signing in. Invite labels do not verify identity. Supply actual content, never a sandbox path. Reuse request_id and exact arguments after timeouts. Never publish unrelated notes or health data. '+'For ONE task the user explicitly asks to add, use create_requested_task directly. For an explicit single-task edit or deletion, use update_requested_task or trash_requested_task. First resolve the exact task and source_hash with local search_things/read_things_list, not the potentially stale cloud mirror. If ambiguous, ask which task. Deletion means recoverable Trash only. The request is permission: do not prepare a proposal or ask for a second LifeOS approval. Resolve relative dates in the user timezone to YYYY-MM-DD; put timing constraints such as "after 8pm" in notes. These tools do not set a timed alarm. Reuse the same request_id and arguments after a timeout; only report saved when saved is true with a receipt. An awake connected Mac and existing things:write plus lifeos:local permissions are required. Never bypass platform permissions. Inferred meeting follow-ups, batches and Calendar changes still require a reviewed exact-revision proposal and verified apply. When local tools are unavailable or the Mac may be asleep, explicitly requested Things changes can be queued with the queue_things_* tools instead; they wait durably for the Mac and report progress through read_things_operations.',
   });
   const localAvailable=env.OWNER_SYNC?await ownerSync(env).localBridgeAvailable():false;
   const localAllowed=c.auth!.scope.includes(localScope);
   registerCloudUI(server,origin,localAvailable&&localAllowed);
   registerLocalBridge(server,env,c.auth!.scope,origin);
+  registerArtifacts(server,env,c.auth!.scope,origin);
   server.registerTool('get_lifeos_capabilities',{description:'Read the capabilities of this connection. Reports which local LifeOS features have not migrated. Does not establish that the Mac is online.',inputSchema:{},annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async()=>{
     const capabilities={connector:'LifeOS',preview_widgets:['day_plan','week_plan','brain_dump_canvas','proposal_review','memory_review'],cloud_queue_enabled:writesEnabled(env),connection_can_write:writesEnabled(env)&&c.auth!.scope.includes(writeScope),supported_writes:['title','complete_todo','trash_todo',...thingsWrites],things_ops_version:1,local_tools_connected:localAvailable,connection_can_use_local_tools:localAllowed,local_tools_available:localAvailable&&localAllowed,local_task_creation_available:localAvailable&&localAllowed&&c.auth!.scope.includes(writeScope),local_task_crud_available:localAvailable&&localAllowed&&c.auth!.scope.includes(writeScope),local_task_tools:['create_requested_task','read_requested_task','update_requested_task','trash_requested_task'],notes_available:localAvailable&&localAllowed&&c.auth!.scope.includes(notesScope),notes_write_available:localAvailable&&localAllowed&&c.auth!.scope.includes(notesWriteScope),notes_storage:'Anytype on the Mac; never stored by this service',raw_capture_storage:'Mac only',local_tool_delivery:'transient, no offline queue or automatic replay',local_write_policy:'Explicit single-task creates, edits and recoverable Trash requests use direct tools without a LifeOS review card. Local reads avoid mirror sync delays. Other changes require exact-revision approval and verified apply.'};
+    Object.assign(capabilities,{document_sharing_available:c.auth!.scope.includes(artifactScope),document_sharing_scope:artifactScope,document_storage:'Cloudflare D1, independent of the Mac',document_link_access:'Anyone with the link, read-only, no sign-in'});
     return {content:[{type:'text' as const,text:JSON.stringify(capabilities)}],structuredContent:capabilities};
   });
   const db=new BulkD1(env.DB),queue=new NativeQueue(db,env.LIFEOS_OWNER_ID);
@@ -255,6 +269,7 @@ async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Re
 const provider=new OAuthProvider<OAuthEnv>({apiRoute:'/mcp',apiHandler:{fetch:mcp},defaultHandler:{fetch:auth},authorizeEndpoint:'/authorize',tokenEndpoint:'/oauth/token',clientRegistrationEndpoint:'/oauth/register',clientIdMetadataDocumentEnabled:false,scopesSupported:supportedScopes,requiredScopes:[scope,writeScope,localScope],resourceMetadata:{resource,authorization_servers:[origin],resource_name:'LifeOS'},accessTokenTTL:3600,refreshTokenTTL:2592000,clientRegistrationTTL:7776000,onError:()=>{},tokenExchangeCallback(options){if(!owner(options.props,options.env)||options.scope.some(s=>!supportedScopes.includes(s))||options.scope.includes(writeScope)&&!writesEnabled(options.env))throw new OAuthError('invalid_grant',{description:'Owner grant required.'});}});
 export default {async fetch(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Response> {
   const path=new URL(request.url).pathname;
+  if(path.startsWith('/s/'))return publicArtifact(request,env);
   if(path==='/health'||path==='/state'||path.startsWith('/api/'))return mirror.fetch(request,env);
   if(new URL(request.url).origin!==origin)return json({error:'OAuth host denied.'},403);
   if(!env.OAUTH_KV||!env.GITHUB_CLIENT_ID||!env.GITHUB_CLIENT_SECRET||!env.LIFEOS_GITHUB_OWNER_ID)return json({error:'Dot OAuth setup is not activated. Mac sync remains available.'},503);

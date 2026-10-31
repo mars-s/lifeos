@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en-AU"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Private LifeOS document</title>
+<style>
+/* DOCUMENT_STYLE */
+.toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:16px 24px;border-bottom:1px solid var(--border);max-width:var(--page-max);margin:0 auto}.toolbar h1{font-size:16px;line-height:24px;font-weight:600;margin:0;flex:1;overflow-wrap:anywhere}.state{color:var(--text-2);font-size:14px}button{font:inherit;font-size:14px;font-weight:500;min-height:36px;padding:8px 12px;border:0;border-radius:var(--radius-md);background:var(--accent);color:var(--on-accent);cursor:pointer}button:disabled{opacity:.55;cursor:default}button.secondary{background:var(--fill-secondary);color:var(--ink)}#message{color:var(--text-2);margin:12px auto;padding:0 24px;max-width:var(--page-max);font-size:14px;line-height:20px}#sharing{padding:12px 24px;max-width:var(--page-max);margin:0 auto;display:flex;align-items:center;flex-wrap:wrap;gap:12px}#sharing[hidden],#document[hidden]{display:none}#document{max-height:640px;overflow-y:auto;padding-top:32px;padding-bottom:32px}@media(max-width:640px){.toolbar{padding:16px;gap:8px}#message{padding:0 16px}#sharing{padding:12px 16px}}
+</style></head><body>
+<header class="toolbar"><h1 id="title">Document preview</h1><span class="state" id="state">Private</span><button id="share" disabled>Create share link</button></header>
+<p id="message" role="status">Loading your private document. Nothing is published by opening this preview.</p>
+<div id="sharing" hidden><a id="link" target="_blank" rel="noreferrer noopener">Open shared document</a><button id="revoke" class="secondary">Revoke this link</button></div>
+<main id="document" class="page" aria-label="Private document preview" hidden></main>
+<script>
+(()=>{
+  const elements=Object.fromEntries(['title','state','share','message','sharing','link','revoke','document'].map(id=>[id,document.getElementById(id)]));
+  let current=null,lastLink=null,busy=false,shareUnconfirmed=false,requestId=null,counter=0;
+  const pending=new Map();
+  function bridge(method,params){
+    const id='document-'+(++counter);
+    return new Promise((resolve,reject)=>{
+      const timeout=setTimeout(()=>{pending.delete(id);reject(new Error('No reply yet. Retry this action to check the same request.'));},30000);
+      pending.set(id,{resolve,reject,timeout});
+      parent.postMessage({jsonrpc:'2.0',id,method,params},'*');
+    });
+  }
+  async function callTool(name,args){
+    const result=window.openai?.callTool?await window.openai.callTool(name,args):await bridge('tools/call',{name,arguments:args});
+    if(result?.isError)throw new Error(result.content?.find(part=>part.type==='text')?.text||'LifeOS could not complete that action.');
+    const output=result?.structuredContent?.result??result?.result;
+    if(!output)throw new Error('LifeOS returned no confirmed result. Retry the same action.');
+    return output;
+  }
+  function receive(output,meta){
+    const data=output?.result;
+    if(!data?.id||typeof meta?.artifact_markup!=='string'||busy)return;
+    if(current?.id!==data.id){lastLink=null;requestId=null;shareUnconfirmed=false;elements.sharing.hidden=true;}
+    current=data;
+    elements.title.textContent=data.title;
+    elements.state.textContent=shareUnconfirmed?'Sharing unconfirmed':data.visibility==='shared'?'Shared':'Private';
+    elements.document.innerHTML=meta.artifact_markup;
+    elements.document.hidden=false;
+    elements.share.disabled=false;
+    elements.message.textContent=shareUnconfirmed?'A link may have been created. Retry to check the same sharing request.':data.visibility==='shared'?'This is your private preview. Existing share links remain active.':'Only you can read this through LifeOS. A share link lets anyone holding it read without signing in.';
+  }
+  elements.share.addEventListener('click',async()=>{
+    if(!current||busy)return;
+    busy=true;elements.share.disabled=true;elements.revoke.disabled=true;
+    shareUnconfirmed=true;elements.state.textContent='Sharing…';
+    requestId??=crypto.randomUUID();
+    try{
+      const link=await callTool('share_artifact',{artifact_id:current.id,request_id:requestId,label:'Shared from private preview',expires_at:null});
+      if(!link.active||!link.url)throw new Error('That link is no longer active. Ask LifeOS to create a new share link.');
+      const url=new URL(link.url);
+      if(url.protocol!=='https:'||url.origin!=='https://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev'||!/^\/s\/[a-f0-9]{64}$/.test(url.pathname))throw new Error('LifeOS returned an invalid share link.');
+      lastLink=link;requestId=null;shareUnconfirmed=false;
+      elements.link.href=url.href;elements.sharing.hidden=false;elements.state.textContent='Shared';
+      elements.message.textContent='Anyone with this link can read and forward the document. No sign-in is required.';
+      elements.share.textContent='Create another link';
+    }catch(error){elements.state.textContent='Sharing unconfirmed';elements.message.textContent=error.message+' A link may have been created. Retry to check the same sharing request.';}finally{busy=false;elements.share.disabled=false;elements.revoke.disabled=false;}
+  });
+  elements.revoke.addEventListener('click',async()=>{
+    if(!current||!lastLink||busy)return;
+    busy=true;elements.share.disabled=true;elements.revoke.disabled=true;
+    try{
+      const revoked=await callTool('revoke_artifact_share',{share_id:lastLink.share_id});
+      if(!revoked.revoked)throw new Error('Revocation was not confirmed. Retry this action.');
+      lastLink=null;elements.sharing.hidden=true;
+      const updated=await callTool('read_artifact',{artifact_id:current.id});
+      current=updated;elements.state.textContent=shareUnconfirmed?'Sharing unconfirmed':updated.visibility==='shared'?'Shared':'Private';
+      elements.message.textContent=shareUnconfirmed?'This link is revoked. Another sharing request remains unconfirmed. Retry Create share link to check it.':updated.visibility==='shared'?'This link is revoked. Other share links are still active.':'This link is revoked. The document is private again. Readers may have saved a copy.';
+    }catch(error){elements.message.textContent=error.message;}finally{busy=false;elements.share.disabled=false;elements.revoke.disabled=false;}
+  });
+  addEventListener('message',event=>{
+    if(event.source!==parent||event.data?.jsonrpc!=='2.0')return;
+    const message=event.data;
+    if(pending.has(message.id)){const call=pending.get(message.id);clearTimeout(call.timeout);pending.delete(message.id);message.error?call.reject(new Error(message.error.message||'The host refused this action.')):call.resolve(message.result);}
+    if(message.method==='ui/notifications/tool-result')receive(message.params?.structuredContent,message.params?._meta);
+  });
+  addEventListener('openai:set_globals',event=>{const globals=event.detail?.globals||{};receive(globals.toolOutput,globals.toolResponseMetadata);});
+  receive(window.openai?.toolOutput,window.openai?.toolResponseMetadata);
+  if(!window.openai)bridge('ui/initialize',{appInfo:{name:'LifeOS private documents',version:'1.0.0'},appCapabilities:{},protocolVersion:'2026-01-26'}).then(()=>parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*')).catch(()=>{elements.message.textContent='Open this preview through LifeOS in ChatGPT. Your document has not been published.';});
+})();
+</script></body></html>
