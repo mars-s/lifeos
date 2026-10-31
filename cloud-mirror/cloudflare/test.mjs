@@ -26,7 +26,7 @@ async function begin(sequence,pages,overrides={}) {
 async function stage(sequence,pages) {assert.equal((await begin(sequence,pages)).status,200);for(let page=0;page<pages.length;page++)assert.equal((await request('/api/sync/page',{sequence,page,items:pages[page]})).status,200);}
 async function state(cursor=0){const r=await request('/state?cursor='+cursor,undefined,read);assert.equal(r.status,200);return r.json();}
 try {
- for(const migration of ['0000_equal_spyke.sql','0001_hard_katie_power.sql','0002_native_sync.sql','0003_event_sync.sql','0004_smart_sync.sql'])await db.batch((await readFile('../site/drizzle/'+migration,'utf8')).split('--> statement-breakpoint').map(s=>db.prepare(s.trim())));
+ for(const migration of ['0000_equal_spyke.sql','0001_hard_katie_power.sql','0002_native_sync.sql','0003_event_sync.sql','0004_smart_sync.sql','0005_things_ops.sql'])await db.batch((await readFile('../site/drizzle/'+migration,'utf8')).split('--> statement-breakpoint').map(s=>db.prepare(s.trim())));
  await test('Workers read-only gateway on real local D1',async t=>{
   await t.test('unauthorized and spoofed Sites identity denied',async()=>{
    assert.equal((await request('/health',undefined,'')).status,200);

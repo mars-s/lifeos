@@ -59,7 +59,7 @@ async function closeSocket(ws){ws.close();await new Promise(resolve=>setTimeout(
 
 try{
  db=await mf.getD1Database('DB');
- for(const name of ['0000_equal_spyke.sql','0001_hard_katie_power.sql','0002_native_sync.sql','0003_event_sync.sql','0004_smart_sync.sql']){
+ for(const name of ['0000_equal_spyke.sql','0001_hard_katie_power.sql','0002_native_sync.sql','0003_event_sync.sql','0004_smart_sync.sql','0005_things_ops.sql']){
   const sql=await readFile(join(sourceRoot,'../site/drizzle',name),'utf8');
   await db.batch(sql.split('--> statement-breakpoint').map(statement=>statement.trim()).filter(Boolean).map(statement=>db.prepare(statement)));
  }
