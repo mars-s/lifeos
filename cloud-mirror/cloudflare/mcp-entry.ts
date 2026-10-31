@@ -11,7 +11,7 @@ import {BulkD1} from './d1-bulk';
 import {registerCloudUI} from './cloud-ui';
 import {registerLocalBridge} from './local-bridge';
 import {localScope,notesScope,notesWriteScope} from './bridge-contract';
-import {escape,newNonce,pageHeaders,continuePage,errorPage} from './consent-page';
+import {newNonce,pageHeaders,consentPage,continuePage,errorPage} from './consent-page';
 
 // OAuth grants explicitly gate read access and queued writes.
 type OAuthEnv=Env & {
@@ -58,17 +58,13 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       if(req.scope.some(s=>!supportedScopes.includes(s))||req.scope.includes(writeScope)&&!writesEnabled(env))return json({error:'This access is not activated.'},400);
       stage='consent_start';
       const facts=await oauth.describeConsent(req),consent=await oauth.beginConsent(req);
-      const headers=consent.headers;headers.set('Content-Type','text/html; charset=utf-8');
       // Chromium applies form-action to the GitHub redirect after this POST.
       // The validated client redirect is also needed when the owner declines.
-      const clientOrigin=new URL(req.redirectUri).origin;
-      headers.set('Content-Security-Policy',`default-src 'none'; form-action 'self' https://github.com ${clientOrigin}; base-uri 'none'; frame-ancestors 'none'`);
-      const writing=req.scope.includes(writeScope)||writesEnabled(env);
-      const writeChoice=req.scope.includes(writeScope)?'<input type="hidden" name="queued_writes" value="allow">':writesEnabled(env)?'<p><label><input type="checkbox" name="queued_writes" value="allow" checked> Include queued edits (things:write)</label>. Uncheck for read-only access.</p>':'';
-      const noteChecked=(s:string)=>req.scope.includes(s)?' checked':'';
-      const notesChoice=`<p><label><input type="checkbox" name="notes" value="allow"${noteChecked(notesScope)}> Include your Anytype notes (notes)</label>: search and read notes in your LifeOS Anytype space through the local tools. <label><input type="checkbox" name="notes_write" value="allow"${noteChecked(notesWriteScope)}> Let it add and edit Anytype notes (notes:write)</label>: new objects, tags, properties, collections and Things links, each marked Made by the assistant. Never deletes. Notes stay in Anytype on the Mac and only pass through this service in memory. Notes need local tools.</p>`;
-      const localChoice=(req.scope.includes(localScope)?'<input type="hidden" name="local_tools" value="allow">':'')+(!req.scope.includes(localScope)?'<p><label><input type="checkbox" name="local_tools" value="allow"> Include local LifeOS tools (lifeos:local)</label>: read Calendar and saved brain dumps, capture transcripts on the Mac, plan, recall memory and review proposals. With things:write, a single task you explicitly request can be saved without an extra LifeOS review card. Other local changes use approved proposals for Things and owned Calendar events. Explicit memory indexing uses the existing remote extraction service. Raw captures remain on the Mac, but requests and results transit this service and the connected client. Local tools require an awake Mac and its enabled bridge.</p>':'<p>Local LifeOS tools include Calendar, Mac-stored captures, planning, memory and reviewed proposals. With things:write, explicit single-task requests can save without an extra LifeOS review card. Raw captures are not stored in this cloud service. Explicit memory indexing uses the existing remote extraction service.</p>')+notesChoice;
-      return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><title>LifeOS access</title><h1>Allow ${writing?'reading and queued edits':'cloud mirror reading'}?</h1><p>${escape(facts.clientName)} requests access to cached Things tasks, projects, areas and tags, including notes.${writing?' It may queue title changes, task completion and moving to-dos to recoverable Things Trash. Your Mac applies them when awake. '+policyDescription(env):' Changes remain disabled for this grant.'}</p><p>Tokens return to ${escape(facts.redirectHost)}.${facts.redirectIsLoopback?' This is a local app; verify which app requested access.':''}</p><p>Permissions: things:read${writing?', things:write':''}. Offline access lets the client refresh its sign-in.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}">${writeChoice}${localChoice}<button name="decision" value="allow">Allow with GitHub</button><button name="decision" value="deny">Deny</button></form></html>`,{headers});
+      const clientOrigin=new URL(req.redirectUri).origin,nonce=newNonce();
+      return new Response(consentPage({clientName:facts.clientName,redirectHost:facts.redirectHost,loopback:facts.redirectIsLoopback,handle:consent.handle,
+        writeRequested:req.scope.includes(writeScope),writeOffered:!req.scope.includes(writeScope)&&writesEnabled(env),
+        localRequested:req.scope.includes(localScope),notesRequested:req.scope.includes(notesScope),notesWriteRequested:req.scope.includes(notesWriteScope),
+        policy:policyDescription(env)},nonce),{headers:pageHeaders(consent.headers,nonce,`'self' https://github.com ${clientOrigin}`)});
     }
     if(url.pathname==='/authorize'&&request.method==='POST') {
       stage='consent_session';

@@ -14,7 +14,7 @@ const redirectUri='https://claude.ai/api/mcp/auth_callback';
 const dir=await mkdtemp(join(tmpdir(),'lifeos-oauth-fixture-'));
 const hash=s=>createHash('sha256').update(s).digest('hex');
 let upstreamCalls=0;
-const mf=new Miniflare({...convertV4MiniflareOptions({modules:true,script:await readFile('.test-oauth.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],kvNamespaces:['OAUTH_KV'],d1Databases:{DB:'fixture'},bindings:{LIFEOS_OWNER_ID:'fixture-owner',LIFEOS_ADAPTER_ID:'fixture-mac',LIFEOS_GITHUB_OWNER_ID:'42',LIFEOS_WRITES_ENABLED:'true',LIFEOS_MCP_ALLOWED_ORIGINS:'https://claude.ai, https://*.example.invalid http://insecure.invalid',GITHUB_CLIENT_ID:'SYNTHETIC-client',GITHUB_CLIENT_SECRET:'SYNTHETIC-secret',LIFEOS_SYNC_KEY_SHA256:hash('SYNTHETIC-sync-fixture-only-at-least-32-characters'),LIFEOS_READ_KEY_SHA256:hash('SYNTHETIC-read-fixture-only-at-least-32-characters')},outboundService:async req=>{
+const mf=new Miniflare({...convertV4MiniflareOptions({modules:true,script:await readFile('.test-oauth.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],kvNamespaces:['OAUTH_KV'],d1Databases:{DB:'fixture'},bindings:{LIFEOS_OWNER_ID:'fixture-owner',LIFEOS_ADAPTER_ID:'fixture-mac',LIFEOS_GITHUB_OWNER_ID:'42',LIFEOS_WRITES_ENABLED:'true',LIFEOS_SMART_SYNC_ENABLED:'true',LIFEOS_AGENT_KEY_SHA256:hash('SYNTHETIC-agent-fixture-only-at-least-32-characters'),LIFEOS_MCP_ALLOWED_ORIGINS:'https://claude.ai, https://*.example.invalid http://insecure.invalid',GITHUB_CLIENT_ID:'SYNTHETIC-client',GITHUB_CLIENT_SECRET:'SYNTHETIC-secret',LIFEOS_SYNC_KEY_SHA256:hash('SYNTHETIC-sync-fixture-only-at-least-32-characters'),LIFEOS_READ_KEY_SHA256:hash('SYNTHETIC-read-fixture-only-at-least-32-characters')},outboundService:async req=>{
   upstreamCalls++;const url=new URL(req.url);
   if(url.href==='https://github.com/login/oauth/access_token')return Response.json({access_token:'SYNTHETIC-upstream',token_type:'bearer',scope:''});
   if(url.href==='https://api.github.com/user')return Response.json({id:42});
@@ -53,7 +53,7 @@ function assertStrictCsp(r,html) {
   assert.equal(csp['style-src'].length,1);const nonce=csp['style-src'][0].match(/^'nonce-([A-Za-z0-9+/=]{16,})'$/)?.[1];assert.ok(nonce,'style nonce');
   assert.equal(html.match(/<style\b/g).length,1);assert.ok(html.includes(`<style nonce="${nonce}">`));
   assert.doesNotMatch(html,/<script|<link\b|<img\b|<iframe|\bstyle="|https?:\/\/(?!github\.com)[^"\s]*\.(css|js|woff2?)/i);
-  assert.match(html,/<html lang="en-AU">/);assert.ok(!html.includes('—'),'no em dash');
+  assert.match(html,/<html lang="en-AU">/);assert.ok(!html.includes('\u2014'),'no em dash');
   return nonce;
 }
 try {
@@ -119,6 +119,36 @@ try {
    assert.equal(again.status,400);const page=await again.text();assertStrictCsp(again,page);assert.match(page,/stage <code>consent_session<\/code>, reason <code>browser_session_missing<\/code>/);
    assert.ok(!page.includes(handleOf(html)));
    assert.equal((await request(jar,'/authorize',{method:'POST',body:new URLSearchParams({handle:handleOf(html),decision:'allow'}),headers:{Origin:'https://claude.ai'}})).status,403,'consent POST stays same-origin');
+  });
+  await t.test('consent page: strict CSP, labelled fields, escaped values, no em dash',async()=>{
+   const jar=new Jar(),{r,html}=await consent(jar);assert.equal(r.status,200);
+   const nonce=assertStrictCsp(r,html),again=assertStrictCsp(...Object.values(await consent(new Jar())));assert.notEqual(nonce,again,'fresh nonce per response');
+   assert.equal(r.headers.get('x-frame-options'),'DENY');assert.equal(r.headers.get('cache-control'),'no-store');
+   assert.match(html,/<meta name="viewport" content="width=device-width,initial-scale=1">/);assert.match(html,/prefers-color-scheme:dark/);assert.match(html,/prefers-reduced-motion:reduce/);assert.match(html,/:focus-visible\{outline:3px/);
+   assert.match(html,/<main id="main">/);assert.match(html,/<h1>Allow access to LifeOS\?<\/h1>/);
+   assert.ok(html.includes('Synthetic &#34;Claude&#34; &#60;b&#62;client&#60;/b&#62;'));assert.ok(!html.includes('<b>client'));
+   assert.equal(html.match(/<form /g).length,1);assert.match(html,/<form method="post" action="\/authorize">/);
+   assert.match(html,/<input type="hidden" name="handle" value="[^"]+">/);
+   const boxes=[...html.matchAll(/<input type="checkbox" id="([^"]+)" name="([^"]+)" value="allow" aria-describedby="([^"]+)"( checked)?>/g)].map(([,id,name,described,checked])=>({id,name,described,checked:!!checked}));
+   assert.deepEqual(boxes.map(b=>[b.name,b.checked]),[['queued_writes',true],['local_tools',false],['notes',false],['notes_write',false]]);
+   for(const b of boxes){assert.match(html,new RegExp(`<label class="row" for="${b.id}"><input type="checkbox" id="${b.id}"`));assert.match(html,new RegExp(`<p id="${b.described}">[^<]{20,}</p>`));}
+   assert.equal([...html.matchAll(/ id="([^"]+)"/g)].map(m=>m[1]).length,new Set([...html.matchAll(/ id="([^"]+)"/g)].map(m=>m[1])).size,'unique ids');
+   assert.match(html,/<button class="primary" name="decision" value="allow">Allow with GitHub<\/button><button class="secondary" name="decision" value="deny">Deny<\/button>/);
+   assert.match(html,/<fieldset><legend>Optional<\/legend>/);
+   for(const words of ['things:read','offline_access','things:write','lifeos:local','notes:write','Create, update, move, complete, cancel, trash and restore','offline queue','Never deletes','30 days','10 minutes'])assert.ok(html.includes(words),words);
+   assert.match(html,/Supported fields merge automatically/,'conflict policy shown with queued edits');
+  });
+  await t.test('client-requested scopes become hidden fields and the POST still grants them',async()=>{
+   const jar=new Jar(),{html}=await consent(jar,'things:read things:write lifeos:local notes offline_access');
+   assert.match(html,/<input type="hidden" name="queued_writes" value="allow">/);assert.match(html,/<input type="hidden" name="local_tools" value="allow">/);
+   assert.doesNotMatch(html,/type="checkbox"[^>]*name="(queued_writes|local_tools)"/);assert.match(html,/name="notes" value="allow" aria-describedby="opt-notes-text" checked>/);
+   const fields=Object.fromEntries([...html.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]+)">/g)].map(m=>[m[1],decode(m[2])]));
+   const {callback}=await approve(jar,html,{...fields,notes:'allow',notes_write:'allow'});
+   const code=new URL((await request(jar,callback)).headers.get('location')).searchParams.get('code');
+   const token=await request(null,'/oauth/token',{method:'POST',body:new URLSearchParams({grant_type:'authorization_code',client_id:clientId,code,redirect_uri:redirectUri,code_verifier:verifier,resource})});
+   assert.deepEqual((await token.json()).scope.split(' ').sort(),['lifeos:local','notes','notes:write','offline_access','things:read','things:write']);
+   const deny=await consent(jar),denied=await request(jar,'/authorize',{method:'POST',body:new URLSearchParams({handle:handleOf(deny.html),decision:'deny'}),headers:{Origin:origin}});
+   assert.equal(denied.status,302);assert.equal(new URL(denied.headers.get('location')).searchParams.get('error'),'access_denied');
   });
   await t.test('configured browser origin is accepted; wildcards and http are ignored',async()=>{
    const jar=new Jar(),{html}=await consent(jar),{callback}=await approve(jar,html);

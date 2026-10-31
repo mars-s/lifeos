@@ -31,6 +31,7 @@ header svg{width:1.75rem;height:1.75rem;flex:none}
 main{margin-top:1.75rem}
 h1{margin:0 0 .75rem;font-size:1.75rem;line-height:1.15;font-weight:600;letter-spacing:-.02em;text-wrap:balance}
 .lead{margin:0 0 2rem;font-size:1.0625rem;text-wrap:pretty}
+.why{margin:-1rem 0 2rem;text-wrap:pretty}
 .lead strong{font-weight:600;overflow-wrap:anywhere}
 h2,legend{margin:0 0 .5rem;padding:0;font-size:1rem;font-weight:600}
 fieldset{margin:0;padding:0;border:0;min-width:0}
@@ -38,12 +39,12 @@ section,fieldset{margin-bottom:1.5rem}
 .panel{margin:0;padding:.25rem 1.25rem;list-style:none;background:var(--surface);border-radius:20px}
 .item{padding:.75rem 0}
 .item+.item{border-top:1px solid var(--line)}
-.row{display:flex;align-items:center;gap:.75rem;min-height:2.75rem;font-weight:600}
+.row{display:flex;align-items:center;gap:.75rem;min-height:2.75rem;padding-block:.125rem;font-weight:600}
 label.row{cursor:pointer}
 .row svg{width:1.5rem;height:1.5rem;flex:none}
 .item p{margin:0 0 .25rem 2.25rem;color:var(--muted);font-size:.9375rem;text-wrap:pretty}
 code{font:500 .8125rem/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);white-space:nowrap}
-.row code{margin-left:auto;padding-left:.5rem}
+.label{flex:1;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;column-gap:.75rem}
 input[type=checkbox]{appearance:none;-webkit-appearance:none;flex:none;display:grid;place-content:center;width:1.5rem;height:1.5rem;margin:0;border:2px solid var(--control);border-radius:7px;background:var(--surface);cursor:pointer;transition:background-color .15s ease,border-color .15s ease}
 input[type=checkbox]::after{content:"";width:.4rem;height:.75rem;border:solid var(--ground);border-width:0 2.5px 2.5px 0;transform:translateY(-.08rem) rotate(45deg) scale(0);transition:transform .15s ease}
 input[type=checkbox]:checked{background:var(--ink);border-color:var(--ink)}
@@ -83,7 +84,7 @@ export function continuePage(href: string, nonce: string) {
 }
 
 const explanations: Record<string, string> = {
-  browser_session_missing: 'This browser has no record of starting this sign-in. That happens when sign-in moves to another browser or app part way through, when it takes longer than 10 minutes, or when a page loads twice and the first load already used the one-time link.',
+  browser_session_missing: 'This browser has no record of starting this sign-in. That can happen if sign-in moved to another browser or app part way through, took longer than 10 minutes, or a page loaded twice and the first load used the one-time link.',
   browser_session_mismatch: 'This sign-in was started in a different browser session, so it cannot finish here.',
   session_expired_or_unavailable: 'This sign-in expired or was already used. Each sign-in link works once, for 10 minutes.',
   callback_state_missing: 'GitHub returned without the details needed to match this sign-in.',
@@ -94,5 +95,60 @@ const explanations: Record<string, string> = {
 export function errorPage(stage: string, reason: string, nonce: string) {
   const why = explanations[reason] ?? 'The connection request was incomplete or no longer matches the app that started it.';
   return shell('LifeOS sign-in did not finish', nonce,
-    `<h1>Sign-in did not finish</h1><p class="lead">${escape(why)} Nothing was connected and nothing changed.</p><section aria-labelledby="again"><h2 id="again">Start again</h2><ol><li>Return to the app that sent you here.</li><li>Choose connect or reconnect for LifeOS.</li><li>Finish every step in the same browser window, within 10 minutes.</li></ol></section><p class="note">Reference: stage <code>${escape(stage)}</code>, reason <code>${escape(reason)}</code>.</p>`);
+    `<h1>Sign-in did not finish</h1><p class="lead">Nothing was connected and nothing changed.</p><p class="why">${escape(why)}</p><section aria-labelledby="again"><h2 id="again">Start again</h2><ol><li>Return to the app that sent you here.</li><li>Choose connect or reconnect for LifeOS.</li><li>Finish every step in the same browser window, within 10 minutes.</li></ol></section><p class="note">Reference: stage <code>${escape(stage)}</code>, reason <code>${escape(reason)}</code>.</p>`);
+}
+
+export type ConsentModel = {
+  clientName: string; redirectHost: string; loopback: boolean; handle: string;
+  /** The client asked for things:write itself; it is granted with read, no checkbox. */
+  writeRequested: boolean;
+  /** Writes are enabled but not requested; offered as a checkbox, ticked by default. */
+  writeOffered: boolean;
+  localRequested: boolean; notesRequested: boolean; notesWriteRequested: boolean;
+  /** The conflict policy sentence for queued edits. */
+  policy: string;
+};
+
+const tick = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="11" fill="#c4e86b"/><path d="M7.2 12.4l3.1 3.1 6.5-6.6" fill="none" stroke="#20231f" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const included = (title: string, scope: string, text: string) =>
+  `<li class="item"><div class="row">${tick}<span class="label"><span>${title}</span><code>${scope}</code></span></div><p>${text}</p></li>`;
+const option = (id: string, name: string, title: string, scope: string, text: string, checked: boolean) =>
+  `<div class="item"><label class="row" for="${id}"><input type="checkbox" id="${id}" name="${name}" value="allow" aria-describedby="${id}-text"${checked ? ' checked' : ''}><span class="label"><span>${title}</span><code>${scope}</code></span></label><p id="${id}-text">${text}</p></div>`;
+
+const copy = {
+  read: 'Tasks, projects, areas and tags, with their notes, as your Mac last synced them. This is a cached copy, not live Things.',
+  offline: 'Access lasts an hour and renews by itself for up to 30 days, so you are not asked to sign in every session.',
+  readOnly: 'Edits stay off for this connection.',
+  write: (policy: string) => `Create, update, move, complete, cancel, trash and restore to-dos through the offline queue. Your Mac applies and confirms each change when it is awake. Trash stays recoverable. ${policy}`,
+  local: 'Calendar, saved brain dumps, Mac captures, planning, memory and proposal review, run on your awake Mac. With queued edits, one task you ask for is saved directly; other changes need an approved proposal. Raw captures stay on the Mac, but requests and results pass through this service and the app. Memory indexing uses a remote extraction service.',
+  notes: 'Search and read notes in your LifeOS Anytype space. Notes stay in Anytype on the Mac and only pass through this service in memory. Needs local tools.',
+  notesWrite: 'Add new objects, tags, properties, collections and Things links, each marked Made by the assistant. Never deletes. Needs notes.',
+};
+
+/** The consent form. Field names and values match the POST /authorize handler exactly. */
+export function consentPage(m: ConsentModel, nonce: string) {
+  const always = [
+    included('Read your Things mirror', 'things:read', copy.read + (m.writeRequested || m.writeOffered ? '' : ' ' + copy.readOnly)),
+    included('Stay connected', 'offline_access', copy.offline),
+    m.writeRequested ? included('Queued edits', 'things:write', escape(copy.write(m.policy))) : '',
+    m.localRequested ? included('Local LifeOS tools', 'lifeos:local', copy.local) : '',
+  ].join('');
+  const optional = [
+    m.writeOffered ? option('opt-writes', 'queued_writes', 'Queued edits', 'things:write', escape(copy.write(m.policy)) + ' Untick for read-only access.', true) : '',
+    m.localRequested ? '' : option('opt-local', 'local_tools', 'Local LifeOS tools', 'lifeos:local', copy.local, false),
+    option('opt-notes', 'notes', 'Anytype notes', 'notes', copy.notes, m.notesRequested),
+    option('opt-notes-write', 'notes_write', 'Add and edit notes', 'notes:write', copy.notesWrite, m.notesWriteRequested),
+  ].join('');
+  const hidden = `<input type="hidden" name="handle" value="${escape(m.handle)}">`
+    + (m.writeRequested ? '<input type="hidden" name="queued_writes" value="allow">' : '')
+    + (m.localRequested ? '<input type="hidden" name="local_tools" value="allow">' : '');
+  return shell('Allow access to LifeOS', nonce,
+    `<h1>Allow access to LifeOS?</h1>`
+    + `<p class="lead"><strong>${escape(m.clientName)}</strong> wants to connect. Its access tokens go to <strong>${escape(m.redirectHost)}</strong>.</p>`
+    + (m.loopback ? '<p class="notice">This is an app on your own computer. Check that you started this request before you allow it.</p>' : '')
+    + `<form method="post" action="/authorize">${hidden}`
+    + `<section aria-labelledby="always"><h2 id="always">Always included</h2><ul class="panel" role="list">${always}</ul></section>`
+    + `<fieldset><legend>Optional</legend><div class="panel">${optional}</div></fieldset>`
+    + '<div class="actions"><button class="primary" name="decision" value="allow">Allow with GitHub</button><button class="secondary" name="decision" value="deny">Deny</button></div>'
+    + '</form><p class="note">Next, GitHub confirms your account. Only the LifeOS owner can finish signing in. This page expires after 10 minutes.</p>');
 }
