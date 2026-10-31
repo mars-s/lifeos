@@ -268,5 +268,26 @@ try{
    assert.equal((await enqueue('oversized-base-command','oversized-base',desired,{base_revision:JSON.parse(tooLong.fields).title.revision})).status,409);
    assert.equal(await db.prepare("SELECT id FROM native_operations WHERE owner='smart-owner' AND id='oversized-base-command'").first(),null);
   });
+  await t.test('version 4 Things operations keep smart policy, base revisions and strict receipts',async()=>{
+   const mac={'X-LifeOS-Things-Ops':'1'},things=operations=>request('/__smart_test/things',{operations});
+   const fields=JSON.parse((await db.prepare("SELECT fields FROM mirror_items WHERE owner='smart-owner' AND id='task-130'").first()).fields);
+   const stale=await things([{op:'update',operation_id:'smart-v4-stale',target:'task-130',fields:{title:'New'},base_revisions:{title:fields.title.revision+1}}]);
+   assert.equal(stale.status,409);assert.match((await stale.json()).error,/Things changed since it was read/);
+   const accepted=await things([{op:'update',operation_id:'smart-v4',target:'task-130',fields:{title:'Smart v4',notes:'Edited'},base_revisions:{title:fields.title.revision,notes:fields.notes.revision}}]);
+   assert.equal(accepted.status,200);const [op]=await accepted.json();
+   assert.equal(op.payload.version,4);assert.equal(op.payload.conflict_policy,'smart_merge_v1');assert.equal(op.payload.intent_kind,'explicit_set');assert.deepEqual(op.payload.base.title,value('Base'));
+   assert.ok((await ok('/api/native/pending')).operations.every(o=>o.payload.version!==4),'Protocol 3 Macs without Things operations support never see version 4');
+   assert.equal((await request('/api/native/claim',{id:op.id,claim:'claim-'+op.id})).status,409);
+   await ok('/api/native/claim',{id:op.id,claim:'claim-'+op.id},mac);
+   const body={id:op.id,claim:'claim-'+op.id,result:{state:'applied'},applied_after_sequence:sequence,observed_before:{title:value('Local edit'),notes:op.payload.base.notes},verified_after:{title:value('Smart v4'),notes:value('Edited')}};
+   assert.equal((await request('/api/native/ack',body)).status,409,'Smart receipts need a merge decision');
+   assert.equal((await request('/api/native/ack',{...body,merge_decision:{algorithm:'things_fields_v1',fields:{title:'cloud_fallback'}}})).status,409,'Every changed field must be classified');
+   assert.equal((await request('/api/native/ack',{...body,merge_decision:{algorithm:'supported_fields_v1',fields:{title:'cloud_fallback',notes:'cloud_only'}}})).status,409);
+   const merge_decision={algorithm:'things_fields_v1',fields:{title:'cloud_fallback',notes:'cloud_only'}};
+   const ack=await ok('/api/native/ack',{...body,merge_decision});
+   assert.equal(ack.state,'applied');assert.equal(ack.receipt_confirmation,undefined,'Version 4 receipts are confirmed by a later snapshot, not proofs');
+   assert.equal((await request('/api/native/ack',{...body,merge_decision:{...merge_decision,fields:{title:'cloud_only',notes:'cloud_only'}}})).status,409,'Receipt audit is immutable');
+   const status=await operation(op.id);assert.equal(status.audit.merge_decision.fields.title,'cloud_fallback');assert.equal(status.current_desired_revision,op.ordinal);
+  });
  });
 }finally{await mf.dispose();await rm(dir,{recursive:true,force:true});await rm(output,{force:true});}

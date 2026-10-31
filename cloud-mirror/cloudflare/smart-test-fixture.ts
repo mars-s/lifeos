@@ -66,6 +66,9 @@ export default {async fetch(request:Request,env:Env){
     if(path==='/__smart_test/enqueue'){
       try{return Response.json(await stub.enqueue(input as any));}catch(error){return Response.json({error:String(error)},{status:409});}
     }
+    if(path==='/__smart_test/things'){
+      try{return Response.json(await stub.enqueueThings(input.operations));}catch(error){return Response.json({error:String(error)},{status:409});}
+    }
     if(path==='/__smart_test/prepare_legacy'){
       const queue=new NativeQueue(env.DB,env.LIFEOS_OWNER_ID);
       try{const prepared=await queue.prepareEnqueue(input as any,'things_wins');return Response.json('input' in prepared?await queue.commitEnqueue(prepared):prepared);}
