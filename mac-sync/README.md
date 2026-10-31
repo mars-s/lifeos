@@ -1,6 +1,6 @@
 # LifeOS native sync
 
-Swift6.3 menu-bar agent for the existing Cloudflare mirror. This version queues task completion and title changes through dot, and applies them through supported Things automation on an awake Mac. New cloud_wins operations prefer explicit cloud intent for their specific supported fields and retain displaced values in immutable audit receipts. Historical operations retain their original policy. Newer unclaimed title edits supersede older queued titles. Unsupported writes are rejected.
+Swift6.3 menu-bar agent for the existing Cloudflare mirror. This version applies queued version 4 Things operations as well as the older title, completion and Trash operations on an awake Mac. New cloud_wins operations prefer explicit cloud intent for their specific supported fields and retain displaced values in immutable audit receipts. Historical operations retain their original policy. Newer unclaimed title edits supersede older queued titles. Unsupported writes are rejected.
 
 ## What is built
 
@@ -14,6 +14,44 @@ Swift6.3 menu-bar agent for the existing Cloudflare mirror. This version queues 
 - Read-before-write and read-back verification through fixed bundled public Things scripts. No private Things database access by the native agent.
 - Existing mirror journal migration, preserving its sequence and making an online SQLite backup. Undelivered legacy uploads block migration; the old helper is restored rather than losing them.
 - Worker/D1 operation journal and pending overlay. Existing read grants cannot write, including after refresh. A separate native key can consume only native sync routes; the old upload key cannot claim writes.
+
+## Offline Things operations (v4)
+
+The app advertises `X-LifeOS-Things-Ops: 1` only on native sync routes. It claims
+operations in pending order, resolves temporary IDs from the claim response and
+leaves unresolved references queued. The fixed bundled `things-ops.js` receives
+JSON on stdin. It reads before writing, honours Things-wins conflicts, applies
+cloud-wins or smart intent, then reads exactly the requested verification keys.
+Smart receipts classify each field. Every receipt retains its sequence fence and
+before image in the journal; retries send the same saved receipt. A later snapshot
+confirms v4 effects without the older receipt-confirmation tokens.
+
+Creates save their returned Things ID durably before further setters, read-back
+or acknowledgement. Recovery only reads that ID. If execution was interrupted
+without a saved ID, it reports `uncertain` / `interrupted_write` and never creates
+again. A partially finished create needs owner review; it is not replayed.
+
+The automation follows [Things' documented AppleScript commands](https://culturedcode.com/things/support/articles/4562654/)
+for text, deadlines, tag names, status, scheduling, parent assignment and Trash.
+JXA command bridging, date clearing, project detachment and moving out of Trash
+are unverified assumptions on this Linux host. Refused restore reports
+`unsupported_by_things`. There is no cross-device atomic compare-and-set.
+
+Checklist and evening writes report `unsupported_by_things` before any changes;
+heading placement reports `container_unavailable` and never creates a heading.
+The retained Python adapter gets its URL token through `things-py`, not a local
+configuration or Keychain pattern usable by this app. This version therefore
+adds no URL-token lookup or URL writes. Inventory reports checklist, evening and
+heading IDs as unsupported and does not advertise heading scope or invent
+heading items. LocalReplica accepts heading items for future reader support.
+Inventory adds `when` from public list placement and activation dates, and sends
+tag names. `today` describes Today membership, including its unreadable evening
+subsection; `evening` remains unsupported separately.
+
+Rebuild with `sh mac-sync/build-app.sh`, replace the installed bundle using the
+existing upgrade process, and restart LifeOS Sync. Source changes do not update
+a running app. The macOS app target and real JXA/AppleScript execution still need
+Mac verification with disposable Things items; Linux tests do not establish that.
 
 ## Native LifeOS window
 
@@ -60,7 +98,7 @@ LifeOS design study and is bundled locally, with no font or image downloads.
 ```sh
 cd mac-sync
 swift test
-node --test Tests/native-write.test.mjs
+node --test Tests/*.test.mjs
 python3 -m unittest discover -s Tests
 sh build-app.sh
 ```
