@@ -11,6 +11,7 @@ import {BulkD1} from './d1-bulk';
 import {registerCloudUI} from './cloud-ui';
 import {registerLocalBridge} from './local-bridge';
 import {localScope,notesScope,notesWriteScope} from './bridge-contract';
+import {escape,newNonce,pageHeaders,continuePage,errorPage} from './consent-page';
 
 // OAuth grants explicitly gate read access and queued writes.
 type OAuthEnv=Env & {
@@ -34,7 +35,6 @@ type Identity={owner:string;github_id:string;role:'reader'};
 const defaultBrowserOrigins='https://chatgpt.com https://chat.openai.com';
 const browserOrigins=(env:OAuthEnv)=>[origin,...(env.LIFEOS_MCP_ALLOWED_ORIGINS??defaultBrowserOrigins).split(/[\s,]+/).filter(o=>{try{const u=new URL(o);return u.protocol==='https:'&&u.origin===o;}catch{return false;}})];
 const json=(body:unknown,status:number)=>Response.json(body,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
-const escape=(value:string)=>value.replace(/[&<>"']/g,c=>`&#${c.charCodeAt(0)};`);
 function owner(identity:unknown,env:OAuthEnv):identity is Identity {
   const p=identity as Partial<Identity>|undefined;
   return !!p&&p.owner===env.LIFEOS_OWNER_ID&&p.github_id===env.LIFEOS_GITHUB_OWNER_ID&&p.role==='reader';
@@ -45,6 +45,12 @@ async function challenge(verifier:string) {
 async function auth(request:Request,env:OAuthEnv):Promise<Response> {
   const url=new URL(request.url),oauth=env.OAUTH_PROVIDER!;
   let stage='request';
+  // Browsers and link scanners may speculatively load these GETs. A prefetched /callback would
+  // consume the single-use upstream state and clear its cookie, so the real navigation then
+  // fails with browser_session_missing. Refuse speculative loads before touching any state;
+  // browsers drop a failed prefetch and make the real request when the user navigates.
+  const purpose=[request.headers.get('sec-purpose'),request.headers.get('purpose'),request.headers.get('x-moz')].join(' ').toLowerCase();
+  if(request.method==='GET'&&(url.pathname==='/callback'||url.pathname==='/authorize')&&/prefetch|prerender/.test(purpose))return new Response(null,{status:503,headers:{'Cache-Control':'no-store','Retry-After':'0'}});
   try {
     if(url.pathname==='/authorize'&&request.method==='GET') {
       stage='client_authorization';
@@ -82,10 +88,10 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       target.search=new URLSearchParams({client_id:env.GITHUB_CLIENT_ID!,redirect_uri:origin+'/callback',scope:'',state:upstream.state,code_challenge:await challenge(verifier),code_challenge_method:'S256',allow_signup:'false'}).toString();
       // Finish the form navigation before starting GitHub's redirect chain.
       // Chromium can apply form-action to every destination in that chain.
-      upstream.headers.set('Content-Type','text/html; charset=utf-8');
-      upstream.headers.set('Referrer-Policy','no-referrer');
-      upstream.headers.set('Content-Security-Policy',"default-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
-      return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Continue LifeOS sign-in</title><h1>Continue LifeOS sign-in</h1><p>Your consent was recorded. Confirm your GitHub account to finish connecting LifeOS.</p><p><a href="${escape(target.href)}">Continue to GitHub</a></p>`,{headers:upstream.headers});
+      // The page then continues by itself, so the 10 minute upstream cookie is not spent
+      // waiting for a second tap, and a double tap cannot race two GitHub round trips.
+      const nonce=newNonce();
+      return new Response(continuePage(target.href,nonce),{headers:pageHeaders(upstream.headers,nonce)});
     }
     if(url.pathname==='/callback'&&request.method==='GET') {
       stage='callback_session';
@@ -124,7 +130,10 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       'Invalid client_id':'client_registration_missing',
       'Invalid redirect URI':'client_redirect_mismatch'
     };
-    return json({error:'Sign-in could not be completed. Restart the connection.',stage,reason:description&&reasons[description]||'authorization_failed'},400);
+    const reason=description&&reasons[description]||'authorization_failed';
+    // People in a browser get a page with a way to start again; API callers keep the JSON.
+    if(/text\/html/.test(request.headers.get('accept')??'')){const nonce=newNonce();return new Response(errorPage(stage,reason,nonce),{status:400,headers:pageHeaders(new Headers(),nonce)});}
+    return json({error:'Sign-in could not be completed. Restart the connection.',stage,reason},400);
   }
 }
 async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Response> {
