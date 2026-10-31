@@ -257,6 +257,11 @@ try {
     assert.deepEqual(page.catalog.projects,[{id:'proj-a',title:'Garden',area_id:'area-a',status:'open',in_trash:false}]);
     assert.deepEqual(page.catalog.tags,[{id:'tag-a',title:'Errand',parent_tag_id:null}]);
     assert.equal(page.catalog.field_support.notes,'reported');assert.equal(page.catalog.field_support.checklist,'not_reported_by_mac');
+    assert.deepEqual(page.catalog.field_support.current_mac_writes,{checklist:'unsupported_by_things',when_evening:'unsupported_by_things',heading_container:'container_unavailable',restore:'inbox_only'});
+    const descriptions=new Map((await write.sdk.listTools()).tools.map(t=>[t.name,t.description]));
+    for(const name of ['queue_things_create','queue_things_update','queue_things_move','queue_things_batch','queue_things_restore']){
+     assert.match(descriptions.get(name),/unsupported_by_things/);assert.match(descriptions.get(name),/container_unavailable/);assert.match(descriptions.get(name),/Inbox/);
+    }
     assert.ok(page.capabilities.supported_writes.includes('batch'));
    });
    await t.test('things ops: create with temp id, dependants wait, receipt maps the real id',async()=>{

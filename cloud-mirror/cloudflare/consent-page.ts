@@ -119,7 +119,7 @@ const copy = {
   read: 'Tasks, projects, areas and tags, with their notes, as your Mac last synced them. This is a cached copy, not live Things.',
   offline: 'Access lasts an hour and renews by itself for up to 30 days, so you are not asked to sign in every session.',
   readOnly: 'Edits stay off for this connection.',
-  write: (policy: string) => `Create, update, move, complete, cancel, trash and restore to-dos through the offline queue. Your Mac applies and confirms each change when it is awake. Trash stays recoverable. ${policy}`,
+  write: (policy: string) => `Create, update, move, complete, cancel, trash and restore to-dos through the offline queue. Your Mac applies and confirms each change when it is awake. Trash stays recoverable. Current Mac limits: no checklist, evening or heading writes, restore to Inbox. ${policy}`,
   local: 'Calendar, saved brain dumps, Mac captures, planning, memory and proposal review, run on your awake Mac. With queued edits, one task you ask for is saved directly; other changes need an approved proposal. Raw captures stay on the Mac, but requests and results pass through this service and the app. Memory indexing uses a remote extraction service.',
   notes: 'Search and read notes in your LifeOS Anytype space. Notes stay in Anytype on the Mac and only pass through this service in memory. Needs local tools.',
   notesWrite: 'Add new objects, tags, properties, collections and Things links, each marked Made by the assistant. Never deletes. Needs notes.',

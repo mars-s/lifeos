@@ -209,7 +209,7 @@ export class NativeQueue {
       projects:rows.filter(r=>r.kind==='project').map(r=>({id:r.id,title:v(r.cells,'title'),area_id:v(r.cells,'area_id'),status:v(r.cells,'status'),in_trash:v(r.cells,'in_trash_list')===true})),
       tags:rows.filter(r=>r.kind==='tag').map(r=>({id:r.id,title:v(r.cells,'title'),parent_tag_id:v(r.cells,'parent_tag_id')})),
       headings:rows.filter(r=>r.kind==='heading').map(r=>({id:r.id,title:v(r.cells,'title'),project_id:v(r.cells,'project_id')})),
-      field_support:Object.fromEntries(['title','notes','activation_date','when','evening','deadline','tags','checklist','area_id','project_id','heading_id','status','in_trash_list'].map(k=>[k,support.get(k)?'reported':'not_reported_by_mac']))
+      field_support:{...Object.fromEntries(['title','notes','activation_date','when','evening','deadline','tags','checklist','area_id','project_id','heading_id','status','in_trash_list'].map(k=>[k,support.get(k)?'reported':'not_reported_by_mac'])),current_mac_writes:{checklist:'unsupported_by_things',when_evening:'unsupported_by_things',heading_container:'container_unavailable',restore:'inbox_only'}}
     };
   }
   async tempIds(){return (await this.stmt('SELECT t.temp_id,t.operation_id,t.kind,t.real_id,t.resolved_at,o.state FROM native_temp_ids t JOIN native_operations o ON o.owner=t.owner AND o.id=t.operation_id WHERE t.owner=? ORDER BY t.created_at DESC,t.temp_id LIMIT 200',this.owner).all<Record<string,unknown>>()).results;}
