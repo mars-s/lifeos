@@ -37,3 +37,97 @@ Free-tier assessment: [Workers limits](https://developers.cloudflare.com/workers
 Backup guidance: D1 Time Travel is short recovery, not a three-month backup. Use supported D1 export for periodic owner-private off-platform backups; protect task contents and test a restore to a separate database. Do not copy a live SQLite file or export private data into chat. Backups/retention must be checked before travel. The Mac journal stays durable locally for reconnect; the cloud cache cannot independently refresh while the Mac sleeps or is offline.
 
 Local checks from this directory: `npm test`, `npm run typecheck`, `node benchmark.mjs`, `npm run dry-run` (Wrangler logs/metrics may be redirected/disabled for workspace sandbox restrictions). No `.dev.vars` production secrets are needed for synthetic tests.
+
+## Offline Things operations (payload version 4, `things_ops_v1`)
+
+Added October 31, 2026 (Worker side only). The Mac side is not implemented yet; this section is the contract it must follow. Nothing here was run against real Things.
+
+### Gating old Macs
+
+- A Mac that implements this section sends `X-LifeOS-Things-Ops: 1` on every `/api/native/*` request, alongside the existing `X-LifeOS-Protocol: 3`.
+- `GET /api/native/pending` without that header never returns a version 4 operation. With it, the response also carries `things_ops_version: 1`.
+- `POST /api/native/claim` without that header returns 409 for a version 4 operation, so an older build cannot claim one even by ID.
+- Version 4 operations still produce ordinary `operation` feed events (`command_changed`), which only prompt a `pending` read. Mapping events use the new feed kind `temp_id`. Older Macs store unknown kinds as projections and ignore them.
+- Existing ops (`title`, `status`, `in_trash_list`, versions 1 to 3) are unchanged.
+
+### Payload
+
+```json
+{"version":4,"protocol":"things_ops_v1","op":"update","kind":"todo","target":"<Things ID or tmp-...>",
+ "fields":{"title":"...","notes":"...","when":"today","deadline":null,"tags":["Errand"],"checklist":[{"title":"...","completed":false}]},
+ "container":{"type":"project","id":"..."},"status":"completed","temp_id":"tmp-...",
+ "base":{"<mirror field>":{"state":"value","value":"..."}},"base_revisions":{"<mirror field>":3},
+ "conflict_policy":"smart_merge_v1","intent_kind":"explicit_set","depends_on":["<create operation id>"],"refs":["tmp-..."],"verify":["deadline","notes","tags","title","when"]}
+```
+
+Only the keys an op uses are present. Payloads are immutable. `verify` lists exactly the keys the receipt must read back.
+
+| op | kinds | carries | base (mirror fields) | verify keys |
+|---|---|---|---|---|
+| `create` | todo, project | `temp_id`, `fields` (title required), optional `container` | none | every supplied field, plus `container` if given |
+| `update` | todo, project | `fields` (at least one) | title, notes, activation_date (for `when`), deadline, tags, checklist | the supplied fields |
+| `move` | todo, project | `container` | todo: area_id, project_id, heading_id; project: area_id | `container` |
+| `set_status` | todo, project | `status`: open, completed or canceled | status | `status` |
+| `trash` | todo | | in_trash_list | `in_trash_list` |
+| `restore` | todo | | in_trash_list | `in_trash_list` |
+
+Values: `when` is `today`, `evening`, `anytime`, `someday` or `YYYY-MM-DD`. `deadline` is `YYYY-MM-DD` or `null` (clear). `tags` is a set of up to 20 tag names (no commas) that replaces the item's tags; Things creates unknown tag names. `checklist` (to-dos only) replaces all items. Containers: to-dos take `{"type":"inbox"}`, `{"type":"area","id"}`, `{"type":"project","id"}` or `{"type":"heading","project","title"}`; projects take `{"type":"area","id"}` or `{"type":"none"}`. `inbox` means the Things Inbox list (no area or project). The Mac must not create a missing heading; it reports `container_unavailable`.
+
+Enqueue rules enforced by the Worker:
+
+- For a confirmed target, `base_revisions` must name exactly the dependent mirror fields present on the item, each at its current confirmed revision. A stale revision rejects the request under every policy (version 4 keeps no historical bases). Temporary targets take no `base_revisions` and have an empty `base`.
+- Checklist edits on existing to-dos are rejected until the Mac reports `checklist` as a value. New to-dos may carry a checklist.
+- No edit (other than `restore`) is accepted while the target is in Trash or has Trash in flight. `restore` needs the target in Trash. Projects cannot be trashed or restored here.
+- `intent_kind` is always `explicit_set`; derived patches are not offered for version 4.
+- A batch holds 1 to 25 operations, each with its own `operation_id`. It is validated as a whole and committed in one D1 transaction; any invalid operation rejects the whole batch with `Operation N: <reason>`. Same `operation_id` with the same request returns the existing operation; with a different request it is refused.
+
+### Temporary IDs and dependencies
+
+- `create` registers its `temp_id` (pattern `tmp-[A-Za-z0-9_-]{1,64}`) in `native_temp_ids`. A temp id belongs to one create, ever.
+- Any later op may use the temp id as `target` or as a container `id`/`project`, in the same batch (after the create) or a later one. The Worker records the create's `operation_id` in `depends_on` and the temp id in `refs`.
+- `pending` and `claim` hold an op until every `depends_on` create is `applied` or `satisfied` with a real ID. Each version 4 op in `pending`, `claim` and `operation` responses carries `resolved_refs: {"tmp-...": "<real id>"}`. The Mac substitutes those IDs when executing; it must not expect the payload to change.
+- If a create finishes as skipped, failed or uncertain, its dependants (recursively) become `skipped` with reason `dependency_unresolved`, and new references to that temp id are rejected.
+
+### Mac execution (to implement in run 2)
+
+1. Read `pending` with the header; execute queued version 4 ops in the order returned, after claiming each (`{id, claim}`), as today. Skip any whose `resolved_refs` contains a null.
+2. Read before write. Compare each `base` field with the current Things value. `things_wins`: if any differs, skip with `things_changed`. `cloud_wins` and `smart_merge_v1`: apply anyway; smart receipts classify each verify key.
+3. Apply through fixed bundled automation only (no cloud-supplied script). Expected, unverified mapping: title/notes/deadline/tag names/status through AppleScript properties; `when` through the `schedule` command or Today/Someday list moves; containers through `move` and the area/project properties; Trash through `delete`; restore by moving the to-do out of the Trash list; checklist and heading placement through the Things URL scheme (needs the owner's auth token for updates).
+4. Persist the created Things ID in the local journal before acknowledging, so a retried create is never repeated. An interrupted create with no recorded ID must be acknowledged `uncertain` with `interrupted_write`.
+5. Read back and acknowledge.
+
+Receipt (`POST /api/native/ack`):
+
+```json
+{"id":"...","claim":"...","result":{"state":"applied","created_id":"<real Things ID, create only>"},
+ "applied_after_sequence":12,
+ "observed_before":{"title":{"state":"value","value":"..."}},
+ "verified_after":{"title":{"state":"value","value":"..."},"deadline":{"state":"absent"},"checklist":{"state":"unsupported"}},
+ "merge_decision":{"algorithm":"things_fields_v1","fields":{"title":"cloud_only"}}}
+```
+
+- `applied_after_sequence` is required on every version 4 receipt (the journal sequence when the write began).
+- `result.state`: applied, satisfied, skipped, failed or uncertain. `reason` is one of things_changed, target_unavailable, automation_denied, verification_failed, interrupted_write, interrupted_delete, newer_cloud_edit, container_unavailable, unsupported_by_things, dependency_unresolved.
+- `created_id` is required exactly when a create is applied or satisfied. It must be a real ID (not `tmp-`) that no other temp id already maps to.
+- Applied or satisfied receipts need `verified_after` with exactly the `verify` keys, each equal to the desired value: `deadline: null` reads back as `{"state":"absent"}`; tags compare as a case-insensitive set; `container` reads back as the container with resolved real IDs; `in_trash_list` is true for trash and false for restore. Only `checklist`, `when: evening` and heading containers may read back as `{"state":"unsupported"}`; they are recorded as `unverified_fields`.
+- `observed_before` cells may name base or verify keys. `merge_decision` is required for applied or satisfied smart receipts, must classify every verify key (`cloud_only`, `same_value`, `cloud_fallback`, `created`, `unavailable`, `interrupted`), and is refused under other policies.
+- Receipts are immutable; an identical retry returns the stored result.
+- No `receipt_confirmation` is returned for version 4. Do not put version 4 IDs in `receipt_confirmations`; the upload would be rejected. A version 4 effect is confirmed by the first committed snapshot whose sequence is greater than `applied_after_sequence`. Until then `pending.overlaysNeedConfirmation` is true, so the Mac should upload after applying.
+
+### Upload contract additions for the Mac
+
+The current upload already carries notes, activation_date, deadline, tags (names), status (open, completed, canceled), area_id, project_id, in_trash_list, areas and tags. Still reported as unsupported, to add in run 2 where Things allows:
+
+- `checklist`: `[{"title","completed"}]` per to-do (enables checklist edits on existing to-dos).
+- `evening` (boolean) and `when` (`today`, `evening`, `anytime`, `someday` or a date) per to-do, so `when` can be compared directly.
+- `heading_id` per to-do, plus heading items (`kind: "heading"`, fields `title`, `project_id`) with `heading` added to `manifest.scopes`. The Worker accepts the scope set with or without `heading`; the Mac's `LocalReplica` must accept the `heading` kind first.
+
+### MCP tools
+
+`queue_things_create`, `queue_things_update`, `queue_things_move`, `queue_things_status`, `queue_things_restore`, `queue_things_batch` (all ops including `trash`) and the read-only `read_things_operations` (state, receipt, `created_id`, `waiting_for`, `unverified_fields`). `queue_things_edit` and `queue_things_trash` are unchanged. `read_things_mirror` adds `catalog` (areas, projects, tags, headings, `field_support`), `temp_ids`, version 4 entries in `pending_overlay`, and pending creates on the first `effective` page under their temporary id.
+
+### Known limitations
+
+- Things automation cannot read checklists or headings, and has no put-back command for Trash. Restore is a move out of Trash; if Things refuses, the Mac reports `failed` with `unsupported_by_things`.
+- Areas and headings are never created. Projects cannot be trashed through the queue.
+- Operations queue while the Mac sleeps but only apply once a Mac with this support is awake. Until run 2 ships they stay queued.
