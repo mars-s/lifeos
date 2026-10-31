@@ -1,5 +1,6 @@
 import {MirrorStore,fingerprint} from '../site/lib/mirror-store';
 import {NativeQueue} from './native-queue';
+import {thingsOpsHeader,thingsOpsVersion} from './things-ops';
 import {ownerSync} from './owner-sync';
 import {SyncFeed} from './sync-feed';
 import {mirrorAPI} from '../site/lib/mirror-api';
@@ -27,7 +28,7 @@ async function body(request:Request,limit:number) {
 }
 function coverage(m:Record<string,unknown>) {
   const e=m?.coverage_evidence as {consistent_passes?:number;classified_records?:number;list_ids?:string[]}|undefined;
-  if(m?.coverage!=='public-top-level-and-all-lists-v2'||!Array.isArray(m.scopes)||[...m.scopes].sort().join(',')!=='area,project,tag,todo'||!e||e.consistent_passes!==2||!Number.isSafeInteger(e.classified_records)||e.classified_records!<0||!Array.isArray(e.list_ids)||lists.some(id=>!e.list_ids!.includes(id)))throw new Error('Incomplete public coverage');
+  if(m?.coverage!=='public-top-level-and-all-lists-v2'||!Array.isArray(m.scopes)||!['area,project,tag,todo','area,heading,project,tag,todo'].includes([...m.scopes].sort().join(','))||!e||e.consistent_passes!==2||!Number.isSafeInteger(e.classified_records)||e.classified_records!<0||!Array.isArray(e.list_ids)||lists.some(id=>!e.list_ids!.includes(id)))throw new Error('Incomplete public coverage');
 }
 export default {
   async fetch(request:Request,env:Env):Promise<Response> {
@@ -48,14 +49,19 @@ export default {
           if(url.search||request.headers.get('upgrade')?.toLowerCase()!=='websocket')return reply({error:'Native WebSocket required.'},400);
           return ownerSync(env).fetch(request);
         }
-        if(action==='pending'&&request.method==='GET')return reply({sequence:(await store.meta())?.sequence??0,revision:await queue.revision(),operations:await queue.pending(),overlaysNeedConfirmation:await queue.overlaysNeedConfirmation(),smart_sync_version:3,feed_revision:await feed.revision()});
+        // Only a Mac that declares Things operations support sees or claims version 4 payloads.
+        const thingsOps=request.headers.get(thingsOpsHeader)===thingsOpsVersion;
+        if(action==='pending'&&request.method==='GET')return reply({sequence:(await store.meta())?.sequence??0,revision:await queue.revision(),operations:await queue.pending(thingsOps),overlaysNeedConfirmation:await queue.overlaysNeedConfirmation(),smart_sync_version:3,things_ops_version:Number(thingsOpsVersion),feed_revision:await feed.revision()});
         if(request.method!=='POST'||!['snapshot','claim','ack','operation','changes','bootstrap'].includes(action??''))return reply({error:'Native route not found.'},404);
         if(!request.headers.get('content-type')?.includes('application/json'))return reply({error:'JSON required.'},415);
         const input=JSON.parse(new TextDecoder().decode(await body(request,1024*1024)));
         if(action==='changes')return reply(await feed.changes(input));
         if(action==='bootstrap')return reply(await feed.bootstrap(input));
         if(action==='operation')return reply(await queue.operationStatus(input.id));
-        if(action==='claim')return reply(await ownerSync(env).mutate('claim',input));
+        if(action==='claim'){
+          if(!thingsOps&&typeof input?.id==='string'&&(await queue.get(input.id).catch(()=>null))?.payload.version===4)return reply({error:'This operation needs a Mac with Things operations support.'},409);
+          return reply(await ownerSync(env).mutate('claim',input));
+        }
         if(action==='ack')return reply(await ownerSync(env).mutate('ack',input));
         if(!Array.isArray(input.items)||input.items.length>10000||Object.keys(input).sort().join(',')!=='items,manifest,sequence')return reply({error:'Complete inventory required.'},409);
         coverage(input.manifest);

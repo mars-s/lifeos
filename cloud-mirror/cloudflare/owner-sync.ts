@@ -6,7 +6,9 @@ import {SyncFeed} from './sync-feed';
 import {DemoError} from '../site/lib/demo-store';
 import {localToolNames} from './bridge-contract';
 
-type Mutation='claim'|'ack'|'commit';
+// Rejections of Things requests carry a fixed, caller-safe validation message.
+export const rejectedPrefix='Rejected: ';
+type Mutation='claim'|'ack'|'commit'|'things';
 type Intent={position:number;id:string;hash:string;request:string;policy:Policy|Mutation;prepared:string|null};
 type Outcome={hash:string;rejected:number};
 export type Acceptance=NativeOperation|{id:string;state:'accepted';acceptance_pending:true};
@@ -68,7 +70,7 @@ export class OwnerSync extends DurableObject<Env> {
       const intent=this.ctx.storage.sql.exec<Intent>('SELECT * FROM intents WHERE id=?',input.id).toArray()[0];
       if(outcome?.hash!==undefined&&outcome.hash!==hash||intent?.hash!==undefined&&intent.hash!==hash)throw new DemoError('Operation ID reused.');
       if(outcome)return;
-      this.ctx.storage.sql.exec('INSERT OR IGNORE INTO intents(id,hash,request,policy) VALUES(?,?,?,?)',input.id,hash,canonical(input),this.env.LIFEOS_SMART_SYNC_ENABLED==='true'?'smart_merge_v1':this.env.LIFEOS_CLOUD_WINS_ENABLED==='true'?'cloud_wins':'things_wins');
+      this.ctx.storage.sql.exec('INSERT OR IGNORE INTO intents(id,hash,request,policy) VALUES(?,?,?,?)',input.id,hash,canonical(input),this.policy());
       // The alarm is durable before the first external D1 attempt.
       await this.ctx.storage.setAlarm(Date.now()+1000);
     });
@@ -79,28 +81,35 @@ export class OwnerSync extends DurableObject<Env> {
     if(outcome)return this.queue().get(input.id);
     return {id:input.id,state:'accepted',acceptance_pending:true};
   }
+  private policy():Policy{return this.env.LIFEOS_SMART_SYNC_ENABLED==='true'?'smart_merge_v1':this.env.LIFEOS_CLOUD_WINS_ENABLED==='true'?'cloud_wins':'things_wins';}
+  // Version 4 Things operations: one all-or-nothing request, each operation keeping its own ID.
+  async enqueueThings(operations:unknown[]){
+    const saved=await this.mutate('things',{operations}) as NativeOperation[];
+    return this.queue().getMany(saved.map(o=>o.id));
+  }
   async mutate(action:Mutation,input:Record<string,unknown>):Promise<unknown>{
-    if(!['claim','ack','commit'].includes(action)||!input||canonical(input).length>40000)throw new DemoError('Invalid semantic mutation.');
-    const allowed=action==='claim'?['id','claim']:action==='commit'?['sequence']:['id','claim','result','applied_after_sequence','observed_before','verified_after','merge_decision'];
+    if(!['claim','ack','commit','things'].includes(action)||!input||canonical(input).length>(action==='things'?192*1024:40000))throw new DemoError('Invalid semantic mutation.');
+    const allowed=action==='claim'?['id','claim']:action==='commit'?['sequence']:action==='things'?['operations']:['id','claim','result','applied_after_sequence','observed_before','verified_after','merge_decision'];
     if(Object.keys(input).some(k=>!allowed.includes(k)))throw new DemoError('Unexpected semantic mutation fields.');
     const hash=await fingerprint({action,input}),id='mutation-'+hash;
     const saved=this.ctx.storage.sql.exec<{result:string}>('SELECT result FROM mutation_outcomes WHERE id=?',id).toArray()[0];if(saved){const result=JSON.parse(saved.result);if(result?.mutation_rejected)this.ctx.storage.sql.exec('DELETE FROM mutation_outcomes WHERE id=?',id);else return result;}
     await this.ctx.storage.transaction(async()=>{this.ctx.storage.sql.exec('INSERT OR IGNORE INTO intents(id,hash,request,policy) VALUES(?,?,?,?)',id,hash,canonical(input),action);await this.ctx.storage.setAlarm(Date.now()+1000);});
     await this.locked(()=>this.drain());
     const outcome=this.ctx.storage.sql.exec<{result:string}>('SELECT result FROM mutation_outcomes WHERE id=?',id).toArray()[0];
-    if(!outcome)throw new Error('Durable mutation is pending recovery.');const result=JSON.parse(outcome.result);if(result?.mutation_rejected){this.ctx.storage.sql.exec('DELETE FROM mutation_outcomes WHERE id=?',id);throw new DemoError('Semantic mutation rejected.');}return result;
+    if(!outcome)throw new Error('Durable mutation is pending recovery.');const result=JSON.parse(outcome.result);if(result?.mutation_rejected){this.ctx.storage.sql.exec('DELETE FROM mutation_outcomes WHERE id=?',id);throw new DemoError(typeof result.reason==='string'?rejectedPrefix+result.reason:'Semantic mutation rejected.');}return result;
   }
   private async drain(){
     for(;;){
       const head=this.ctx.storage.sql.exec<Intent>('SELECT * FROM intents ORDER BY position LIMIT 1').toArray()[0];
       if(!head)break;
-      if(['claim','ack','commit'].includes(head.policy)){
+      if(['claim','ack','commit','things'].includes(head.policy)){
         const input=JSON.parse(head.request);let result:unknown;
         try{
           if(head.policy==='claim')result=await this.queue().claim(input.id,input.claim);
           else if(head.policy==='ack')result=await this.queue().ack(input.id,input.claim,input.result,input.applied_after_sequence!==undefined?{applied_after_sequence:input.applied_after_sequence,...input.observed_before!==undefined?{observed_before:input.observed_before}:{},...input.verified_after!==undefined?{verified_after:input.verified_after}:{},...input.merge_decision!==undefined?{merge_decision:input.merge_decision}:{}}:undefined);
+          else if(head.policy==='things')result=await this.queue().enqueueThings(input.operations,this.policy());
           else result=await new MirrorStore(new BulkD1(this.env.DB),this.env.LIFEOS_OWNER_ID).commit(input.sequence);
-        }catch(error){if(!(error instanceof DemoError)){await this.ctx.storage.setAlarm(Date.now()+5000);return;}result={mutation_rejected:true};}
+        }catch(error){if(!(error instanceof DemoError)){await this.ctx.storage.setAlarm(Date.now()+5000);return;}result={mutation_rejected:true,...head.policy==='things'?{reason:error.message.slice(0,300)}:{}};}
         const revision=await this.queue().revision(),feed=await this.feed().revision();
         this.ctx.storage.transactionSync(()=>{this.ctx.storage.sql.exec('UPDATE watermark SET revision=MAX(revision,?)',revision);this.ctx.storage.sql.exec('UPDATE feed_watermark SET revision=MAX(revision,?)',feed);this.ctx.storage.sql.exec('INSERT OR IGNORE INTO mutation_outcomes VALUES(?,?)',head.id,canonical(result));this.ctx.storage.sql.exec('DELETE FROM intents WHERE position=?',head.position);});
         this.broadcast();continue;
