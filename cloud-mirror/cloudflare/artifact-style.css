@@ -337,12 +337,14 @@ figure{margin:0}
 /* Expansion is native details/summary, with no script or inline styles. */
 .dg-frame{min-width:0;max-width:100%}
 .dg-expand{margin-top:8px;text-align:right}
-.dg-expand > summary{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:8px 12px;list-style:none;cursor:pointer;font-size:14px;font-weight:500;color:var(--ink);background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-md)}
+.dg-expand > summary{position:relative;display:inline-flex;align-items:center;justify-content:center;padding:3px 10px;list-style:none;cursor:pointer;font-size:13px;line-height:18px;font-weight:500;color:var(--text-2);background:var(--bg);border:1px solid var(--border);border-radius:999px}
+.dg-expand > summary::after{position:absolute;inset:-10px -6px;content:''}
+.dg-expand > summary:hover{color:var(--text-1);border-color:var(--border-strong)}
 .dg-expand > summary::-webkit-details-marker{display:none}
 .dg-expand > summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .dg-expand .dg-close,.dg-expand[open] .dg-open{display:none}
 .dg-expand[open] .dg-close{display:inline}
-.dg-expand[open] > summary{position:fixed;top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));z-index:10001;box-shadow:var(--shadow-pop)}
+.dg-expand[open] > summary{position:fixed;top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));z-index:10001;color:var(--text-1);box-shadow:var(--shadow-pop)}
 details.dg-expand[open] .dg-overlay{position:fixed;inset:0;z-index:10000;background:var(--bg);overflow:auto;overscroll-behavior:contain;padding:max(76px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));text-align:left}
 .dg-scroll svg.dg{width:max(100%,760px);height:auto;max-width:none}
 @media (min-width:900px){
