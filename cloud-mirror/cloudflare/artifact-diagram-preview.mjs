@@ -22,7 +22,7 @@ try{
  const markup=body=>artifactMarkup({title:'Reference diagram',summary:'',format:'html',body,created_at:'2026-10-31T00:00:00Z'});
  await mkdir(output,{recursive:true});
  const page=(style,body)=>`<!doctype html><html lang="en-AU"><meta charset="utf-8"><style>${style}</style><body>${body}</body></html>`;
- const regionStyle=stylesheet+' .page-header,.document-footer{display:none}.prose{margin-top:0}';
+ const regionStyle=stylesheet+' .page-header,.document-footer{display:none}.prose{margin-top:0}.dg-expand{display:none}';
  await writeFile(join(output,'artifact.html'),page(stylesheet,`<main class="page">${markup(figure)}</main>`));
  await writeFile(join(output,'artifact-region.html'),page(regionStyle,`<main class="page">${markup(figure)}</main>`));
  await writeFile(join(output,'reference-region.html'),page(referenceStyle,`<main class="page">${figure}</main>`));

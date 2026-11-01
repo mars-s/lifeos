@@ -267,7 +267,7 @@ table.data td.empty{text-align:center;color:var(--text-3);padding:28px 14px}
 @media (prefers-reduced-motion: no-preference){ html{scroll-behavior:smooth} }
 @media (forced-colors: active){
   .pill,.callout,.toc,.table-wrap,.card,.link-list,.stat{border:1px solid CanvasText}
-  svg.dg .node{stroke:CanvasText} svg.dg .edge,svg.dg .head{stroke:CanvasText} svg.dg .bar{fill:Highlight}
+  svg.dg .nd{stroke:CanvasText} svg.dg .ln,svg.dg .hd{stroke:CanvasText} svg.dg .bar{fill:Highlight}
 }
 
 /* Document rendering: Markdown uses the same tokens as HTML fragments. */
@@ -316,7 +316,7 @@ html{scrollbar-color:var(--border-strong) var(--bg)}
 /* diagram card */
 figure{margin:0}
 .diagram.card{border:1px solid var(--border);border-radius:16px;padding:20px;background:var(--bg)}
-.dg{display:block;width:100%;height:auto;font-family:var(--font-sans)}
+.dg{display:block;width:100%;height:auto;max-width:100%;font-family:var(--font-sans)}
 .dg .nd{fill:var(--bg);stroke:var(--border);stroke-width:1}
 .dg .bar{fill:var(--diagram-bar)}
 .dg .nl{fill:var(--text-1);font-size:14px;font-weight:600}
@@ -328,10 +328,26 @@ figure{margin:0}
 .dg .lbg{fill:var(--bg)}
 @media (max-width:640px){
   .diagram.card{padding:14px}
-  .diagram{overflow-x:auto;-webkit-overflow-scrolling:touch}
-  .diagram .dg{min-width:600px;max-width:none}
 }
 @media print{
   .diagram{break-inside:avoid;max-width:150mm;margin-left:auto;margin-right:auto;overflow:visible}
   .diagram .dg{min-width:0;width:100%;height:auto}
+}
+
+/* Expansion is native details/summary, with no script or inline styles. */
+.dg-frame{min-width:0;max-width:100%}
+.dg-expand{margin-top:8px;text-align:right}
+.dg-expand > summary{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:8px 12px;list-style:none;cursor:pointer;font-size:14px;font-weight:500;color:var(--ink);background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-md)}
+.dg-expand > summary::-webkit-details-marker{display:none}
+.dg-expand > summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.dg-expand .dg-close,.dg-expand[open] .dg-open{display:none}
+.dg-expand[open] .dg-close{display:inline}
+.dg-expand[open] > summary{position:fixed;top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));z-index:10001;box-shadow:var(--shadow-pop)}
+details.dg-expand[open] .dg-overlay{position:fixed;inset:0;z-index:10000;background:var(--bg);overflow:auto;overscroll-behavior:contain;padding:max(76px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));text-align:left}
+.dg-scroll svg.dg{width:max(100%,760px);height:auto;max-width:none}
+@media (min-width:900px){
+  .dg-scroll svg.dg{width:100%;max-width:1400px;margin:auto}
+}
+@media print{
+  .dg-expand{display:none!important}
 }

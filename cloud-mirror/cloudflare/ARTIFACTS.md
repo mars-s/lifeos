@@ -67,7 +67,7 @@ Markdown supports headings, tables, lists, block quotes, fenced code and links. 
 </div>
 ```
 
-Scripts, custom CSS, inline event handlers, forms, SVG, images, iframes and embedded apps are removed. Readers do not load remote fonts, tracking images or third-party scripts. This version does not convert PDF or Word files, render interactive charts or provide collaborative editing.
+Scripts, custom CSS, inline event handlers, forms, images, iframes and embedded apps are removed. SVG diagrams in the `dg` subset are allowed; other SVG content is stripped. Readers do not load remote fonts, tracking images or third-party scripts. This version does not convert PDF or Word files, render interactive charts or provide collaborative editing.
 
 [Marked](https://marked.js.org/) parses Markdown, then sanitize-html applies a tag and attribute allowlist to both Markdown output and HTML input. The response also uses a restrictive Content Security Policy with a hash for the fixed stylesheet and a sandbox. Document text is untrusted data, not tool instructions.
 
@@ -108,6 +108,8 @@ The existing authenticated LifeOS connection still works and reports the new doc
 The private-preview release and uncertain-sharing fix were subsequently deployed as version `daffe23e-6782-47ec-9b96-d087bde38d8e`. All six Worker suites and four widget action tests passed. The latest deployment rechecked the public sample (200), revoked link (404) and expired link (404). The reviewer accepted the consent, merge and uncertain-sharing fixes at their stated scope. Actual ChatGPT private-preview mounting still needs the refreshed owner grant. The subsequent consent-origin fix publishes this sharing source alongside its regression tests; unrelated local task changes remain separate.
 
 ## Inline diagrams
+
+Diagrams fit the column at all widths. Readers get an automatic "Expand diagram" control with a no-JS overlay: pan by scrolling and pinch to zoom. Bots should not add their own expand markup.
 
 Inline SVG diagrams work in HTML fragments and raw SVG blocks in Markdown. Wrap diagrams in `<figure class="card diagram">`. Use `viewBox="0 0 680 HEIGHT"` and `width="100%"`; typical node rectangles are 192-232 units wide, 58-74 high, with `rx="10"`. CSS sets label fonts (14px semibold and 12px subtext), fills and strokes for both themes, so do not set fill colours.
 

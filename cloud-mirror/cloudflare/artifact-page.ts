@@ -30,6 +30,41 @@ function safeSvg(tagName:string, attributes:Record<string,string>) {
   return {tagName,attribs};
 }
 
+// Run only on sanitised markup. Renderer classes never enter the sanitiser allowlist.
+export function expandDiagrams(html:string) {
+  const ids = new Set([...html.matchAll(/\sid="([^"]*)"/g)].map(match=>match[1]));
+  const frames:boolean[] = [];
+  const replacements:{start:number;end:number;value:string}[] = [];
+  let depth = 0, start = -1, index = 0;
+  for(const match of html.matchAll(/<\/?(div|svg)\b[^>]*>/g)) {
+    const tag = match[0], closing = tag.startsWith('</');
+    if(match[1]==='div') {
+      if(closing) frames.pop();
+      else frames.push(frames.includes(true) || tag.match(/\bclass="([^"]*)"/)?.[1].split(/\s+/).includes('dg-frame')===true);
+      continue;
+    }
+    if(!closing) {
+      if(depth++===0) start = !frames.includes(true) && (tag.match(/\bclass="([^"]*)"/)?.[1].split(/\s+/).includes('dg'))?match.index!:-1;
+    } else if(--depth===0 && start>=0) {
+      const end = match.index!+tag.length, svg = html.slice(start,end);
+      const opening = svg.slice(0,svg.indexOf('>')+1);
+      const label = opening.match(/\saria-label="([^"]*)"/)?.[1] || svg.match(/<title\b[^>]*>([\s\S]*?)<\/title>/)?.[1] || 'Diagram';
+      // Sanitised entities stay encoded; quotes in title text also need attribute escaping.
+      const escapedLabel = sanitizeHtml(label,{allowedTags:[],allowedAttributes:{}}).replace(/"/g,'&#34;').replace(/'/g,'&#39;');
+      const ownIds = [...svg.matchAll(/<[^>]*>/g)].flatMap(match=>[...match[0].matchAll(/\sid="([^"]*)"/g)].map(attribute=>attribute[1]));
+      let suffix:string;
+      do {suffix = `-x${++index}`;} while(ownIds.some(id=>ids.has(id+suffix)));
+      for(const id of ownIds) ids.add(id+suffix);
+      const labelled = svg.replace(/^<svg\b[^>]*>/,tag=>tag.replace(/\s(?:role|aria-label|aria-hidden)="[^"]*"/g,'').replace(/>$/,` role="img" aria-label="${escapedLabel}">`));
+      const copy = labelled.replace(/<[^>]*>/g,tag=>tag.replace(/\sid="([^"]*)"/g,(_match,id:string)=>` id="${id}${suffix}"`).replace(/url\(#([\w-]+)\)/g,(_match,id:string)=>`url(#${ownIds.includes(id)?id+suffix:id})`));
+      replacements.push({start,end,value:`<div class="dg-frame">${svg}<details class="dg-expand"><summary><span class="dg-open">Expand diagram</span><span class="dg-close">Close diagram</span></summary><div class="dg-overlay" role="group" aria-label="${escapedLabel}, expanded"><div class="dg-scroll">${copy}</div></div></details></div>`});
+      start = -1;
+    }
+  }
+  for(const {start,end,value} of replacements.reverse()) html = html.slice(0,start)+value+html.slice(end);
+  return html;
+}
+
 export function renderDocument(document:Document) {
   const source = document.format==='markdown'?marked.parse(document.body,{async:false,gfm:true}):document.body;
   let svgDepth = 0;
@@ -54,6 +89,7 @@ export function renderDocument(document:Document) {
   });
   // Restore SVG spelling after htmlparser2's HTML-mode attribute normalisation.
   html = html.replace(/<(?:svg|g|rect|circle|ellipse|line|polyline|polygon|path|text|tspan|title|desc|defs|marker)\b[^>]*>/g,tag=>tag.replace(/\s(viewbox|refx|refy|markerwidth|markerheight|markerunits|preserveaspectratio)=/g,(_match,name:string)=>` ${svgCase[name]}=`));
+  html = expandDiagrams(html);
   const headings:{id:string;text:string;depth:number}[] = [];
   html = html.replace(/<(h[23])(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g,(_whole,tag:string,content:string)=>{
     const id = `section-${headings.length+1}`;
