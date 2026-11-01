@@ -13,8 +13,9 @@ test('MCP OAuth discovery, redirect rejection, owner consent, PKCE exchange and 
  try{
   let r=await send('/.well-known/oauth-authorization-server');assert.equal(r.status,200);const metadata=await r.json();assert.equal(metadata.authorization_endpoint,ORIGIN+'/authorize');assert.equal(metadata.registration_endpoint,ORIGIN+'/oauth/register');
   r=await send('/mcp');assert.equal(r.status,401);assert.match(r.headers.get('www-authenticate'),/resource_metadata/);
-  const register=redirect=>send('/oauth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_name:'Synthetic test client',redirect_uris:[redirect],token_endpoint_auth_method:'none',grant_types:['authorization_code','refresh_token'],response_types:['code']})});
+  const register=redirect=>send('/oauth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_name:'Synthetic test client',redirect_uris:Array.isArray(redirect)?redirect:[redirect],token_endpoint_auth_method:'none',grant_types:['authorization_code','refresh_token'],response_types:['code']})});
   assert.equal((await register('http://evil.example/callback')).status,400);
+  const grok=['https://www.cursor.com/agents/mcp/oauth/callback','http://localhost:8787/callback'];assert.equal((await register(grok)).status,201);assert.equal((await register(Array(6).fill(grok[0]))).status,400);assert.equal((await register([...grok,'http://example.com/cb'])).status,400);
   r=await register('https://client.example/callback');assert.equal(r.status,201);const client=await r.json();
   const verifier=random();const authPath='/authorize?'+new URLSearchParams({client_id:client.client_id,redirect_uri:'https://client.example/callback',response_type:'code',scope:'oura:read offline_access',state:'synthetic-client-state',code_challenge:await digest(verifier),code_challenge_method:'S256',resource:ORIGIN+'/mcp'});
   const bad=authPath.replace('https%3A%2F%2Fclient.example%2Fcallback','https%3A%2F%2Fevil.example%2Fcallback');assert.equal((await send(bad)).status,400);

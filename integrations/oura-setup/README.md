@@ -21,3 +21,14 @@ Run `npm test` for synthetic security and protocol tests. See ACTIVATION.md for
 exact storage targets, configuration boundaries and client compatibility limits.
 Read the provider terms before activation. A wrapper does not remove restrictions
 on providing Oura API data to AI systems.
+
+MCP clients may register one to five HTTPS or HTTP loopback redirects. HTTP is
+limited to `127.0.0.1`, `[::1]` and `localhost`, on any port; fragments and userinfo
+are rejected. All Oura API requests send
+`User-Agent: LifeOS-Oura/1.0 (+https://github.com/mars-s/lifeos)`.
+
+Refresh failures retain stored tokens unless the token endpoint returns HTTP
+400 or 401 with JSON `invalid_grant`. A data-read 401 triggers one refresh and
+one retry; a second 401 suggests reconnecting without deleting tokens. Ambiguous
+refresh outcomes retain the old token: if it has rotated, a later definitive
+`invalid_grant` clears it. Temporary provider failures report that tokens are kept.

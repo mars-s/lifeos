@@ -1,6 +1,7 @@
 import {eventDefinition,EventError} from './events-bridge.mjs';
 import {inspectWebhook,recordWebhook,webhookFreshness} from './webhooks.mjs';
 export const ORIGIN='https://lifeos-app-setup.lifeos-read-mirror-worker.workers.dev';
+export const USER_AGENT='LifeOS-Oura/1.0 (+https://github.com/mars-s/lifeos)';
 export const CALLBACK=ORIGIN+'/oura/callback';
 export const OURA_ISSUER='https://moi.ouraring.com/oauth/v2/ext/oauth-anonymous';
 // Oura API authentication docs specify this endpoint for new developer clients too.
@@ -42,7 +43,7 @@ export class OuraVault {
  constructor(state,env){this.storage=state.storage;this.env=env;this.queue=Promise.resolve();this.eventsBridge=null;}
  fetch(request){const run=this.queue.then(()=>this.handle(request));this.queue=run.catch(()=>{});return run.catch(()=>json({error:'Request failed safely; reconnect if needed.'},502));}
  async alarm(){const run=this.queue.then(async()=>{if(this.eventsBridge)await this.eventsBridge.drain();const box=await this.storage.get('pending');if(box&&(await open(box,this.env)).expires<=Date.now())await this.storage.delete('pending');const updates=await this.storage.get('webhook_metadata');if(updates){const live=(await open(updates,this.env)).filter(e=>e.expires>Date.now());if(live.length){await this.storage.put('webhook_metadata',await seal(live,this.env));const next=Math.min(...live.map(e=>e.expires)),current=await this.storage.getAlarm?.();if(!current||current>next)await this.storage.setAlarm(next);}else await this.storage.delete('webhook_metadata');}});this.queue=run.catch(()=>{});return run;}
- async request(url,init){return fetch(url,{...init,redirect:'manual',signal:AbortSignal.timeout(10000)});}
+ async request(url,init){const headers=new Headers(init?.headers);headers.set('User-Agent',USER_AGENT);return fetch(url,{...init,headers,redirect:'manual',signal:AbortSignal.timeout(10000)});}
  async token(form){
   form.set('client_id',this.env.OURA_CLIENT_ID);form.set('client_secret',this.env.OURA_CLIENT_SECRET);
   const r=await this.request(OURA_TOKEN_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form});
@@ -57,6 +58,12 @@ export class OuraVault {
   if(typeof data.access_token!=='string'||!data.access_token||data.access_token.length>8192||typeof data.refresh_token!=='string'||!data.refresh_token||data.refresh_token.length>8192||String(data.token_type).toLowerCase()!=='bearer'||!Number.isFinite(data.expires_in)||data.expires_in<=0)throw Error('token_response');
   const scopes=validatedScopes(data.scope);
   return {access:data.access_token,refresh:data.refresh_token,scopes,expires:Date.now()+Math.min(data.expires_in,31536000)*1000};
+ }
+ async refresh(tokens){
+  // Keep single-use refresh tokens after ambiguous outcomes. A rotated or invalid
+  // token returns invalid_grant on the next attempt, which then clears it.
+  let next;try{next=await this.token(new URLSearchParams({grant_type:'refresh_token',refresh_token:tokens.refresh}));}catch(error){if(['token_http_400','token_http_401'].includes(error.message)&&error.tokenCategory==='invalid_grant'){await this.storage.delete('tokens');throw Error('connect');}throw Error('upstream');}
+  next.connectionId=tokens.connectionId;await this.storage.put('tokens',await seal(next,this.env));return next;
  }
  async handle(request){
   const url=new URL(request.url),path=url.pathname;
@@ -98,15 +105,12 @@ export class OuraVault {
   if(!collections.includes(kind))throw Error('endpoint');
   const now=Date.now();let budget=await this.storage.get('budget')||{start:now,count:0,cooldown:0};if(budget.cooldown>now)throw Error('rate');if(now-budget.start>=60000)budget={start:now,count:0,cooldown:budget.cooldown};if(budget.count>=30)throw Error('rate');budget.count++;await this.storage.put('budget',budget);
   const box=await this.storage.get('tokens');if(!box)throw Error('connect');let tokens=await open(box,this.env);
-  if(tokens.expires<Date.now()+60000){
-   // Remove the single-use refresh token before sending it. An ambiguous network
-   // outcome requires reconnection, rather than risking re-use of an invalid token.
-   const connectionId=tokens.connectionId;await this.storage.delete('tokens');tokens=await this.token(new URLSearchParams({grant_type:'refresh_token',refresh_token:tokens.refresh}));tokens.connectionId=connectionId;await this.storage.put('tokens',await seal(tokens,this.env));
-  }
+  if(tokens.expires<Date.now()+60000)tokens=await this.refresh(tokens);
   const url=new URL('https://api.ouraring.com/v2/usercollection/'+kind);const params={...args};if(kind==='heartrate'){params.start_datetime=args.start_date+'T00:00:00Z';params.end_datetime=args.end_date+'T23:59:59Z';delete params.start_date;delete params.end_date;}url.search=new URLSearchParams(params).toString();
-  const r=await this.request(url.href,{headers:{Authorization:'Bearer '+tokens.access,Accept:'application/json'}});
+  const read=async()=>{try{return await this.request(url.href,{headers:{Authorization:'Bearer '+tokens.access,Accept:'application/json'}});}catch{throw Error('upstream');}};
+  let r=await read();if(r.status===401){tokens=await this.refresh(tokens);r=await read();}
   if(r.status===429){const raw=r.headers.get('Retry-After');const seconds=raw&&/^\d+$/.test(raw)?Number(raw):NaN;const until=Number.isFinite(seconds)?Date.now()+seconds*1000:Date.parse(raw||'');budget.cooldown=Math.max(Date.now()+60000,Number.isFinite(until)?until:0);await this.storage.put('budget',budget);throw Error('rate');}
-  if(r.status===401){await this.storage.delete('tokens');throw Error('connect');}if(!r.ok)throw Error('upstream');
+  if(r.status===401)throw Error('connect');if(!r.ok)throw Error('upstream');
   const data=JSON.parse(await readLimited(r.body,524288));if(kind==='personal_info'){const health={};for(const k of ['age','weight','height','biological_sex'])if(data[k]!==undefined)health[k]=data[k];return {source:'Oura API',data:health};}if(!Array.isArray(data.data)||!(data.next_token==null||typeof data.next_token==='string'))throw Error('schema');
   return {source:'Oura API',data:data.data,next_token:data.next_token??null};
  }
@@ -132,6 +136,6 @@ export class OuraVault {
   if(msg.method!=='tools/call')return error(-32601,'Method not found.');
   const name=msg.params?.name,args=msg.params?.arguments;const index=tools.findIndex(t=>t.name===name),kind=collections[index];const valid=kind==='personal_info'?args&&typeof args==='object'&&!Array.isArray(args)&&Object.keys(args).length===0:validDates(args)&&(kind!=='heartrate'||args.start_date===args.end_date);if(index<0||!valid)return error(-32602,'Unknown tool or invalid date range. Maximum 30 days.');
   try{const result=await this.read(kind,args);return reply({content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result});}
-  catch{return reply({content:[{type:'text',text:'Read unavailable. Check connection, granted health scopes, and provider rate limits. Do not automatically retry.'}],isError:true});}
+  catch(error){return reply({content:[{type:'text',text:error.message==='connect'?'Reconnect Oura to read health records.':'Oura is temporarily unavailable; tokens kept. Check granted health scopes and provider rate limits. Do not automatically retry.'}],isError:true});}
  }
 }
