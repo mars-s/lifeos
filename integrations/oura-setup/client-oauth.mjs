@@ -10,6 +10,7 @@ async function auth(request,env){
  const path=new URL(request.url).pathname,oauth=env.OAUTH_PROVIDER;
  try{
   if(path==='/authorize'&&request.method==='GET'){
+   if(!new URL(request.url).search)return json({error:'invalid_request',error_description:'Start sign-in from your MCP client. A registered client, redirect URI, response_type=code and S256 PKCE challenge are required.'},400);
    const r=await oauth.parseAuthRequest(request);if(!validAuth(r))return json({error:'HTTPS or loopback redirect without fragments or userinfo, S256 PKCE and read-only scope required.'},400);
    const facts=await oauth.describeConsent(r),consent=await oauth.beginConsent(r);
    const h=new Headers(consent.headers);for(const [k,v] of Object.entries(headers))h.set(k,v);h.set('Content-Type','text/html; charset=utf-8');h.set('Referrer-Policy','same-origin');h.set('Content-Security-Policy',`default-src 'none'; form-action 'self' ${new URL(r.redirectUri).origin}; frame-ancestors 'none'; base-uri 'none'`);

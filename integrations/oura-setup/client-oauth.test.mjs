@@ -19,5 +19,10 @@ test('auth catch logs bounded summary and keeps the same safe 400 response',asyn
  options.onError({code:'invalid_request',description:'Invalid request',status:400,headers:{secret:'PRIVATE'},internal:{secret:'PRIVATE'}});assert.deepEqual(logs[1],['client_oauth_error',{code:'invalid_request',description:'Invalid request',status:400}]);
 });
 test('loopback consent CSP includes redirect origin',async()=>{
- const r=await options.defaultHandler.fetch(new Request('https://example.com/authorize'),{OAUTH_PROVIDER:{async parseAuthRequest(){return {responseType:'code',codeChallengeMethod:'S256',codeChallenge:'a'.repeat(43),redirectUri:pair[1],scope:['oura:read']};},async describeConsent(){return {clientName:'Synthetic'};},async beginConsent(){return {handle:'synthetic',headers:{}};}}});assert.equal(r.status,200);assert.match(r.headers.get('content-security-policy'),/form-action 'self' http:\/\/localhost:8787;/);
+ const r=await options.defaultHandler.fetch(new Request('https://example.com/authorize?client_id=synthetic'),{OAUTH_PROVIDER:{async parseAuthRequest(){return {responseType:'code',codeChallengeMethod:'S256',codeChallenge:'a'.repeat(43),redirectUri:pair[1],scope:['oura:read']};},async describeConsent(){return {clientName:'Synthetic'};},async beginConsent(){return {handle:'synthetic',headers:{}};}}});assert.equal(r.status,200);assert.match(r.headers.get('content-security-policy'),/form-action 'self' http:\/\/localhost:8787;/);
+});
+test('bare authorize gives fixed guidance without starting consent or redirecting',async()=>{
+ const r=await options.defaultHandler.fetch(new Request('https://example.com/authorize'),{OAUTH_PROVIDER:new Proxy({},{get(){assert.fail('Bare authorize must not start OAuth.');}})});
+ assert.equal(r.status,400);assert.equal(r.headers.get('location'),null);assert.equal(r.headers.get('set-cookie'),null);
+ const body=await r.json();assert.equal(body.error,'invalid_request');assert.match(body.error_description,/MCP client/);assert.match(body.error_description,/S256 PKCE/);
 });
