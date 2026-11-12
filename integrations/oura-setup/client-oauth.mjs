@@ -1,0 +1,33 @@
+import {eventPrincipal} from './event-authorization.mjs';
+import OAuthProvider,{OAuthError} from '@cloudflare/workers-oauth-provider';
+import {ORIGIN,digest,json,page,headers,forwardVault} from './integration.mjs';
+const loopbackHosts=new Set(['127.0.0.1','[::1]','localhost']);
+const scope='oura:read',scopes=[scope,'offline_access'];
+const esc=s=>String(s).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';');
+export function validRedirect(value){try{const u=new URL(value);return !u.username&&!u.password&&!u.hash&&((u.protocol==='http:'&&loopbackHosts.has(u.hostname))||(u.protocol==='https:'&&u.hostname!=='localhost'&&!/^\d+(\.\d+){3}$/.test(u.hostname)&&!u.hostname.includes(':')));}catch{return false;}}
+export function validAuth(r){return r.responseType==='code'&&r.codeChallengeMethod==='S256'&&/^[A-Za-z0-9_-]{43}$/.test(r.codeChallenge||'')&&validRedirect(r.redirectUri)&&r.scope.every(s=>scopes.includes(s));}
+async function auth(request,env){
+ const path=new URL(request.url).pathname,oauth=env.OAUTH_PROVIDER;
+ try{
+  if(path==='/authorize'&&request.method==='GET'){
+   if(!new URL(request.url).search)return json({error:'invalid_request',error_description:'Start sign-in from your MCP client. A registered client, redirect URI, response_type=code and S256 PKCE challenge are required.'},400);
+   const r=await oauth.parseAuthRequest(request);if(!validAuth(r))return json({error:'HTTPS or loopback redirect without fragments or userinfo, S256 PKCE and read-only scope required.'},400);
+   const facts=await oauth.describeConsent(r),consent=await oauth.beginConsent(r);
+   const h=new Headers(consent.headers);for(const [k,v] of Object.entries(headers))h.set(k,v);h.set('Content-Type','text/html; charset=utf-8');h.set('Referrer-Policy','same-origin');h.set('Content-Security-Policy',`default-src 'none'; form-action 'self' ${new URL(r.redirectUri).origin}; frame-ancestors 'none'; base-uri 'none'`);
+   return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize LifeOS read access</title><h1>Authorize this client?</h1><p><strong>${esc(facts.clientName)}</strong> asks to read your health records: sleep, activity, readiness, personal health metrics, heart rate, workouts, tags, sessions and blood oxygen through LifeOS. This is an independent wrapper, not Oura official MCP.</p><p>Client name is supplied by the client. Verify its exact destination: <code>${esc(r.redirectUri)}</code>.</p><p>Read-only scope: oura:read. Offline access permits this client to reconnect for up to 30 days. Records sent to this client are subject to its own data-use and retention policies. Oura provider restrictions still apply.</p><form method="post" action="/authorize" enctype="multipart/form-data"><input type="hidden" name="handle" value="${esc(consent.handle)}"><label>Owner key <input name="key" type="password" autocomplete="off" maxlength="512"></label><p>Or select your private owner-key file: <input type="file" name="owner_file" accept=".txt"></p><button name="decision" value="allow">Authorize read access</button><button name="decision" value="deny">Deny</button></form><p><a href="/oura/privacy">Privacy</a></p></html>`,{headers:h});
+  }
+  if(path==='/authorize'&&request.method==='POST'){
+   if(request.headers.get('origin')!==ORIGIN||!['application/x-www-form-urlencoded','multipart/form-data'].some(t=>request.headers.get('content-type')?.startsWith(t)))return json({error:'Same-origin form required.'},403);
+   const form=await request.formData(),handle=String(form.get('handle')||'');
+   if(form.get('decision')==='deny'){const denied=await oauth.denyConsent(request,handle);return new Response(null,{status:303,headers:denied.headers});}
+   const file=form.get('owner_file');const supplied=String(form.get('key')||'')||(file&&typeof file.text==='function'?(await file.text()).trim():'');if(form.get('decision')!=='allow'||await digest(supplied)!==env.OWNER_KEY_HASH)return json({error:'Owner authorization required.'},401);
+   const approval=await oauth.approveConsent(request,handle,{scope:scopes});if(!validAuth(approval.request))return json({error:'Invalid authorization request.'},400);
+   const status=await forwardVault(new Request(ORIGIN+'/oura/status'),env,true);const connection=status.ok?await status.json():null;if(!connection?.connected||!connection?.connection_id)return page('<p>Connect your Oura account first at <a href="/oura/connect">Connect Oura</a>, then restart client authorization.</p>',409);
+   const result=await oauth.completeAuthorization({request:approval.request,userId:'lifeos-owner',metadata:{role:'oura-reader'},scope:scopes,props:{owner:'lifeos-owner',role:'oura-reader',connectionId:connection.connection_id}});
+   approval.headers.set('Location',result.redirectTo);return new Response(null,{status:303,headers:approval.headers});
+  }
+  return json({error:'OAuth route not found.'},404);
+ }catch(error){console.error('client_oauth_failed',{path,method:request.method,name:error?.name,message:String(error?.message||'').slice(0,200)});return json({error:'Authorization failed. Restart the client connection.'},400);}
+}
+const owner=p=>p?.owner==='lifeos-owner'&&p?.role==='oura-reader';
+export const provider=new OAuthProvider({apiRoute:'/mcp',apiHandler:{async fetch(request,env,ctx){if(!owner(ctx.props)||!ctx.auth?.scope.includes(scope))return json({error:'Owner read scope required.'},403);return forwardVault(request,env,true,ctx.props.connectionId,await eventPrincipal(ctx.auth,ctx.props));}},defaultHandler:{fetch:auth},authorizeEndpoint:'/authorize',tokenEndpoint:'/oauth/token',clientRegistrationEndpoint:'/oauth/register',clientIdMetadataDocumentEnabled:false,scopesSupported:scopes,requiredScopes:[scope],resourceMetadata:{resource:ORIGIN+'/mcp',authorization_servers:[ORIGIN],resource_name:'LifeOS personal health'},accessTokenTTL:3600,refreshTokenTTL:2592000,clientRegistrationTTL:86400,allowTokenExchangeGrant:false,onError:({code,description,status})=>{console.error('client_oauth_error',{code,description,status});},clientRegistrationCallback({clientMetadata}){const redirects=clientMetadata.redirect_uris;if(!Array.isArray(redirects)||!redirects.length||redirects.length>5||!redirects.every(validRedirect))return {description:'One to five HTTPS or loopback redirects without fragments or userinfo required.'};if(clientMetadata.scope&&String(clientMetadata.scope).split(/\s+/).some(s=>!scopes.includes(s)))return {description:'Only LifeOS read scopes are supported.'};},tokenExchangeCallback(options){if(!owner(options.props)||options.scope.some(s=>!scopes.includes(s)))throw new OAuthError('invalid_grant',{description:'Owner read grant required.'});}});
