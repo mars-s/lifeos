@@ -86,16 +86,28 @@ export function continuePage(href: string, nonce: string) {
 const explanations: Record<string, string> = {
   browser_session_missing: 'This browser has no record of starting this sign-in. That can happen if sign-in moved to another browser or app part way through, took longer than 10 minutes, or a page loaded twice and the first load used the one-time link.',
   browser_session_mismatch: 'This sign-in was started in a different browser session, so it cannot finish here.',
-  session_expired_or_unavailable: 'This sign-in expired or was already used. Each sign-in link works once, for 10 minutes.',
+  session_expired_or_unavailable: 'Each sign-in link works once, for 10 minutes. This one was already used, often because the page loaded twice, or it ran out of time.',
   callback_state_missing: 'GitHub returned without the details needed to match this sign-in.',
   consent_handle_missing: 'The consent form arrived incomplete.',
 };
 
+const startAgain = '<section aria-labelledby="again"><h2 id="again">Start again</h2><ol><li>Return to the app that sent you here.</li><li>Choose connect or reconnect for LifeOS.</li><li>Finish every step in the same browser window, within 10 minutes.</li></ol></section>';
+const checkApp = '<section aria-labelledby="again"><h2 id="again">Check the app first</h2><ol><li>Return to the app that sent you here.</li><li>If it shows LifeOS as connected, you are done.</li><li>If not, choose connect or reconnect, and finish every step in the same browser window, within 10 minutes.</li></ol></section>';
+
 /** Friendly failure page. Shows only the fixed stage and reason codes, never request data. */
 export function errorPage(stage: string, reason: string, nonce: string) {
   const why = explanations[reason] ?? 'The connection request was incomplete or no longer matches the app that started it.';
+  // After GitHub, an already used or missing session can mean an earlier load of this same page
+  // finished the sign-in, so these pages must not claim that nothing was connected.
+  const used = reason === 'session_expired_or_unavailable';
+  const afterGitHub = stage.startsWith('callback') && reason === 'browser_session_missing';
+  const [title, lead, steps] = used
+    ? ['This sign-in link was already used', 'Your app may already be connected. Check the app before you start again.', checkApp]
+    : afterGitHub
+      ? ['Sign-in did not finish', 'This browser could not finish this sign-in. If the page loaded twice, the first load may have connected your app, so check the app first.', checkApp]
+      : ['Sign-in did not finish', 'Nothing was connected and nothing changed.', startAgain];
   return shell('LifeOS sign-in did not finish', nonce,
-    `<h1>Sign-in did not finish</h1><p class="lead">Nothing was connected and nothing changed.</p><p class="why">${escape(why)}</p><section aria-labelledby="again"><h2 id="again">Start again</h2><ol><li>Return to the app that sent you here.</li><li>Choose connect or reconnect for LifeOS.</li><li>Finish every step in the same browser window, within 10 minutes.</li></ol></section><p class="note">Reference: stage <code>${escape(stage)}</code>, reason <code>${escape(reason)}</code>.</p>`);
+    `<h1>${title}</h1><p class="lead">${lead}</p><p class="why">${escape(why)}</p>${steps}<p class="note">Reference: stage <code>${escape(stage)}</code>, reason <code>${escape(reason)}</code>.</p>`);
 }
 
 export type ConsentModel = {

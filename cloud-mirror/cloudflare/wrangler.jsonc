@@ -10,8 +10,12 @@
   "workers_dev": true,
   "preview_urls": false,
   "rules": [{"type": "Text", "globs": ["**/*.html", "**/*.css"], "fallthrough": true}],
+  // Redacted: the code logs only fixed sign-in facts, never URLs, cookies, tokens or codes.
   "observability": {
-    "enabled": false
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "redact_query_string": true,
+    "logs": {"enabled": true, "invocation_logs": false}
   },
   "vars": {
     "LIFEOS_OWNER_ID": "avi-lifeos-owner",

@@ -15,6 +15,7 @@ import {localScope,notesScope,notesWriteScope} from './bridge-contract';
 import {newNonce,pageHeaders,consentPage,continuePage,errorPage} from './consent-page';
 import {artifactScope,registerArtifacts,publicArtifact} from './artifacts';
 import {healthScope,registerHealth,type HealthEnv} from './health';
+import {awaitRedirect,boundToState,clearBindingCookie,rememberRedirect,requestFacts,retryingTransactionKv} from './callback-guard';
 
 // OAuth grants explicitly gate read access and queued writes.
 type OAuthEnv=Env & HealthEnv & {
@@ -66,21 +67,28 @@ function owner(identity:unknown,env:OAuthEnv):identity is Identity {
 async function challenge(verifier:string) {
   return btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier))))).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
 }
+type Trace={stage:string;reason:string|null;recovered:boolean};
+const expiredDescription='This authorization expired or was already used; start again';
 async function auth(request:Request,env:OAuthEnv):Promise<Response> {
-  const url=new URL(request.url),oauth=env.OAUTH_PROVIDER!;
-  let stage='request';
+  const trace:Trace={stage:'request',reason:null,recovered:false};
+  const response=await authorize(request,env,trace);
+  if(['/authorize','/callback'].includes(new URL(request.url).pathname))console.log(JSON.stringify({event:'oauth_browser',...requestFacts(request),stage:trace.stage,reason:trace.reason,recovered:trace.recovered,status:response.status}));
+  return response;
+}
+async function authorize(request:Request,env:OAuthEnv,trace:Trace):Promise<Response> {
+  const url=new URL(request.url),oauth=env.OAUTH_PROVIDER!,kv=env.OAUTH_KV!;
   // Browsers and link scanners may speculatively load these GETs. A prefetched /callback would
   // consume the single-use upstream state and clear its cookie, so the real navigation then
   // fails with browser_session_missing. Refuse speculative loads before touching any state;
   // browsers drop a failed prefetch and make the real request when the user navigates.
   const purpose=[request.headers.get('sec-purpose'),request.headers.get('purpose'),request.headers.get('x-moz')].join(' ').toLowerCase();
-  if(request.method==='GET'&&(url.pathname==='/callback'||url.pathname==='/authorize')&&/prefetch|prerender/.test(purpose))return new Response(null,{status:503,headers:{'Cache-Control':'no-store','Retry-After':'0'}});
+  if(request.method==='GET'&&(url.pathname==='/callback'||url.pathname==='/authorize')&&/prefetch|prerender/.test(purpose)){trace.reason='speculative_load';return new Response(null,{status:503,headers:{'Cache-Control':'no-store','Retry-After':'0'}});}
   try {
     if(url.pathname==='/authorize'&&request.method==='GET') {
-      stage='client_authorization';
+      trace.stage='client_authorization';
       const req=await oauth.parseAuthRequest(request);
       if(req.scope.some(s=>!supportedScopes.includes(s))||req.scope.includes(writeScope)&&!writesEnabled(env))return json({error:'This access is not activated.'},400);
-      stage='consent_start';
+      trace.stage='consent_start';
       const facts=await oauth.describeConsent(req),consent=await oauth.beginConsent(req);
       // Chromium applies form-action to the GitHub redirect after this POST.
       // The validated client redirect is also needed when the owner declines.
@@ -91,7 +99,7 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
         policy:policyDescription(env)},nonce),{headers:pageHeaders(consent.headers,nonce,`'self' https://github.com ${clientOrigin}`)});
     }
     if(url.pathname==='/authorize'&&request.method==='POST') {
-      stage='consent_session';
+      trace.stage='consent_session';
       const requestOrigin=request.headers.get('origin');
       // Older consent pages can hide Origin. Browser fetch metadata can establish
       // same-origin navigation; the transaction-bound cookie is still mandatory.
@@ -114,7 +122,7 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       const approved=await oauth.approveConsent(request,handle,{scope:approvedScopes});
       if(approved.request.scope.includes(writeScope)&&!writesEnabled(env))return json({error:'Write activation pending.'},403);
       const verifier=crypto.randomUUID()+crypto.randomUUID();
-      stage='github_redirect';
+      trace.stage='github_redirect';
       const upstream=await oauth.beginUpstream(approved.request,{data:{verifier},headers:approved.headers});
       const target=new URL('https://github.com/login/oauth/authorize');
       target.search=new URLSearchParams({client_id:env.GITHUB_CLIENT_ID!,redirect_uri:origin+'/callback',scope:'',state:upstream.state,code_challenge:await challenge(verifier),code_challenge_method:'S256',allow_signup:'false'}).toString();
@@ -126,25 +134,42 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       return new Response(continuePage(target.href,nonce),{headers:pageHeaders(upstream.headers,nonce)});
     }
     if(url.pathname==='/callback'&&request.method==='GET') {
-      stage='callback_session';
-      const resumed=await oauth.finishUpstream<{verifier:string}>(request);
+      trace.stage='callback_session';
+      const state=url.searchParams.get('state')??'';
+      const replay=(location:string,headers:Headers)=>{trace.recovered=true;headers.set('Location',location);headers.set('Cache-Control','no-store');return new Response(null,{status:302,headers});};
+      let resumed:Awaited<ReturnType<typeof oauth.finishUpstream<{verifier:string}>>>;
+      try {resumed=await oauth.finishUpstream<{verifier:string}>(request);}
+      catch(error){
+        // The library reports this only after the binding cookie matched, and the check is repeated
+        // here: an overlapping load from this same browser gets the winner's redirect, nobody else.
+        if((error as {description?:string})?.description===expiredDescription&&state&&await boundToState(request,state)){
+          const location=await awaitRedirect(kv,state);
+          if(location){trace.reason='session_expired_or_unavailable';return replay(location,new Headers({'Set-Cookie':await clearBindingCookie(state)}));}
+        }
+        throw error;
+      }
       const deny=()=>{resumed.headers.set('Location',authorizationErrorRedirect(resumed.request,'access_denied'));return new Response(null,{status:302,headers:resumed.headers});};
+      // Both overlapping loads can pass finishUpstream. GitHub then refuses the second code exchange,
+      // which must not replace the first load's successful redirect with access_denied.
+      const siblingOrDeny=async()=>{const location=await awaitRedirect(kv,state);if(location){trace.reason='github_code_already_used';return replay(location,resumed.headers);}return deny();};
       const code=url.searchParams.get('code');if(url.searchParams.has('error')||!code)return deny();
       // Access token lives only during this callback, not in grant props/logs/D1.
-      stage='github_exchange';
+      trace.stage='github_exchange';
       const exchange=await fetch('https://github.com/login/oauth/access_token',{method:'POST',redirect:'manual',signal:AbortSignal.timeout(15000),headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:env.GITHUB_CLIENT_ID!,client_secret:env.GITHUB_CLIENT_SECRET!,code,redirect_uri:origin+'/callback',code_verifier:resumed.data.verifier})});
-      if(!exchange.ok)return deny();
+      if(!exchange.ok)return siblingOrDeny();
       const result=await exchange.json() as {access_token?:string;scope?:string;token_type?:string};
+      if(!result.access_token||result.token_type!=='bearer')return siblingOrDeny();
       // Refuse an app whose earlier grants accidentally carry repository/user scopes.
-      if(!result.access_token||result.token_type!=='bearer'||result.scope?.trim())return deny();
-      stage='github_identity';
+      if(result.scope?.trim())return deny();
+      trace.stage='github_identity';
       const identity=await fetch('https://api.github.com/user',{redirect:'manual',signal:AbortSignal.timeout(15000),headers:{Authorization:'Bearer '+result.access_token,Accept:'application/vnd.github+json','User-Agent':'LifeOSReadOnlyMirror/0.1'}});
       if(!identity.ok)return deny();
       const user=await identity.json() as {id?:number};
       if(!Number.isSafeInteger(user.id)||String(user.id)!==env.LIFEOS_GITHUB_OWNER_ID)return deny();
-      stage='grant_completion';
+      trace.stage='grant_completion';
       if(resumed.request.scope.includes(writeScope)&&!writesEnabled(env))return deny();
       const done=await oauth.completeAuthorization({request:resumed.request,userId:String(user.id),metadata:{role:'reader'},scope:resumed.request.scope,props:{owner:env.LIFEOS_OWNER_ID,github_id:String(user.id),role:'reader'} satisfies Identity});
+      await rememberRedirect(kv,state,done.redirectTo);
       resumed.headers.set('Location',done.redirectTo);return new Response(null,{status:302,headers:resumed.headers});
     }
     return json({error:'OAuth route not found.'},404);
@@ -162,10 +187,10 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       'Invalid client_id':'client_registration_missing',
       'Invalid redirect URI':'client_redirect_mismatch'
     };
-    const reason=description&&reasons[description]||'authorization_failed';
+    const reason=description&&reasons[description]||'authorization_failed';trace.reason=reason;
     // People in a browser get a page with a way to start again; API callers keep the JSON.
-    if(/text\/html/.test(request.headers.get('accept')??'')){const nonce=newNonce();return new Response(errorPage(stage,reason,nonce),{status:400,headers:pageHeaders(new Headers(),nonce)});}
-    return json({error:'Sign-in could not be completed. Restart the connection.',stage,reason},400);
+    if(/text\/html/.test(request.headers.get('accept')??'')){const nonce=newNonce();return new Response(errorPage(trace.stage,reason,nonce),{status:400,headers:pageHeaders(new Headers(),nonce)});}
+    return json({error:'Sign-in could not be completed. Restart the connection.',stage:trace.stage,reason},400);
   }
 }
 async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Response> {
@@ -284,5 +309,5 @@ export default {async fetch(request:Request,env:OAuthEnv,ctx:ExecutionContext):P
     const bytes=new Uint8Array(size);let pos=0;for(const c of chunks){bytes.set(c,pos);pos+=c.length;}
     request=new Request(request,{body:bytes});
   }
-  return provider.fetch(request,env,ctx);
+  return provider.fetch(request,{...env,OAUTH_KV:retryingTransactionKv(env.OAUTH_KV)},ctx);
 }};
