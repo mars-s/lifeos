@@ -1,7 +1,7 @@
 {
   "name": "lifeos-app-setup",
   "account_id": "d0f2ba4b10b5789ddd200648bbf055a7",
-  "main": "worker.mjs",
+  "main": "index.mjs",
   "compatibility_date": "2026-10-22",
   "workers_dev": true,
   "preview_urls": false,

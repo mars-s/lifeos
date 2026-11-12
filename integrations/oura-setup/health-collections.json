@@ -1,0 +1,19 @@
+[
+ "daily_sleep",
+ "daily_activity",
+ "daily_readiness",
+ "daily_cardiovascular_age",
+ "daily_resilience",
+ "daily_spo2",
+ "daily_stress",
+ "enhanced_tag",
+ "heartrate",
+ "personal_info",
+ "rest_mode_period",
+ "session",
+ "sleep",
+ "sleep_time",
+ "tag",
+ "vO2_max",
+ "workout"
+]

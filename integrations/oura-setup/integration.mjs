@@ -1,5 +1,6 @@
 import {eventDefinition,EventError} from './events-bridge.mjs';
 import {inspectWebhook,recordWebhook,webhookFreshness} from './webhooks.mjs';
+import collections from './health-collections.json' with {type:'json'};
 export const ORIGIN='https://lifeos-app-setup.lifeos-read-mirror-worker.workers.dev';
 export const USER_AGENT='LifeOS-Oura/1.0 (+https://github.com/mars-s/lifeos)';
 export const CALLBACK=ORIGIN+'/oura/callback';
@@ -34,8 +35,9 @@ async function readLimited(stream,limit){if(!stream)return '';const reader=strea
 const cookieName='__Host-lifeos-oura';
 const cookie=value=>`${cookieName}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${value?600:0}`;
 const browserCookie=request=>(request.headers.get('cookie')||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(cookieName+'='))?.slice(cookieName.length+1)||'';
-const collections=['daily_sleep','daily_activity','daily_readiness','daily_cardiovascular_age','daily_resilience','daily_spo2','daily_stress','enhanced_tag','heartrate','personal_info','rest_mode_period','session','sleep','sleep_time','tag','vO2_max','workout'];
+
 const tools=collections.map(kind=>({name:'read_'+kind.toLowerCase(),description:`Read the owner's Oura ${kind} health records. Sensitive personal data; only return to the owner's authorized client. One bounded page, no storage. Heart rate is limited to one calendar day.`,inputSchema:kind==='personal_info'?{type:'object',properties:{},additionalProperties:false}:{type:'object',properties:{start_date:{type:'string',description:'YYYY-MM-DD'},end_date:{type:'string',description:'YYYY-MM-DD, at most 30 days after start; same day for heart rate'},next_token:{type:'string',maxLength:2048}},required:['start_date','end_date'],additionalProperties:false},annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:true}}));
+export function validRead(kind,args){if(!collections.includes(kind))return false;if(kind==='personal_info')return !!args&&typeof args==='object'&&!Array.isArray(args)&&Object.keys(args).length===0;return validDates(args)&&(kind!=='heartrate'||args.start_date===args.end_date);}
 export function validDates(args){if(!args||typeof args!=='object'||Array.isArray(args)||Object.keys(args).some(k=>!['start_date','end_date','next_token'].includes(k)))return false;for(const key of ['start_date','end_date']){if(!/^\d{4}-\d{2}-\d{2}$/.test(args[key]||''))return false;const d=new Date(args[key]+'T00:00:00Z');if(!Number.isFinite(+d)||d.toISOString().slice(0,10)!==args[key])return false;}const days=(Date.parse(args.end_date)-Date.parse(args.start_date))/86400000;return days>=0&&days<=30&&(!('next_token'in args)||(typeof args.next_token==='string'&&args.next_token.length<=2048));}
 // One owner and one object. Serial execution prevents concurrent single-use refreshes.
 // No health responses are persisted. All credentials and PKCE transactions are encrypted.
@@ -82,6 +84,12 @@ export class OuraVault {
    return page('<p>Your owner key was verified. Continue to Oura to review and approve access. This connection expires after ten minutes.</p><p><a rel="noreferrer" href="'+dest.href.replaceAll('&','&amp;').replaceAll('\"','&quot;')+'">Continue to Oura</a></p>',200,{'Set-Cookie':cookie(browser)});
   }
   if(request.headers.get('x-lifeos-internal')!==this.env.TOKEN_ENCRYPTION_KEY&&!await authorized(request,this.env))return json({error:'Owner bearer authorization required.'},401,{'WWW-Authenticate':'Bearer realm="LifeOS personal MCP"'});
+  // Reached only through the HealthReader service binding: the public router never forwards this path.
+  if(path==='/oura/read'&&request.method==='POST'&&request.headers.get('x-lifeos-internal')===this.env.TOKEN_ENCRYPTION_KEY){
+   let input;try{input=JSON.parse(await readLimited(request.body,8192));}catch{return json({ok:false,reason:'invalid'},400);}
+   if(!validRead(input?.kind,input?.args))return json({ok:false,reason:'invalid'},400);
+   try{return json({ok:true,result:await this.read(input.kind,input.args)});}catch(error){return json({ok:false,reason:['connect','rate'].includes(error.message)?error.message:'unavailable'});}
+  }
   if(path==='/oura/disconnect'&&request.method==='POST'){await this.storage.deleteAll();return json({disconnected:true,provider_grant:'Also revoke the application in Oura account settings. Local deletion does not revoke the provider grant.'});}
   if(path==='/oura/status'&&request.method==='GET'){const box=await this.storage.get('tokens');return json({connected:!!box,connection_id:box?(await open(box,this.env)).connectionId:null});}
   if(path==='/mcp'){if(request.headers.get('x-lifeos-internal')===this.env.TOKEN_ENCRYPTION_KEY){const box=await this.storage.get('tokens');if(!box||request.headers.get('x-lifeos-connection')!==(await open(box,this.env)).connectionId)return json({error:'Connection changed. Reauthorize the client.'},401);}return this.mcp(request);}
@@ -134,7 +142,7 @@ export class OuraVault {
   if(msg.method==='tools/call'&&msg.params?.name==='read_update_status'){const args=msg.params.arguments;if(!args||typeof args!=='object'||Array.isArray(args)||Object.keys(args).length)return error(-32602,'No arguments accepted.');return reply({content:[{type:'text',text:JSON.stringify(await webhookFreshness(this.storage,{open,env:this.env}))}]});}
   if(msg.method==='ping')return reply({});if(msg.method==='tools/list')return reply({tools:[...tools,{name:'read_update_status',description:'Read authenticated webhook freshness metadata, not health records. Notifications do not guarantee freshness.',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}}]});
   if(msg.method!=='tools/call')return error(-32601,'Method not found.');
-  const name=msg.params?.name,args=msg.params?.arguments;const index=tools.findIndex(t=>t.name===name),kind=collections[index];const valid=kind==='personal_info'?args&&typeof args==='object'&&!Array.isArray(args)&&Object.keys(args).length===0:validDates(args)&&(kind!=='heartrate'||args.start_date===args.end_date);if(index<0||!valid)return error(-32602,'Unknown tool or invalid date range. Maximum 30 days.');
+  const name=msg.params?.name,args=msg.params?.arguments;const index=tools.findIndex(t=>t.name===name),kind=collections[index];if(index<0||!validRead(kind,args))return error(-32602,'Unknown tool or invalid date range. Maximum 30 days.');
   try{const result=await this.read(kind,args);return reply({content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result});}
   catch(error){return reply({content:[{type:'text',text:error.message==='connect'?'Reconnect Oura to read health records.':'Oura is temporarily unavailable; tokens kept. Check granted health scopes and provider rate limits. Do not automatically retry.'}],isError:true});}
  }

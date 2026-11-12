@@ -106,6 +106,9 @@ export type ConsentModel = {
   writeOffered: boolean;
   localRequested: boolean; notesRequested: boolean; notesWriteRequested: boolean;
   artifactsRequested?: boolean;
+  /** The Oura binding is configured, so health:read can be offered. */
+  healthOffered?: boolean;
+  healthRequested?: boolean;
   /** The conflict policy sentence for queued edits. */
   policy: string;
 };
@@ -123,6 +126,7 @@ const copy = {
   write: (policy: string) => `Create, update, move, complete, cancel, trash and restore to-dos through the offline queue. Your Mac applies and confirms each change when it is awake. Trash stays recoverable. Current Mac limits: no checklist, evening or heading writes, restore to Inbox. ${policy}`,
   local: 'Calendar, saved brain dumps, Mac captures, planning, memory and proposal review, run on your awake Mac. With queued edits, one task you ask for is saved directly; other changes need an approved proposal. Raw captures stay on the Mac, but requests and results pass through this service and the app. Memory indexing uses a remote extraction service.',
   notes: 'Search and read notes in your LifeOS Anytype space. Notes stay in Anytype on the Mac and only pass through this service in memory. Needs local tools.',
+  health: 'Read your Oura sleep, readiness, heart rate variability (HRV), activity, heart rate and workouts. Read only. Fetched live from Oura when the app asks. LifeOS does not store them, but the app you connect receives them.',
   notesWrite: 'Add new objects, tags, properties, collections and Things links, each marked Made by the assistant. Never deletes. Needs notes.',
 };
 
@@ -140,6 +144,7 @@ export function consentPage(m: ConsentModel, nonce: string) {
     option('opt-notes', 'notes', 'Anytype notes', 'notes', copy.notes, m.notesRequested),
     option('opt-notes-write', 'notes_write', 'Add and edit notes', 'notes:write', copy.notesWrite, m.notesWriteRequested),
     option('opt-artifacts', 'artifacts', 'Share documents', 'artifacts:write', 'Save document snapshots in Cloudflare and create or revoke read-only public links. Anyone holding a link can read and forward the document without signing in. Works while your Mac is asleep.', m.artifactsRequested??false),
+    m.healthOffered ? option('opt-health', 'health', 'Oura health', 'health:read', copy.health, m.healthRequested??false) : '',
   ].join('');
   const hidden = `<input type="hidden" name="handle" value="${escape(m.handle)}">`
     + (m.writeRequested ? '<input type="hidden" name="queued_writes" value="allow">' : '')

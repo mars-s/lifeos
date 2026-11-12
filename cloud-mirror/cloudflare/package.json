@@ -11,6 +11,7 @@
     "test:events": "node event-test.mjs",
     "test:smart": "node smart-test.mjs",
     "test:oauth": "node oauth-test.mjs",
+    "test:health": "node health-test.mjs",
     "preview:artifacts": "node artifact-preview.mjs"
   },
   "devDependencies": {
