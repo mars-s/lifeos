@@ -25,10 +25,10 @@
     "LIFEOS_CLOUD_WINS_ENABLED": "true",
     "LIFEOS_SMART_SYNC_ENABLED": "true"
   },
-  "durable_objects": {"bindings": [{"name": "OWNER_SYNC", "class_name": "OwnerSync"}]},
+  "durable_objects": {"bindings": [{"name": "OWNER_SYNC", "class_name": "OwnerSync"}, {"name": "OAUTH_TX", "class_name": "OAuthTransactions"}]},
   // Read-only Oura access. A named entrypoint has no public URL; see integrations/oura-setup/health-reader.mjs.
   "services": [{"binding": "OURA_HEALTH", "service": "lifeos-app-setup", "entrypoint": "HealthReader"}],
-  "migrations": [{"tag": "owner-sync-v1", "new_sqlite_classes": ["OwnerSync"]}],
+  "migrations": [{"tag": "owner-sync-v1", "new_sqlite_classes": ["OwnerSync"]}, {"tag": "oauth-tx-v1", "new_sqlite_classes": ["OAuthTransactions"]}],
   "d1_databases": [
     {
       "binding": "DB",

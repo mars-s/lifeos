@@ -7,6 +7,8 @@ import {NativeQueue,supportedVector} from './native-queue';
 import {ownerSync,rejectedPrefix} from './owner-sync';
 import {applyThingsOverlays,overlayCells,type ThingsPayload} from './things-ops';
 export {OwnerSync} from './owner-sync';
+export {OAuthTransactions} from './oauth-transactions';
+import {consistentTransactionKv,type OAuthTransactions} from './oauth-transactions';
 import {MirrorStore,canonical,type Cell} from '../site/lib/mirror-store';
 import {BulkD1} from './d1-bulk';
 import {registerCloudUI} from './cloud-ui';
@@ -20,6 +22,7 @@ import {awaitRedirect,boundToState,clearBindingCookie,rememberRedirect,requestFa
 // OAuth grants explicitly gate read access and queued writes.
 type OAuthEnv=Env & HealthEnv & {
   OAUTH_KV?:KVNamespace; OAUTH_PROVIDER?:OAuthHelpers;
+  OAUTH_TX?:DurableObjectNamespace<OAuthTransactions>;
   GITHUB_CLIENT_ID?:string; GITHUB_CLIENT_SECRET?:string;
   LIFEOS_GITHUB_OWNER_ID?:string;
   // Extra browser origins allowed to call /mcp, space or comma separated https origins.
@@ -301,7 +304,8 @@ export default {async fetch(request:Request,env:OAuthEnv,ctx:ExecutionContext):P
   if(path.startsWith('/s/'))return publicArtifact(request,env);
   if(path==='/health'||path==='/state'||path.startsWith('/api/'))return mirror.fetch(request,env);
   if(new URL(request.url).origin!==origin)return json({error:'OAuth host denied.'},403);
-  if(!env.OAUTH_KV||!env.GITHUB_CLIENT_ID||!env.GITHUB_CLIENT_SECRET||!env.LIFEOS_GITHUB_OWNER_ID)return json({error:'Dot OAuth setup is not activated. Mac sync remains available.'},503);
+  // Without OAUTH_TX, sign-in transactions would fall back to eventually consistent KV.
+  if(!env.OAUTH_KV||!env.OAUTH_TX||!env.GITHUB_CLIENT_ID||!env.GITHUB_CLIENT_SECRET||!env.LIFEOS_GITHUB_OWNER_ID)return json({error:'Dot OAuth setup is not activated. Mac sync remains available.'},503);
   if(request.method==='POST') {
     const chunks:Uint8Array[]=[];let size=0;const reader=request.body?.getReader();
     const budget=path==='/mcp'?256*1024:65536;
@@ -309,5 +313,5 @@ export default {async fetch(request:Request,env:OAuthEnv,ctx:ExecutionContext):P
     const bytes=new Uint8Array(size);let pos=0;for(const c of chunks){bytes.set(c,pos);pos+=c.length;}
     request=new Request(request,{body:bytes});
   }
-  return provider.fetch(request,{...env,OAUTH_KV:retryingTransactionKv(env.OAUTH_KV)},ctx);
+  return provider.fetch(request,{...env,OAUTH_KV:retryingTransactionKv(consistentTransactionKv(env.OAUTH_KV,env.OAUTH_TX))},ctx);
 }};

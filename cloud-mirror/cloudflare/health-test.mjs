@@ -22,7 +22,7 @@ const logs=[];let githubUser=42,ouraReads=[];
 const ownerKey='synthetic-owner-key',encryptionKey=random();
 const dir=await mkdtemp(join(tmpdir(),'lifeos-health-fixture-'));
 const mf=new Miniflare({...convertV4MiniflareOptions({handleStructuredLogs:log=>logs.push(log.message),workers:[
- {name:'main',modules:true,script:await readFile('.test-health.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],kvNamespaces:{OAUTH_KV:'main-oauth'},d1Databases:{DB:'fixture'},
+ {name:'main',modules:true,script:await readFile('.test-health.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],kvNamespaces:{OAUTH_KV:'main-oauth'},durableObjects:{OAUTH_TX:{className:'OAuthTransactions',useSQLite:true}},d1Databases:{DB:'fixture'},
   serviceBindings:{OURA_HEALTH:{name:'oura',entrypoint:'HealthReader'}},
   bindings:{LIFEOS_OWNER_ID:'fixture-owner',LIFEOS_ADAPTER_ID:'fixture-mac',LIFEOS_GITHUB_OWNER_ID:'42',GITHUB_CLIENT_ID:'SYNTHETIC-client',GITHUB_CLIENT_SECRET:'SYNTHETIC-secret'},
   outboundService:async req=>{
