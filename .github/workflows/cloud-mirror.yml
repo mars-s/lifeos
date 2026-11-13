@@ -19,8 +19,10 @@ jobs:
           python-version: '3.14'
       - run: npm ci
         working-directory: cloud-mirror/cloudflare
-      - run: npm run typecheck && npm run test:native && npm run test:mcp && npm run test:oauth && npm test
+      - run: npm run typecheck && npm run test:native && npm run test:mcp && npm run test:oauth && npm run test:health && npm test
         working-directory: cloud-mirror/cloudflare
+      - run: npm ci && npm test
+        working-directory: integrations/oura-setup
       - run: python3 -W error::ResourceWarning -m unittest discover -s tests
         working-directory: cloud-mirror
       - run: node --test Tests/native-write.test.mjs && python3 -m unittest discover -s Tests

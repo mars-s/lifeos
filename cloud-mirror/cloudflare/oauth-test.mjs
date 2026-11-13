@@ -13,10 +13,16 @@ const origin='https://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev',
 const redirectUri='https://claude.ai/api/mcp/auth_callback';
 const dir=await mkdtemp(join(tmpdir(),'lifeos-oauth-fixture-'));
 const hash=s=>createHash('sha256').update(s).digest('hex');
-let upstreamCalls=0;
-const mf=new Miniflare({...convertV4MiniflareOptions({modules:true,script:await readFile('.test-oauth.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],kvNamespaces:['OAUTH_KV'],d1Databases:{DB:'fixture'},bindings:{LIFEOS_OWNER_ID:'fixture-owner',LIFEOS_ADAPTER_ID:'fixture-mac',LIFEOS_GITHUB_OWNER_ID:'42',LIFEOS_WRITES_ENABLED:'true',LIFEOS_SMART_SYNC_ENABLED:'true',LIFEOS_AGENT_KEY_SHA256:hash('SYNTHETIC-agent-fixture-only-at-least-32-characters'),LIFEOS_MCP_ALLOWED_ORIGINS:'https://claude.ai, https://*.example.invalid http://insecure.invalid',GITHUB_CLIENT_ID:'SYNTHETIC-client',GITHUB_CLIENT_SECRET:'SYNTHETIC-secret',LIFEOS_SYNC_KEY_SHA256:hash('SYNTHETIC-sync-fixture-only-at-least-32-characters'),LIFEOS_READ_KEY_SHA256:hash('SYNTHETIC-read-fixture-only-at-least-32-characters')},outboundService:async req=>{
+let upstreamCalls=0,githubDelay=0,githubExchanges=0;
+const usedCodes=new Set(),logs=[],sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const mf=new Miniflare({...convertV4MiniflareOptions({handleStructuredLogs:log=>logs.push(log.message),modules:true,script:await readFile('.test-oauth.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],kvNamespaces:['OAUTH_KV'],durableObjects:{OAUTH_TX:{className:'OAuthTransactions',useSQLite:true}},d1Databases:{DB:'fixture'},bindings:{LIFEOS_OWNER_ID:'fixture-owner',LIFEOS_ADAPTER_ID:'fixture-mac',LIFEOS_GITHUB_OWNER_ID:'42',LIFEOS_WRITES_ENABLED:'true',LIFEOS_SMART_SYNC_ENABLED:'true',LIFEOS_AGENT_KEY_SHA256:hash('SYNTHETIC-agent-fixture-only-at-least-32-characters'),LIFEOS_MCP_ALLOWED_ORIGINS:'https://claude.ai, https://*.example.invalid http://insecure.invalid',GITHUB_CLIENT_ID:'SYNTHETIC-client',GITHUB_CLIENT_SECRET:'SYNTHETIC-secret',LIFEOS_SYNC_KEY_SHA256:hash('SYNTHETIC-sync-fixture-only-at-least-32-characters'),LIFEOS_READ_KEY_SHA256:hash('SYNTHETIC-read-fixture-only-at-least-32-characters')},outboundService:async req=>{
   upstreamCalls++;const url=new URL(req.url);
-  if(url.href==='https://github.com/login/oauth/access_token')return Response.json({access_token:'SYNTHETIC-upstream',token_type:'bearer',scope:''});
+  // Like GitHub, each code exchanges once; a reused code gets an error body.
+  if(url.href==='https://github.com/login/oauth/access_token'){
+    githubExchanges++;const code=(await req.formData()).get('code'),reused=usedCodes.has(code);usedCodes.add(code);
+    await sleep(githubDelay);
+    return Response.json(reused?{error:'bad_verification_code'}:{access_token:'SYNTHETIC-upstream',token_type:'bearer',scope:''});
+  }
   if(url.href==='https://api.github.com/user')return Response.json({id:42});
   throw new Error('Unexpected outbound fixture request');
 }}),resourcePersistencePath:dir});
@@ -33,7 +39,10 @@ async function request(jar,path,{method='GET',body,headers={}}={}) {
 const verifier='SYNTHETIC-pkce-verifier-long-enough-at-least-forty-three';
 const pkce=createHash('sha256').update(verifier).digest('base64url');
 const decode=s=>s.replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n)));
-let clientId;
+let clientId,flows=0;
+const transactionKey=state=>'transaction:'+hash(state);
+// The sign-in transactions live in the OAuthTransactions Durable Object, not in OAUTH_KV.
+const transactions=async()=>{const ns=await mf.getDurableObjectNamespace('OAUTH_TX');return ns.get(ns.idFromName('oauth-transactions'));};
 async function consent(jar,scope='things:read offline_access') {
   const r=await request(jar,'/authorize?'+new URLSearchParams({response_type:'code',client_id:clientId,redirect_uri:redirectUri,scope,state:'fixture-client-state',code_challenge:pkce,code_challenge_method:'S256',resource}),{headers:{Accept:'text/html'}});
   return {r,html:await r.text()};
@@ -43,7 +52,8 @@ async function approve(jar,html,extra={}) {
   const r=await request(jar,'/authorize',{method:'POST',body:new URLSearchParams({handle:handleOf(html),decision:'allow',...extra}),headers:{Origin:origin,Accept:'text/html'}});
   assert.equal(r.status,200);const page=await r.text();
   const github=new URL(decode(page.match(/href="([^"]+)"/)[1]));assert.equal(github.origin,'https://github.com');
-  return {r,page,github,callback:'/callback?'+new URLSearchParams({code:'SYNTHETIC-code',state:github.searchParams.get('state')})};
+  const state=github.searchParams.get('state');
+  return {r,page,github,state,callback:'/callback?'+new URLSearchParams({code:'SYNTHETIC-code-'+(++flows),state})};
 }
 const cspOf=r=>Object.fromEntries(r.headers.get('content-security-policy').split(';').map(d=>d.trim().split(/\s+/)).map(([k,...v])=>[k,v]));
 function assertStrictCsp(r,html) {
@@ -137,7 +147,8 @@ try {
    const other=await request(new Jar(),callback,{headers:{Accept:'text/html,application/xhtml+xml'}});
    assert.equal(other.status,400);assert.match(other.headers.get('content-type'),/^text\/html/);assert.equal(other.headers.get('cache-control'),'no-store');
    const page=await other.text();assertStrictCsp(other,page);assert.deepEqual(cspOf(other)['form-action'],["'none'"]);
-   assert.match(page,/<h1>Sign-in did not finish<\/h1>/);assert.match(page,/<h2 id="again">Start again<\/h2>/);assert.match(page,/<ol>/);
+   assert.match(page,/<h1>Sign-in did not finish<\/h1>/);assert.match(page,/<h2 id="again">Check the app first<\/h2>/);assert.match(page,/<ol>/);
+   assert.ok(!page.includes('Nothing was connected'),'a second load after success may already have connected the app');
    assert.match(page,/stage <code>callback_session<\/code>, reason <code>browser_session_missing<\/code>/);
    const state=new URL(origin+callback).searchParams.get('state');assert.ok(!page.includes(state),'state handle not echoed');assert.ok(!page.includes('SYNTHETIC'));
    // The original browser can still finish: the stray request consumed nothing.
@@ -188,6 +199,73 @@ try {
    const list=headers=>mf.dispatchFetch(resource,{method:'POST',headers:{Authorization:'Bearer '+access,'Content-Type':'application/json',Accept:'application/json, text/event-stream',...headers},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list',params:{}})});
    assert.equal((await list({})).status,200);assert.equal((await list({Origin:'https://claude.ai'})).status,200);
    for(const denied of ['https://chatgpt.com','https://a.example.invalid','http://insecure.invalid','https://claude.ai.attacker.invalid'])assert.equal((await list({Origin:denied})).status,403,denied);
+  });
+  await t.test('regression: a callback right after consent never depends on KV reading its own write',async()=>{
+   // Avi's case: KV still returned nothing 3.4 to 3.6 seconds after the write. Here every sign-in
+   // record is erased from OAUTH_KV before the immediate callback, which must still succeed.
+   const kv=await mf.getKVNamespace('OAUTH_KV'),tx=await transactions(),jar=new Jar(),{html}=await consent(jar),{callback,state}=await approve(jar,html);
+   const keys=async()=>(await kv.list({prefix:'transaction:'})).keys.length+(await kv.list({prefix:'callback-redirect:'})).keys.length;
+   assert.equal(await keys(),0,'no sign-in record was written to KV');
+   assert.ok(await tx.get(transactionKey(state)),'the record is in the Durable Object');
+   for(const {name} of [...(await kv.list({prefix:'transaction:'})).keys])await kv.delete(name);
+   const r=await request(jar,callback,{headers:{Accept:'text/html'}});
+   assert.equal(r.status,302);const back=new URL(r.headers.get('location'));assert.equal(back.origin,'https://claude.ai');assert.ok(back.searchParams.get('code'));
+   assert.equal(await tx.get(transactionKey(state)),null,'consumed once');assert.equal(await keys(),0,'the replay redirect also stays off KV');
+  });
+  await t.test('race: two overlapping callback loads both reach the client with one code',async()=>{
+   const tx=await transactions();
+   for(const mode of ['simultaneous','second finds the transaction gone','both pass finishUpstream']){
+    const jar=new Jar(),{html}=await consent(jar),{callback,state}=await approve(jar,html);
+    const saved=await tx.get(transactionKey(state)),before=githubExchanges,logged=logs.length;
+    let pair;
+    if(mode==='simultaneous')pair=await Promise.all([request(jar,callback,{headers:{Accept:'text/html'}}),request(jar,callback,{headers:{Accept:'text/html'}})]);
+    else {
+     githubDelay=300;const first=request(jar,callback,{headers:{Accept:'text/html'}});await sleep(80);
+     if(mode==='both pass finishUpstream')await tx.put(transactionKey(state),saved,600);
+     pair=await Promise.all([first,request(jar,callback,{headers:{Accept:'text/html'}})]);githubDelay=0;
+    }
+    for(const r of pair){assert.equal(r.status,302,mode);assert.equal(new URL(r.headers.get('location')).origin,'https://claude.ai',mode);assert.notEqual(new URL(r.headers.get('location')).searchParams.get('error'),'access_denied',mode);}
+    const [a,b]=pair.map(r=>r.headers.get('location'));assert.equal(a,b,mode+': same client redirect');
+    const code=new URL(a).searchParams.get('code');assert.ok(code);
+    assert.ok(githubExchanges-before<=2,mode);
+    const exchange=()=>request(null,'/oauth/token',{method:'POST',body:new URLSearchParams({grant_type:'authorization_code',client_id:clientId,code,redirect_uri:redirectUri,code_verifier:verifier,resource})});
+    assert.equal((await exchange()).status,200,mode+': the one code works');assert.equal((await exchange()).status,400,mode+': and only once');
+    const events=logs.slice(logged).map(m=>{try{return JSON.parse(m);}catch{return null;}}).filter(e=>e?.event==='oauth_browser'&&e.path==='/callback');
+    assert.equal(events.length,2,mode);
+    if(mode!=='simultaneous')assert.deepEqual(events.map(e=>[e.recovered,e.reason]).sort(),[[false,null],[true,mode==='both pass finishUpstream'?'github_code_already_used':'session_expired_or_unavailable']],mode);
+   }
+  });
+  await t.test('a transaction write this location has not seen yet is retried, not refused',async()=>{
+   const tx=await transactions(),jar=new Jar(),{html}=await consent(jar),{callback,state}=await approve(jar,html);
+   const saved=await tx.get(transactionKey(state));await tx.delete(transactionKey(state));
+   const pending=request(jar,callback);await sleep(30);await tx.put(transactionKey(state),saved,600);
+   const r=await pending;assert.equal(r.status,302);assert.ok(new URL(r.headers.get('location')).searchParams.get('code'));
+  });
+  await t.test('an already used link says the app may be connected, without echoing request data',async()=>{
+   const tx=await transactions(),jar=new Jar(),{html}=await consent(jar),{callback,state}=await approve(jar,html);
+   await tx.delete(transactionKey(state));
+   const r=await request(jar,callback,{headers:{Accept:'text/html'}});assert.equal(r.status,400);const page=await r.text();assertStrictCsp(r,page);
+   assert.match(page,/<h1>This sign-in link was already used<\/h1>/);assert.match(page,/Your app may already be connected\. Check the app before you start again\./);assert.match(page,/<h2 id="again">Check the app first<\/h2>/);
+   assert.ok(!page.includes('Nothing was connected and nothing changed'));assert.match(page,/reason <code>session_expired_or_unavailable<\/code>/);
+   for(const secret of [state,'SYNTHETIC-code',clientId,'fixture-client-state'])assert.ok(!page.includes(secret),'no request data on the page');
+   const api=await request(jar,callback);assert.equal((await api.json()).reason,'session_expired_or_unavailable');
+   const other=new Jar();other.cookies=new Map(jar.cookies);
+   for(const [name] of other.cookies)if(name.startsWith('__Host-oauth-upstream-'))other.cookies.set(name,'0'.repeat(64));
+   assert.equal((await (await request(other,callback)).json()).reason,'browser_session_mismatch','a wrong binding cookie still fails closed');
+  });
+  await t.test('without the OAUTH_TX binding sign-in stays closed instead of falling back to KV',async()=>{
+   const options=convertV4MiniflareOptions({modules:true,script:await readFile('.test-oauth.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],kvNamespaces:['OAUTH_KV'],d1Databases:{DB:'closed'},bindings:{LIFEOS_OWNER_ID:'fixture-owner',LIFEOS_ADAPTER_ID:'fixture-mac',LIFEOS_GITHUB_OWNER_ID:'42',GITHUB_CLIENT_ID:'SYNTHETIC-client',GITHUB_CLIENT_SECRET:'SYNTHETIC-secret'}});
+   const closed=new Miniflare(options);
+   try {for(const path of ['/authorize','/callback','/oauth/token','/mcp'])assert.equal((await closed.dispatchFetch(origin+path)).status,503,path);assert.equal((await closed.dispatchFetch(origin+'/health')).status,200);}
+   finally {await closed.dispose();}
+  });
+  await t.test('sign-in logs keep only fixed facts',()=>{
+   const events=logs.map(m=>{try{return JSON.parse(m);}catch{return null;}}).filter(e=>e?.event==='oauth_browser');
+   assert.ok(events.some(e=>e.path==='/callback'&&e.state_present&&e.upstream_cookie_present));assert.ok(events.some(e=>e.path==='/authorize'&&e.method==='POST'));
+   assert.ok(events.some(e=>e.speculative_headers&&e.status===503));
+   for(const e of events)assert.deepEqual(Object.keys(e).sort(),['colo','event','method','path','ray','reason','recovered','sec_fetch_dest','sec_fetch_mode','sec_fetch_site','speculative_headers','stage','state_present','status','upstream_cookie_present']);
+   const text=logs.join('\n');
+   for(const banned of ['SYNTHETIC-code','SYNTHETIC-upstream','SYNTHETIC-secret','code=','state=','__Host-','https://claude.ai','fixture-client-state',clientId])assert.ok(!text.includes(banned),banned);
   });
  });
 }finally {await mf.dispose();await rm(dir,{recursive:true,force:true});await rm('.test-oauth.mjs',{force:true});}

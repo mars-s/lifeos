@@ -1,0 +1,37 @@
+{
+  "name": "lifeos-app-setup",
+  "account_id": "d0f2ba4b10b5789ddd200648bbf055a7",
+  "main": "index.mjs",
+  "compatibility_date": "2026-10-22",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": false
+  },
+  "vars": {
+    "OURA_CLIENT_ID": "844af001-287a-4ec8-a6fb-fa62accb5e20",
+    "OURA_ENABLED": "true"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "OURA_VAULT",
+        "class_name": "OuraVault"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "oura-vault-v1",
+      "new_sqlite_classes": [
+        "OuraVault"
+      ]
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "2e39e5b659224df78e83e1287d5df2ba"
+    }
+  ]
+}

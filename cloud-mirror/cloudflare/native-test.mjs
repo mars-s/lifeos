@@ -20,7 +20,7 @@ const allLocalNames=JSON.parse(await readFile('local-tool-contracts.json','utf8'
 const isNoteTool=name=>/^notes_|^promote_notes_/.test(name);
 const thingsTools=['queue_things_create','queue_things_update','queue_things_move','queue_things_status','queue_things_restore','queue_things_batch','read_things_operations'];
 const localNames=allLocalNames.filter(name=>!isNoteTool(name)),noteNames=allLocalNames.filter(isNoteTool);
-const mf=new Miniflare({...convertV4MiniflareOptions({modules:true,script:await readFile('.test-native.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],durableObjects:{OWNER_SYNC:{className:'OwnerSync',useSQLite:true}},kvNamespaces:['OAUTH_KV'],d1Databases:{DB:'native'},bindings:{LIFEOS_OWNER_ID:'fixture-owner',LIFEOS_ADAPTER_ID:'fixture-mac',LIFEOS_GITHUB_OWNER_ID:'42',GITHUB_CLIENT_ID:'SYNTHETIC-client',GITHUB_CLIENT_SECRET:'SYNTHETIC-secret',LIFEOS_AGENT_KEY_SHA256:hash(agent),LIFEOS_SYNC_KEY_SHA256:hash(sync),LIFEOS_WRITES_ENABLED:'true'},outboundService:async req=>new URL(req.url).hostname==='api.github.com'?Response.json({id:42}):Response.json({access_token:'SYNTHETIC-upstream',token_type:'bearer',scope:''})}),resourcePersistencePath:dir});
+const mf=new Miniflare({...convertV4MiniflareOptions({modules:true,script:await readFile('.test-native.mjs','utf8'),compatibilityDate:'2026-09-30',compatibilityFlags:['nodejs_compat'],durableObjects:{OWNER_SYNC:{className:'OwnerSync',useSQLite:true},OAUTH_TX:{className:'OAuthTransactions',useSQLite:true}},kvNamespaces:['OAUTH_KV'],d1Databases:{DB:'native'},bindings:{LIFEOS_OWNER_ID:'fixture-owner',LIFEOS_ADAPTER_ID:'fixture-mac',LIFEOS_GITHUB_OWNER_ID:'42',GITHUB_CLIENT_ID:'SYNTHETIC-client',GITHUB_CLIENT_SECRET:'SYNTHETIC-secret',LIFEOS_AGENT_KEY_SHA256:hash(agent),LIFEOS_SYNC_KEY_SHA256:hash(sync),LIFEOS_WRITES_ENABLED:'true'},outboundService:async req=>new URL(req.url).hostname==='api.github.com'?Response.json({id:42}):Response.json({access_token:'SYNTHETIC-upstream',token_type:'bearer',scope:''})}),resourcePersistencePath:dir});
 async function native(path,body,key=agent,extra={}) {return mf.dispatchFetch(origin+'/api/native/'+path,{method:body?'POST':'GET',headers:{'X-LifeOS-Agent-Key':key,'Content-Type':'application/json',...extra},body:body?JSON.stringify(body):undefined});}
 const lists=['TMInboxListSource','TMTodayListSource','TMCalendarListSource','TMNextListSource','TMSomedayListSource','TMLogbookListSource','TMTrashListSource'];
 const item=(id,title='Fixture title')=>({id,kind:'todo',fields:{title:{state:'value',value:title},status:{state:'value',value:'open'},in_trash_list:{state:'value',value:false}}});
@@ -33,9 +33,10 @@ async function storage(){
   if(!entry.isFile())continue;const path=join(entry.parentPath,entry.name),data=await readFile(path);bytes.push(data);
   if(!data.subarray(0,15).equals(Buffer.from('SQLite format 3')))continue;
   const db=new DatabaseSync(path,{readOnly:true});
-  try{for(const {name} of db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all())tables[path+':'+name]=db.prepare(`SELECT * FROM "${name}"`).all();}finally{db.close();}
+  // Durable Object metadata holds alarm times in nanoseconds, beyond a safe JavaScript number.
+  try{for(const {name} of db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()){const rows=db.prepare(`SELECT * FROM "${name}"`);rows.setReadBigInts(true);tables[path+':'+name]=rows.all();}}finally{db.close();}
  }
- return {tables:JSON.stringify(tables),text:Buffer.concat(bytes).toString('latin1')};
+ return {tables:JSON.stringify(tables,(_,v)=>typeof v==='bigint'?v.toString():v),text:Buffer.concat(bytes).toString('latin1')};
 }
 async function connect(scope,includeWrites=false,includeLocal=false,extra={}){
  const cookies=new Map();

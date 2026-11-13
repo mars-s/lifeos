@@ -7,6 +7,8 @@ import {NativeQueue,supportedVector} from './native-queue';
 import {ownerSync,rejectedPrefix} from './owner-sync';
 import {applyThingsOverlays,overlayCells,type ThingsPayload} from './things-ops';
 export {OwnerSync} from './owner-sync';
+export {OAuthTransactions} from './oauth-transactions';
+import {consistentTransactionKv,type OAuthTransactions} from './oauth-transactions';
 import {MirrorStore,canonical,type Cell} from '../site/lib/mirror-store';
 import {BulkD1} from './d1-bulk';
 import {registerCloudUI} from './cloud-ui';
@@ -14,10 +16,13 @@ import {registerLocalBridge} from './local-bridge';
 import {localScope,notesScope,notesWriteScope} from './bridge-contract';
 import {newNonce,pageHeaders,consentPage,continuePage,errorPage} from './consent-page';
 import {artifactScope,registerArtifacts,publicArtifact} from './artifacts';
+import {healthScope,registerHealth,type HealthEnv} from './health';
+import {awaitRedirect,boundToState,clearBindingCookie,rememberRedirect,requestFacts,retryingTransactionKv} from './callback-guard';
 
 // OAuth grants explicitly gate read access and queued writes.
-type OAuthEnv=Env & {
+type OAuthEnv=Env & HealthEnv & {
   OAUTH_KV?:KVNamespace; OAUTH_PROVIDER?:OAuthHelpers;
+  OAUTH_TX?:DurableObjectNamespace<OAuthTransactions>;
   GITHUB_CLIENT_ID?:string; GITHUB_CLIENT_SECRET?:string;
   LIFEOS_GITHUB_OWNER_ID?:string;
   // Extra browser origins allowed to call /mcp, space or comma separated https origins.
@@ -26,7 +31,7 @@ type OAuthEnv=Env & {
 const origin='https://lifeos-read-mirror.lifeos-read-mirror-worker.workers.dev';
 const resource=origin+'/mcp';
 const scope='things:read';
-const supportedScopes=['things:read','things:write','lifeos:local',notesScope,notesWriteScope,artifactScope,'offline_access'];
+const supportedScopes=['things:read','things:write','lifeos:local',notesScope,notesWriteScope,artifactScope,healthScope,'offline_access'];
 const writeScope='things:write';
 const writeSecurity={securitySchemes:[{type:'oauth2',scopes:[scope,writeScope]}]};
 const policyDescription=(env:Env)=>env.LIFEOS_SMART_SYNC_ENABLED==='true'?'Supported fields merge automatically from the exact observed base. Explicit cloud commands resolve same-field conflicts; conflicting alternatives remain in the journal.':env.LIFEOS_CLOUD_WINS_ENABLED==='true'?'Explicit cloud edits take priority for the requested field until a later Things snapshot confirms them.':'Things wins if the edited field changed; skipped edits remain in the journal.';
@@ -65,32 +70,39 @@ function owner(identity:unknown,env:OAuthEnv):identity is Identity {
 async function challenge(verifier:string) {
   return btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier))))).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
 }
+type Trace={stage:string;reason:string|null;recovered:boolean};
+const expiredDescription='This authorization expired or was already used; start again';
 async function auth(request:Request,env:OAuthEnv):Promise<Response> {
-  const url=new URL(request.url),oauth=env.OAUTH_PROVIDER!;
-  let stage='request';
+  const trace:Trace={stage:'request',reason:null,recovered:false};
+  const response=await authorize(request,env,trace);
+  if(['/authorize','/callback'].includes(new URL(request.url).pathname))console.log(JSON.stringify({event:'oauth_browser',...requestFacts(request),stage:trace.stage,reason:trace.reason,recovered:trace.recovered,status:response.status}));
+  return response;
+}
+async function authorize(request:Request,env:OAuthEnv,trace:Trace):Promise<Response> {
+  const url=new URL(request.url),oauth=env.OAUTH_PROVIDER!,kv=env.OAUTH_KV!;
   // Browsers and link scanners may speculatively load these GETs. A prefetched /callback would
   // consume the single-use upstream state and clear its cookie, so the real navigation then
   // fails with browser_session_missing. Refuse speculative loads before touching any state;
   // browsers drop a failed prefetch and make the real request when the user navigates.
   const purpose=[request.headers.get('sec-purpose'),request.headers.get('purpose'),request.headers.get('x-moz')].join(' ').toLowerCase();
-  if(request.method==='GET'&&(url.pathname==='/callback'||url.pathname==='/authorize')&&/prefetch|prerender/.test(purpose))return new Response(null,{status:503,headers:{'Cache-Control':'no-store','Retry-After':'0'}});
+  if(request.method==='GET'&&(url.pathname==='/callback'||url.pathname==='/authorize')&&/prefetch|prerender/.test(purpose)){trace.reason='speculative_load';return new Response(null,{status:503,headers:{'Cache-Control':'no-store','Retry-After':'0'}});}
   try {
     if(url.pathname==='/authorize'&&request.method==='GET') {
-      stage='client_authorization';
+      trace.stage='client_authorization';
       const req=await oauth.parseAuthRequest(request);
       if(req.scope.some(s=>!supportedScopes.includes(s))||req.scope.includes(writeScope)&&!writesEnabled(env))return json({error:'This access is not activated.'},400);
-      stage='consent_start';
+      trace.stage='consent_start';
       const facts=await oauth.describeConsent(req),consent=await oauth.beginConsent(req);
       // Chromium applies form-action to the GitHub redirect after this POST.
       // The validated client redirect is also needed when the owner declines.
       const clientOrigin=new URL(req.redirectUri).origin,nonce=newNonce();
       return new Response(consentPage({clientName:facts.clientName,redirectHost:facts.redirectHost,loopback:facts.redirectIsLoopback,handle:consent.handle,
         writeRequested:req.scope.includes(writeScope),writeOffered:!req.scope.includes(writeScope)&&writesEnabled(env),
-        localRequested:req.scope.includes(localScope),notesRequested:req.scope.includes(notesScope),notesWriteRequested:req.scope.includes(notesWriteScope),artifactsRequested:req.scope.includes(artifactScope),
+        localRequested:req.scope.includes(localScope),notesRequested:req.scope.includes(notesScope),notesWriteRequested:req.scope.includes(notesWriteScope),artifactsRequested:req.scope.includes(artifactScope),healthOffered:!!env.OURA_HEALTH,healthRequested:req.scope.includes(healthScope),
         policy:policyDescription(env)},nonce),{headers:pageHeaders(consent.headers,nonce,`'self' https://github.com ${clientOrigin}`)});
     }
     if(url.pathname==='/authorize'&&request.method==='POST') {
-      stage='consent_session';
+      trace.stage='consent_session';
       const requestOrigin=request.headers.get('origin');
       // Older consent pages can hide Origin. Browser fetch metadata can establish
       // same-origin navigation; the transaction-bound cookie is still mandatory.
@@ -107,12 +119,13 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
         ...form.get('queued_writes')==='allow'&&writesEnabled(env)?[writeScope]:[],
         ...form.get('local_tools')==='allow'?[localScope,...form.get('notes')==='allow'?[notesScope,...form.get('notes_write')==='allow'?[notesWriteScope]:[]]:[]]:[],
         ...form.get('artifacts')==='allow'?[artifactScope]:[],
+        ...form.get('health')==='allow'&&env.OURA_HEALTH?[healthScope]:[],
         'offline_access',
       ];
       const approved=await oauth.approveConsent(request,handle,{scope:approvedScopes});
       if(approved.request.scope.includes(writeScope)&&!writesEnabled(env))return json({error:'Write activation pending.'},403);
       const verifier=crypto.randomUUID()+crypto.randomUUID();
-      stage='github_redirect';
+      trace.stage='github_redirect';
       const upstream=await oauth.beginUpstream(approved.request,{data:{verifier},headers:approved.headers});
       const target=new URL('https://github.com/login/oauth/authorize');
       target.search=new URLSearchParams({client_id:env.GITHUB_CLIENT_ID!,redirect_uri:origin+'/callback',scope:'',state:upstream.state,code_challenge:await challenge(verifier),code_challenge_method:'S256',allow_signup:'false'}).toString();
@@ -124,25 +137,42 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       return new Response(continuePage(target.href,nonce),{headers:pageHeaders(upstream.headers,nonce)});
     }
     if(url.pathname==='/callback'&&request.method==='GET') {
-      stage='callback_session';
-      const resumed=await oauth.finishUpstream<{verifier:string}>(request);
+      trace.stage='callback_session';
+      const state=url.searchParams.get('state')??'';
+      const replay=(location:string,headers:Headers)=>{trace.recovered=true;headers.set('Location',location);headers.set('Cache-Control','no-store');return new Response(null,{status:302,headers});};
+      let resumed:Awaited<ReturnType<typeof oauth.finishUpstream<{verifier:string}>>>;
+      try {resumed=await oauth.finishUpstream<{verifier:string}>(request);}
+      catch(error){
+        // The library reports this only after the binding cookie matched, and the check is repeated
+        // here: an overlapping load from this same browser gets the winner's redirect, nobody else.
+        if((error as {description?:string})?.description===expiredDescription&&state&&await boundToState(request,state)){
+          const location=await awaitRedirect(kv,state);
+          if(location){trace.reason='session_expired_or_unavailable';return replay(location,new Headers({'Set-Cookie':await clearBindingCookie(state)}));}
+        }
+        throw error;
+      }
       const deny=()=>{resumed.headers.set('Location',authorizationErrorRedirect(resumed.request,'access_denied'));return new Response(null,{status:302,headers:resumed.headers});};
+      // Both overlapping loads can pass finishUpstream. GitHub then refuses the second code exchange,
+      // which must not replace the first load's successful redirect with access_denied.
+      const siblingOrDeny=async()=>{const location=await awaitRedirect(kv,state);if(location){trace.reason='github_code_already_used';return replay(location,resumed.headers);}return deny();};
       const code=url.searchParams.get('code');if(url.searchParams.has('error')||!code)return deny();
       // Access token lives only during this callback, not in grant props/logs/D1.
-      stage='github_exchange';
+      trace.stage='github_exchange';
       const exchange=await fetch('https://github.com/login/oauth/access_token',{method:'POST',redirect:'manual',signal:AbortSignal.timeout(15000),headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:env.GITHUB_CLIENT_ID!,client_secret:env.GITHUB_CLIENT_SECRET!,code,redirect_uri:origin+'/callback',code_verifier:resumed.data.verifier})});
-      if(!exchange.ok)return deny();
+      if(!exchange.ok)return siblingOrDeny();
       const result=await exchange.json() as {access_token?:string;scope?:string;token_type?:string};
+      if(!result.access_token||result.token_type!=='bearer')return siblingOrDeny();
       // Refuse an app whose earlier grants accidentally carry repository/user scopes.
-      if(!result.access_token||result.token_type!=='bearer'||result.scope?.trim())return deny();
-      stage='github_identity';
+      if(result.scope?.trim())return deny();
+      trace.stage='github_identity';
       const identity=await fetch('https://api.github.com/user',{redirect:'manual',signal:AbortSignal.timeout(15000),headers:{Authorization:'Bearer '+result.access_token,Accept:'application/vnd.github+json','User-Agent':'LifeOSReadOnlyMirror/0.1'}});
       if(!identity.ok)return deny();
       const user=await identity.json() as {id?:number};
       if(!Number.isSafeInteger(user.id)||String(user.id)!==env.LIFEOS_GITHUB_OWNER_ID)return deny();
-      stage='grant_completion';
+      trace.stage='grant_completion';
       if(resumed.request.scope.includes(writeScope)&&!writesEnabled(env))return deny();
       const done=await oauth.completeAuthorization({request:resumed.request,userId:String(user.id),metadata:{role:'reader'},scope:resumed.request.scope,props:{owner:env.LIFEOS_OWNER_ID,github_id:String(user.id),role:'reader'} satisfies Identity});
+      await rememberRedirect(kv,state,done.redirectTo);
       resumed.headers.set('Location',done.redirectTo);return new Response(null,{status:302,headers:resumed.headers});
     }
     return json({error:'OAuth route not found.'},404);
@@ -160,10 +190,10 @@ async function auth(request:Request,env:OAuthEnv):Promise<Response> {
       'Invalid client_id':'client_registration_missing',
       'Invalid redirect URI':'client_redirect_mismatch'
     };
-    const reason=description&&reasons[description]||'authorization_failed';
+    const reason=description&&reasons[description]||'authorization_failed';trace.reason=reason;
     // People in a browser get a page with a way to start again; API callers keep the JSON.
-    if(/text\/html/.test(request.headers.get('accept')??'')){const nonce=newNonce();return new Response(errorPage(stage,reason,nonce),{status:400,headers:pageHeaders(new Headers(),nonce)});}
-    return json({error:'Sign-in could not be completed. Restart the connection.',stage,reason},400);
+    if(/text\/html/.test(request.headers.get('accept')??'')){const nonce=newNonce();return new Response(errorPage(trace.stage,reason,nonce),{status:400,headers:pageHeaders(new Headers(),nonce)});}
+    return json({error:'Sign-in could not be completed. Restart the connection.',stage:trace.stage,reason},400);
   }
 }
 async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Response> {
@@ -176,16 +206,18 @@ async function mcp(request:Request,env:OAuthEnv,ctx:ExecutionContext):Promise<Re
   const source=request.headers.get('origin');
   if(source!==null&&!browserOrigins(env).includes(source))return json({error:'Origin denied.'},403);
   const server=new McpServer({name:'LifeOS',version:'0.5.2'},{
-    instructions:'For documents, create_artifact saves a private immutable snapshot. Use read_artifact after saving to show a private preview with an optional Share button. Only call share_artifact when the user asks to share that specific document. Anyone holding its URL can read and forward it without signing in. Invite labels do not verify identity. Supply actual content, never a sandbox path. Inline SVG diagrams using the dg class vocabulary are supported in HTML and Markdown; hostile content is stripped. Mermaid remains readable code because its DOM and large runtime dependencies do not suit a Worker and document pages allow no client scripts. Reuse request_id and exact arguments after timeouts. Never publish unrelated notes or health data. '+'For ONE task the user explicitly asks to add, use create_requested_task directly. For an explicit single-task edit or deletion, use update_requested_task or trash_requested_task. First resolve the exact task and source_hash with local search_things/read_things_list, not the potentially stale cloud mirror. If ambiguous, ask which task. Deletion means recoverable Trash only. The request is permission: do not prepare a proposal or ask for a second LifeOS approval. Resolve relative dates in the user timezone to YYYY-MM-DD; put timing constraints such as "after 8pm" in notes. These tools do not set a timed alarm. Reuse the same request_id and arguments after a timeout; only report saved when saved is true with a receipt. An awake connected Mac and existing things:write plus lifeos:local permissions are required. Never bypass platform permissions. Inferred meeting follow-ups, batches and Calendar changes still require a reviewed exact-revision proposal and verified apply. When local tools are unavailable or the Mac may be asleep, explicitly requested Things changes can be queued with the queue_things_* tools instead; they wait durably for the Mac and report progress through read_things_operations.',
+    instructions:'For documents, create_artifact saves a private immutable snapshot. Use read_artifact after saving to show a private preview with an optional Share button. Only call share_artifact when the user asks to share that specific document. Anyone holding its URL can read and forward it without signing in. Invite labels do not verify identity. Supply actual content, never a sandbox path. Inline SVG diagrams using the dg class vocabulary are supported in HTML and Markdown; hostile content is stripped. Mermaid remains readable code because its DOM and large runtime dependencies do not suit a Worker and document pages allow no client scripts. Reuse request_id and exact arguments after timeouts. Never publish unrelated notes or health data. Oura health tools (read_oura_*) are read-only and appear only when this connection has health:read. HRV is in read_oura_sleep and read_oura_daily_readiness. '+'For ONE task the user explicitly asks to add, use create_requested_task directly. For an explicit single-task edit or deletion, use update_requested_task or trash_requested_task. First resolve the exact task and source_hash with local search_things/read_things_list, not the potentially stale cloud mirror. If ambiguous, ask which task. Deletion means recoverable Trash only. The request is permission: do not prepare a proposal or ask for a second LifeOS approval. Resolve relative dates in the user timezone to YYYY-MM-DD; put timing constraints such as "after 8pm" in notes. These tools do not set a timed alarm. Reuse the same request_id and arguments after a timeout; only report saved when saved is true with a receipt. An awake connected Mac and existing things:write plus lifeos:local permissions are required. Never bypass platform permissions. Inferred meeting follow-ups, batches and Calendar changes still require a reviewed exact-revision proposal and verified apply. When local tools are unavailable or the Mac may be asleep, explicitly requested Things changes can be queued with the queue_things_* tools instead; they wait durably for the Mac and report progress through read_things_operations.',
   });
   const localAvailable=env.OWNER_SYNC?await ownerSync(env).localBridgeAvailable():false;
   const localAllowed=c.auth!.scope.includes(localScope);
   registerCloudUI(server,origin,localAvailable&&localAllowed);
   registerLocalBridge(server,env,c.auth!.scope,origin);
   registerArtifacts(server,env,c.auth!.scope,origin);
+  registerHealth(server,env,c.auth!.scope);
   server.registerTool('get_lifeos_capabilities',{description:'Read the capabilities of this connection. Reports which local LifeOS features have not migrated. Does not establish that the Mac is online.',inputSchema:{},annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async()=>{
     const capabilities={connector:'LifeOS',preview_widgets:['day_plan','week_plan','brain_dump_canvas','proposal_review','memory_review'],cloud_queue_enabled:writesEnabled(env),connection_can_write:writesEnabled(env)&&c.auth!.scope.includes(writeScope),supported_writes:['title','complete_todo','trash_todo',...thingsWrites],things_ops_version:1,local_tools_connected:localAvailable,connection_can_use_local_tools:localAllowed,local_tools_available:localAvailable&&localAllowed,local_task_creation_available:localAvailable&&localAllowed&&c.auth!.scope.includes(writeScope),local_task_crud_available:localAvailable&&localAllowed&&c.auth!.scope.includes(writeScope),local_task_tools:['create_requested_task','read_requested_task','update_requested_task','trash_requested_task'],notes_available:localAvailable&&localAllowed&&c.auth!.scope.includes(notesScope),notes_write_available:localAvailable&&localAllowed&&c.auth!.scope.includes(notesWriteScope),notes_storage:'Anytype on the Mac; never stored by this service',raw_capture_storage:'Mac only',local_tool_delivery:'transient, no offline queue or automatic replay',local_write_policy:'Explicit single-task creates, edits and recoverable Trash requests use direct tools without a LifeOS review card. Local reads avoid mirror sync delays. Other changes require exact-revision approval and verified apply.'};
     Object.assign(capabilities,{document_sharing_available:c.auth!.scope.includes(artifactScope),document_sharing_scope:artifactScope,document_storage:'Cloudflare D1, independent of the Mac',document_link_access:'Anyone with the link, read-only, no sign-in'});
+    Object.assign(capabilities,{health_available:!!env.OURA_HEALTH&&c.auth!.scope.includes(healthScope),health_scope:healthScope,health_tools_prefix:'read_oura_',health_access_action:c.auth!.scope.includes(healthScope)?null:'Reconnect LifeOS and tick Oura health (health:read) to read Oura sleep, readiness, HRV and activity.'});
     return {content:[{type:'text' as const,text:JSON.stringify(capabilities)}],structuredContent:capabilities};
   });
   const db=new BulkD1(env.DB),queue=new NativeQueue(db,env.LIFEOS_OWNER_ID);
@@ -272,7 +304,8 @@ export default {async fetch(request:Request,env:OAuthEnv,ctx:ExecutionContext):P
   if(path.startsWith('/s/'))return publicArtifact(request,env);
   if(path==='/health'||path==='/state'||path.startsWith('/api/'))return mirror.fetch(request,env);
   if(new URL(request.url).origin!==origin)return json({error:'OAuth host denied.'},403);
-  if(!env.OAUTH_KV||!env.GITHUB_CLIENT_ID||!env.GITHUB_CLIENT_SECRET||!env.LIFEOS_GITHUB_OWNER_ID)return json({error:'Dot OAuth setup is not activated. Mac sync remains available.'},503);
+  // Without OAUTH_TX, sign-in transactions would fall back to eventually consistent KV.
+  if(!env.OAUTH_KV||!env.OAUTH_TX||!env.GITHUB_CLIENT_ID||!env.GITHUB_CLIENT_SECRET||!env.LIFEOS_GITHUB_OWNER_ID)return json({error:'Dot OAuth setup is not activated. Mac sync remains available.'},503);
   if(request.method==='POST') {
     const chunks:Uint8Array[]=[];let size=0;const reader=request.body?.getReader();
     const budget=path==='/mcp'?256*1024:65536;
@@ -280,5 +313,5 @@ export default {async fetch(request:Request,env:OAuthEnv,ctx:ExecutionContext):P
     const bytes=new Uint8Array(size);let pos=0;for(const c of chunks){bytes.set(c,pos);pos+=c.length;}
     request=new Request(request,{body:bytes});
   }
-  return provider.fetch(request,env,ctx);
+  return provider.fetch(request,{...env,OAUTH_KV:retryingTransactionKv(consistentTransactionKv(env.OAUTH_KV,env.OAUTH_TX))},ctx);
 }};

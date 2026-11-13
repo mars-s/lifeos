@@ -1,0 +1,19 @@
+{
+  "name": "lifeos-app-setup",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test *.test.mjs"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "miniflare": "4.20260730.0"
+  },
+  "overrides": {
+    "sharp": "0.35.5",
+    "undici": "7.29.1"
+  }
+}
